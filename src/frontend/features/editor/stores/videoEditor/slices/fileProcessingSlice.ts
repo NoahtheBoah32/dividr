@@ -636,99 +636,97 @@ const processImportedFile = async (
 
   // Check if file requires transcoding (AVI, WMV, etc.)
   if (trackType === 'video') {
-    // Run transcoding check in background without blocking import
-    (async () => {
-      try {
-        const transcodeCheck =
-          await window.electronAPI.transcodeRequiresTranscoding(fileInfo.path);
+    // Run transcoding check synchronously (awaiting the check, but not the job)
+    try {
+      const transcodeCheck =
+        await window.electronAPI.transcodeRequiresTranscoding(fileInfo.path);
 
-        if (transcodeCheck.requiresTranscoding) {
-          console.log(
-            `🎬 File requires transcoding: ${fileInfo.name} (${transcodeCheck.reason})`,
-          );
+      if (transcodeCheck.requiresTranscoding) {
+        console.log(
+          `🎬 File requires transcoding: ${fileInfo.name} (${transcodeCheck.reason})`,
+        );
 
-          // Update media with transcoding pending status
-          if (updateMediaLibraryFn) {
-            updateMediaLibraryFn(mediaId, {
-              transcoding: {
-                required: true,
-                status: 'pending',
-                progress: 0,
-                startedAt: Date.now(),
-              },
+        // Update media with transcoding pending status
+        if (updateMediaLibraryFn) {
+          updateMediaLibraryFn(mediaId, {
+            transcoding: {
+              required: true,
+              status: 'pending',
+              progress: 0,
+              startedAt: Date.now(),
+            },
+          });
+        }
+
+        // Start transcoding in background
+        const startTranscode = async () => {
+          try {
+            const result = await window.electronAPI.transcodeStart({
+              mediaId,
+              inputPath: fileInfo.path,
             });
-          }
 
-          // Start transcoding in background
-          const startTranscode = async () => {
-            try {
-              const result = await window.electronAPI.transcodeStart({
-                mediaId,
-                inputPath: fileInfo.path,
-              });
+            if (result.success && result.jobId) {
+              console.log(
+                `🎬 Transcode started for ${fileInfo.name}: job ${result.jobId}`,
+              );
 
-              if (result.success && result.jobId) {
-                console.log(
-                  `🎬 Transcode started for ${fileInfo.name}: job ${result.jobId}`,
-                );
-
-                // Update with job ID and processing status
-                if (updateMediaLibraryFn) {
-                  updateMediaLibraryFn(mediaId, {
-                    transcoding: {
-                      required: true,
-                      status: 'processing',
-                      jobId: result.jobId,
-                      progress: 0,
-                      startedAt: Date.now(),
-                    },
-                  });
-                }
-              } else {
-                console.error(
-                  `❌ Failed to start transcode for ${fileInfo.name}:`,
-                  result.error,
-                );
-
-                // Mark as failed
-                if (updateMediaLibraryFn) {
-                  updateMediaLibraryFn(mediaId, {
-                    transcoding: {
-                      required: true,
-                      status: 'failed',
-                      progress: 0,
-                      error: result.error || 'Failed to start transcoding',
-                    },
-                  });
-                }
+              // Update with job ID and processing status
+              if (updateMediaLibraryFn) {
+                updateMediaLibraryFn(mediaId, {
+                  transcoding: {
+                    required: true,
+                    status: 'processing',
+                    jobId: result.jobId,
+                    progress: 0,
+                    startedAt: Date.now(),
+                  },
+                });
               }
-            } catch (error) {
-              console.error(`❌ Transcode error for ${fileInfo.name}:`, error);
+            } else {
+              console.error(
+                `❌ Failed to start transcode for ${fileInfo.name}:`,
+                result.error,
+              );
 
+              // Mark as failed
               if (updateMediaLibraryFn) {
                 updateMediaLibraryFn(mediaId, {
                   transcoding: {
                     required: true,
                     status: 'failed',
                     progress: 0,
-                    error:
-                      error instanceof Error ? error.message : 'Unknown error',
+                    error: result.error || 'Failed to start transcoding',
                   },
                 });
               }
             }
-          };
+          } catch (error) {
+            console.error(`❌ Transcode error for ${fileInfo.name}:`, error);
 
-          // Start transcoding asynchronously
-          startTranscode();
-        }
-      } catch (error) {
-        console.warn(
-          `⚠️ Could not check transcoding requirements for ${fileInfo.name}:`,
-          error,
-        );
+            if (updateMediaLibraryFn) {
+              updateMediaLibraryFn(mediaId, {
+                transcoding: {
+                  required: true,
+                  status: 'failed',
+                  progress: 0,
+                  error:
+                    error instanceof Error ? error.message : 'Unknown error',
+                },
+              });
+            }
+          }
+        };
+
+        // Start transcoding asynchronously
+        startTranscode();
       }
-    })();
+    } catch (error) {
+      console.warn(
+        `⚠️ Could not check transcoding requirements for ${fileInfo.name}:`,
+        error,
+      );
+    } // End try/catch for transcoding check
   }
 
   // Generate sprite sheets and thumbnails for video files (async, don't wait)
@@ -1987,6 +1985,23 @@ export const createFileProcessingSlice: StateCreator<
               // Process sequentially to ensure each file gets fresh state for row calculation
               for (const mediaId of mediaIdsToAddToTimeline) {
                 try {
+                  const currentState = get() as any;
+                  const mediaItem = currentState.mediaLibrary.find(
+                    (m: any) => m.id === mediaId,
+                  );
+
+                  // Check if transcoding is required/active
+                  if (
+                    mediaItem?.transcoding?.status === 'pending' ||
+                    mediaItem?.transcoding?.status === 'processing'
+                  ) {
+                    console.log(
+                      `🚫 Blocking timeline addition for transcoding media: ${mediaItem.name}`,
+                    );
+                    currentState.setTranscodingBlockedMedia(mediaItem);
+                    continue; // Skip adding to timeline
+                  }
+
                   await (get() as any).addTrackFromMediaLibrary(mediaId, 0);
                   timelineResults.push({ success: true, mediaId });
                 } catch (error: any) {

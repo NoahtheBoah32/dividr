@@ -806,6 +806,21 @@ export const createTracksSlice: StateCreator<
       return '';
     }
 
+    // Check for transcoding status first
+    if (
+      mediaItem.transcoding?.status === 'pending' ||
+      mediaItem.transcoding?.status === 'processing'
+    ) {
+      console.log(
+        `🚫 Blocking timeline addition for transcoding media: ${mediaItem.name}`,
+      );
+      // Trigger global blocked modal if available
+      if (state.setTranscodingBlockedMedia) {
+        state.setTranscodingBlockedMedia(mediaItem);
+      }
+      return '';
+    }
+
     // Helper function to detect subtitle files
     const isSubtitleFile = (fileName: string): boolean => {
       return SUBTITLE_EXTENSIONS.some((ext) =>

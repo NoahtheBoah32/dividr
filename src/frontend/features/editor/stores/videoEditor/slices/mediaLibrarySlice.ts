@@ -43,6 +43,7 @@ export interface MediaLibrarySlice {
   generatingWaveforms: Set<string>;
   duplicateDetection: DuplicateDetectionState | null;
   batchDuplicateDetection: BatchDuplicateDetectionState | null;
+  transcodingBlockedMedia: MediaLibraryItem | null;
   addToMediaLibrary: (item: Omit<MediaLibraryItem, 'id'>) => string;
   removeFromMediaLibrary: (mediaId: string, force?: boolean) => void;
   updateMediaLibraryItem: (
@@ -87,6 +88,7 @@ export interface MediaLibrarySlice {
     resolve: (choices: Map<string, DuplicateChoice>) => void,
   ) => void;
   hideBatchDuplicateDialog: () => void;
+  setTranscodingBlockedMedia: (media: MediaLibraryItem | null) => void;
 
   // Transcoding
   isTranscoding: (mediaId: string) => boolean;
@@ -111,6 +113,7 @@ export const createMediaLibrarySlice: StateCreator<
   generatingWaveforms: new Set<string>(),
   duplicateDetection: null,
   batchDuplicateDetection: null,
+  transcodingBlockedMedia: null,
 
   findDuplicateBySignature: (signature: ContentSignature) => {
     const state = get() as any;
@@ -157,6 +160,10 @@ export const createMediaLibrarySlice: StateCreator<
 
   hideBatchDuplicateDialog: () => {
     set({ batchDuplicateDetection: null });
+  },
+
+  setTranscodingBlockedMedia: (media) => {
+    set({ transcodingBlockedMedia: media });
   },
 
   addToMediaLibrary: (itemData) => {
