@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import {
   AudioProcessingContext,
@@ -35,9 +36,9 @@ function escapePath(filePath: string) {
 }
 
 const FILE_EXTENSIONS = {
-  VIDEO: /\.(mp4|mov|mkv|avi|webm)$/i,
+  VIDEO: /\.(mp4|mov|mkv|avi|webm|gif)$/i,
   AUDIO: /\.(mp3|wav|aac|flac)$/i,
-  IMAGE: /\.(png|jpg|jpeg|gif|bmp|tiff|webp)$/i,
+  IMAGE: /\.(png|jpg|jpeg|bmp|tiff|webp)$/i,
 } as const;
 
 const ENCODING_DEFAULTS = {
@@ -474,14 +475,37 @@ function handleFileInputs(job: VideoEditJob, cmd: CommandParts): void {
       return;
     }
 
+    // Verify file exists before adding as input
+    if (!fs.existsSync(path)) {
+      console.error(
+        `❌ File does not exist, skipping input ${index}: ${path}`,
+      );
+      throw new Error(`Input file does not exist: ${path}`);
+    }
+
     // Always add the main file (video or audio) as a unique input
     cmd.args.push('-i', escapePath(path));
     console.log(`📁 Added unique input ${index}: ${path}`);
 
     // If this is a video track with a separate audio file, add the audio file too
-    if (trackInfo.audioPath) {
+    // Skip audio inputs for GIF files (GIFs are video inputs with no audio)
+    const isGifFile = /\.gif$/i.test(path);
+    if (trackInfo.audioPath && !isGifFile) {
+      // Verify audio file exists before adding as input
+      if (!fs.existsSync(trackInfo.audioPath)) {
+        console.error(
+          `❌ Audio file does not exist, skipping audio input ${index}: ${trackInfo.audioPath}`,
+        );
+        throw new Error(`Audio file does not exist: ${trackInfo.audioPath}`);
+      }
       cmd.args.push('-i', escapePath(trackInfo.audioPath));
-      console.log(`🎵 Added unique audio input ${index}: ${trackInfo.audioPath}`);
+      console.log(
+        `🎵 Added unique audio input ${index}: ${trackInfo.audioPath}`,
+      );
+    } else if (trackInfo.audioPath && isGifFile) {
+      console.log(
+        `⚠️ Skipping audio input for GIF file: ${path} (GIFs are video inputs with no audio)`,
+      );
     }
   });
 

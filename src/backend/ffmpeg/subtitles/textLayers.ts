@@ -416,8 +416,11 @@ export function generateDrawtextFilter(
   }
 
   // Line spacing for multi-line text
-  if (mergedStyle.lineHeight !== undefined && mergedStyle.lineHeight !== 0) {
-    params.push(`line_spacing=${Math.round(mergedStyle.lineHeight)}`);
+  if (mergedStyle.lineHeight !== undefined && mergedStyle.lineHeight > 1) {
+    const extraSpacing = Math.round(
+      scaledFontSize * (mergedStyle.lineHeight - 1),
+    );
+    params.push(`line_spacing=${extraSpacing}`);
   }
 
   // Enable expression for time-based visibility

@@ -265,150 +265,157 @@ export function processAudioTimeline(
       // Skip silent gaps - we'll use adelay to position audio instead
       console.log(`🎵 Skipping audio gap (will use adelay for positioning)`);
       return;
-    } else {
-      // Regular audio file - find the original file index
-      const fileIndex = findFileIndexForSegment(
-        segment,
-        categorizedInputs,
-        'audio',
+    }
+
+    // Skip GIF files - they are video inputs with no audio
+    const isGifFile = /\.gif$/i.test(trackInfo.path);
+    if (isGifFile) {
+      console.log(
+        `⚠️ Skipping audio processing for GIF file: ${trackInfo.path} (GIFs are video inputs with no audio)`,
+      );
+      return;
+    }
+
+    // Regular audio file - find the original file index
+    const fileIndex = findFileIndexForSegment(
+      segment,
+      categorizedInputs,
+      'audio',
+    );
+
+    if (fileIndex !== undefined) {
+      console.log(
+        `🎵 Processing audio segment ${segmentIndex} with fileIndex ${fileIndex}`,
       );
 
-      if (fileIndex !== undefined) {
-        console.log(
-          `🎵 Processing audio segment ${segmentIndex} with fileIndex ${fileIndex}`,
+      // Always use direct input reference - FFmpeg handles sequential access efficiently
+      // asplit filters would require buffering the entire stream, increasing RAM usage
+      const inputStreamRef = `[${fileIndex}:a]`;
+
+      const context = {
+        trackInfo,
+        originalIndex: segmentIndex,
+        fileIndex,
+        inputStreamRef,
+      };
+
+      const trimResult = createAudioTrimFilters(context);
+      audioFilters.push(...trimResult.filters);
+
+      // Apply volume control (before delay/positioning)
+      // Priority: 1) volumeDb from trackInfo payload, 2) callback, 3) default to 0dB
+      let currentAudioRef = trimResult.filterRef;
+      const volumeDb: number =
+        trackInfo.volumeDb !== undefined
+          ? trackInfo.volumeDb
+          : (getVolumeDb?.(segment) ?? 0.0);
+
+      // Only apply volume filter if adjustment is non-zero (0dB means no change)
+      // Also handle -Infinity for complete silence (mute)
+      if (volumeDb !== 0.0 && volumeDb !== -Infinity) {
+        const volumeRef = `[a${segmentIndex}_volume]`;
+        audioFilters.push(
+          applyVolumeFilter(currentAudioRef, volumeRef, volumeDb),
         );
+        currentAudioRef = volumeRef;
+      } else if (volumeDb === -Infinity || trackInfo.muted) {
+        // Handle mute: use volume filter with very low dB or volume=0
+        const volumeRef = `[a${segmentIndex}_volume]`;
+        audioFilters.push(applyVolumeFilter(currentAudioRef, volumeRef, -60.0));
+        currentAudioRef = volumeRef;
+        console.log(`🔇 Muted audio segment ${segmentIndex}`);
+      }
 
-        // Always use direct input reference - FFmpeg handles sequential access efficiently
-        // asplit filters would require buffering the entire stream, increasing RAM usage
-        const inputStreamRef = `[${fileIndex}:a]`;
+      // Add delay to position audio at correct timeline position
+      const delayMs = Math.round(segment.startTime * 1000);
+      const delayedRef = `[a${segmentIndex}_delayed]`;
 
-        const context = {
-          trackInfo,
-          originalIndex: segmentIndex,
-          fileIndex,
-          inputStreamRef,
-        };
-
-        const trimResult = createAudioTrimFilters(context);
-        audioFilters.push(...trimResult.filters);
-
-        // Apply volume control (before delay/positioning)
-        // Priority: 1) volumeDb from trackInfo payload, 2) callback, 3) default to 0dB
-        let currentAudioRef = trimResult.filterRef;
-        const volumeDb: number =
-          trackInfo.volumeDb !== undefined
-            ? trackInfo.volumeDb
-            : (getVolumeDb?.(segment) ?? 0.0);
-
-        // Only apply volume filter if adjustment is non-zero (0dB means no change)
-        // Also handle -Infinity for complete silence (mute)
-        if (volumeDb !== 0.0 && volumeDb !== -Infinity) {
-          const volumeRef = `[a${segmentIndex}_volume]`;
-          audioFilters.push(
-            applyVolumeFilter(currentAudioRef, volumeRef, volumeDb),
-          );
-          currentAudioRef = volumeRef;
-        } else if (volumeDb === -Infinity || trackInfo.muted) {
-          // Handle mute: use volume filter with very low dB or volume=0
-          const volumeRef = `[a${segmentIndex}_volume]`;
-          audioFilters.push(
-            applyVolumeFilter(currentAudioRef, volumeRef, -60.0),
-          );
-          currentAudioRef = volumeRef;
-          console.log(`🔇 Muted audio segment ${segmentIndex}`);
-        }
-
-        // Add delay to position audio at correct timeline position
-        const delayMs = Math.round(segment.startTime * 1000);
-        const delayedRef = `[a${segmentIndex}_delayed]`;
-
-        if (delayMs > 0) {
-          audioFilters.push(
-            `${currentAudioRef}adelay=${delayMs}|${delayMs}${delayedRef}`,
-          );
-          console.log(
-            `🎵 Added ${delayMs}ms delay to position audio at ${segment.startTime.toFixed(2)}s`,
-          );
-        } else {
-          // No delay needed - use acopy for audio
-          audioFilters.push(`${currentAudioRef}acopy${delayedRef}`);
-        }
-
-        // Apply fade in if specified (at the start of the audio segment)
-        let fadedRef = delayedRef;
-        if (
-          trackInfo.fadeInDuration !== undefined &&
-          trackInfo.fadeInDuration > 0
-        ) {
-          const fadeInRef = `[a${segmentIndex}_fadein]`;
-          audioFilters.push(
-            applyFadeFilter(
-              delayedRef,
-              fadeInRef,
-              'in',
-              0,
-              trackInfo.fadeInDuration,
-            ),
-          );
-          fadedRef = fadeInRef;
-        }
-
-        // Apply fade out if specified (at the end of the audio segment)
-        // Fade out starts at (segment duration - fadeOutDuration) relative to the segment start
-        const segmentDuration = segment.duration;
-        if (
-          trackInfo.fadeOutDuration !== undefined &&
-          trackInfo.fadeOutDuration > 0 &&
-          segmentDuration > trackInfo.fadeOutDuration
-        ) {
-          const fadeOutStartTime = segmentDuration - trackInfo.fadeOutDuration;
-          const fadeOutRef = `[a${segmentIndex}_fadeout]`;
-          audioFilters.push(
-            applyFadeFilter(
-              fadedRef,
-              fadeOutRef,
-              'out',
-              fadeOutStartTime,
-              trackInfo.fadeOutDuration,
-            ),
-          );
-          fadedRef = fadeOutRef;
-        }
-
-        // Trim audio streams to their actual duration (no pre-padding)
-        // The amix filter will handle timing via adelay and pad automatically to match the longest stream
-        // This is RAM-efficient as we don't create full-duration buffers for each stream
-        const finalRef = `[a${segmentIndex}_final]`;
-
-        // Only trim if the segment would extend beyond total video duration
-        // Otherwise, let it be its natural length and amix will handle it
-        const segmentEndTime = segment.startTime + segment.duration;
-        if (segmentEndTime > totalVideoDuration) {
-          const trimDuration = totalVideoDuration - segment.startTime;
-          audioFilters.push(
-            `${fadedRef}atrim=duration=${trimDuration.toFixed(6)}${finalRef}`,
-          );
-          console.log(
-            `🎵 Trimmed audio stream ${segmentIndex} to ${trimDuration.toFixed(3)}s (would exceed video duration)`,
-          );
-        } else {
-          // No trimming needed, just copy
-          audioFilters.push(`${fadedRef}acopy${finalRef}`);
-          console.log(
-            `🎵 Audio stream ${segmentIndex} kept at natural duration ${segment.duration.toFixed(3)}s (RAM-efficient, no padding)`,
-          );
-        }
-
-        audioSegmentsWithTiming.push({
-          segment,
-          segmentIndex,
-          filterRef: finalRef,
-        });
+      if (delayMs > 0) {
+        audioFilters.push(
+          `${currentAudioRef}adelay=${delayMs}|${delayMs}${delayedRef}`,
+        );
+        console.log(
+          `🎵 Added ${delayMs}ms delay to position audio at ${segment.startTime.toFixed(2)}s`,
+        );
       } else {
-        console.warn(
-          `❌ Could not find file index for audio segment ${segmentIndex}`,
+        // No delay needed - use acopy for audio
+        audioFilters.push(`${currentAudioRef}acopy${delayedRef}`);
+      }
+
+      // Apply fade in if specified (at the start of the audio segment)
+      let fadedRef = delayedRef;
+      if (
+        trackInfo.fadeInDuration !== undefined &&
+        trackInfo.fadeInDuration > 0
+      ) {
+        const fadeInRef = `[a${segmentIndex}_fadein]`;
+        audioFilters.push(
+          applyFadeFilter(
+            delayedRef,
+            fadeInRef,
+            'in',
+            0,
+            trackInfo.fadeInDuration,
+          ),
+        );
+        fadedRef = fadeInRef;
+      }
+
+      // Apply fade out if specified (at the end of the audio segment)
+      // Fade out starts at (segment duration - fadeOutDuration) relative to the segment start
+      const segmentDuration = segment.duration;
+      if (
+        trackInfo.fadeOutDuration !== undefined &&
+        trackInfo.fadeOutDuration > 0 &&
+        segmentDuration > trackInfo.fadeOutDuration
+      ) {
+        const fadeOutStartTime = segmentDuration - trackInfo.fadeOutDuration;
+        const fadeOutRef = `[a${segmentIndex}_fadeout]`;
+        audioFilters.push(
+          applyFadeFilter(
+            fadedRef,
+            fadeOutRef,
+            'out',
+            fadeOutStartTime,
+            trackInfo.fadeOutDuration,
+          ),
+        );
+        fadedRef = fadeOutRef;
+      }
+
+      // Trim audio streams to their actual duration (no pre-padding)
+      // The amix filter will handle timing via adelay and pad automatically to match the longest stream
+      // This is RAM-efficient as we don't create full-duration buffers for each stream
+      const finalRef = `[a${segmentIndex}_final]`;
+
+      // Only trim if the segment would extend beyond total video duration
+      // Otherwise, let it be its natural length and amix will handle it
+      const segmentEndTime = segment.startTime + segment.duration;
+      if (segmentEndTime > totalVideoDuration) {
+        const trimDuration = totalVideoDuration - segment.startTime;
+        audioFilters.push(
+          `${fadedRef}atrim=duration=${trimDuration.toFixed(6)}${finalRef}`,
+        );
+        console.log(
+          `🎵 Trimmed audio stream ${segmentIndex} to ${trimDuration.toFixed(3)}s (would exceed video duration)`,
+        );
+      } else {
+        // No trimming needed, just copy
+        audioFilters.push(`${fadedRef}acopy${finalRef}`);
+        console.log(
+          `🎵 Audio stream ${segmentIndex} kept at natural duration ${segment.duration.toFixed(3)}s (RAM-efficient, no padding)`,
         );
       }
+
+      audioSegmentsWithTiming.push({
+        segment,
+        segmentIndex,
+        filterRef: finalRef,
+      });
+    } else {
+      console.warn(
+        `❌ Could not find file index for audio segment ${segmentIndex}`,
+      );
     }
   });
 
