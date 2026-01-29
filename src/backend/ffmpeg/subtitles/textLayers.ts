@@ -293,20 +293,22 @@ function mergeTextStyles(
 }
 
 /**
- * Generates FFmpeg drawtext filter for a single text segment
+ * Generates FFmpeg drawtext filter for a single text line
+ * For multi-line text, each line should be processed separately to center each line individually
  */
-export function generateDrawtextFilter(
+function generateDrawtextFilterForLine(
+  lineText: string,
+  lineIndex: number,
+  totalLines: number,
   segment: TextSegment,
-  globalStyle?: TextStyleOptions,
-  videoDimensions?: { width: number; height: number },
+  mergedStyle: TextStyleOptions,
+  videoDimensions: { width: number; height: number },
 ): string {
-  const mergedStyle = mergeTextStyles(globalStyle, segment.style);
-  const playResX = videoDimensions?.width || 1920;
-  const playResY = videoDimensions?.height || 1080;
+  const playResX = videoDimensions.width;
+  const playResY = videoDimensions.height;
 
-  // Apply text transformations
-  let text = applyTextTransform(segment.text, mergedStyle.textTransform);
-  text = escapeTextForDrawtext(text);
+  // Escape text for drawtext
+  const text = escapeTextForDrawtext(lineText);
 
   // Build drawtext parameters
   const params: string[] = [];
@@ -355,39 +357,61 @@ export function generateDrawtextFilter(
   // FFmpeg drawtext x/y coordinates:
   // - x: left edge of text by default
   // - Frontend coordinates are percentages (0-1 range) representing position as percentage of resolution
+  // - Align text based on payload textAlign without using text_align parameter (FFmpeg 6.0 compatibility)
+  const textAlign = mergedStyle.textAlign || 'center';
+
+  // Calculate line height for vertical positioning
+  const lineHeight = mergedStyle.lineHeight || 1.2;
+  const lineSpacing = Math.round(scaledFontSize * lineHeight);
+
   if (segment.position) {
     const coordX = segment.position.x; // Percentage from frontend: 0 = left, 1 = right
     const coordY = segment.position.y; // Percentage from frontend: 0 = top, 1 = bottom
-    const textAlign = mergedStyle.textAlign || 'center';
 
     // Calculate pixel positions by multiplying percentages with resolution
     const pixelX = coordX * playResX;
-    const pixelY = coordY * playResY;
+    const basePixelY = coordY * playResY;
 
-    console.log(
-      `[TextLayers] Position (from frontend): x=${coordX.toFixed(3)} (${Math.round(pixelX)}px), y=${coordY.toFixed(3)} (${Math.round(pixelY)}px), scale=${segment.position.scale}, rotation=${segment.position.rotation}°, align=${textAlign}`,
-    );
+    // Calculate Y position for this specific line
+    // Center the entire text block vertically, then offset each line
+    const totalTextHeight = totalLines * lineSpacing;
+    const startY = basePixelY - totalTextHeight / 2;
+    const lineY = startY + lineIndex * lineSpacing + scaledFontSize / 2;
 
-    // Calculate X position based on text alignment
-    // The coordinate represents the anchor point (left/center/right) of the text
+    // Calculate X position based on text alignment from payload
+    // Each line is centered individually relative to the text's position (not the entire screen)
     if (textAlign === 'center') {
-      // Center alignment: coordinate is center of text, so subtract half text width
+      // Center alignment: each line is centered relative to the text's X position
       params.push(`x=${Math.round(pixelX)}-text_w/2`);
     } else if (textAlign === 'right') {
-      // Right alignment: coordinate is right edge of text
+      // Right alignment: each line is right-aligned relative to the text's X position
       params.push(`x=${Math.round(pixelX)}-text_w`);
     } else {
-      // Left alignment: coordinate is left edge of text
+      // Left alignment: each line is left-aligned relative to the text's X position
       params.push(`x=${Math.round(pixelX)}`);
     }
 
-    // Calculate Y position
-    // For Y, we typically center vertically, so subtract half text height
-    params.push(`y=${Math.round(pixelY)}-text_h/2`);
+    // Y position for this specific line
+    params.push(`y=${Math.round(lineY)}`);
   } else {
-    // Default center position
-    params.push(`x=(w-text_w)/2`);
-    params.push(`y=(h-text_h)/2`);
+    // Default center position - align based on textAlign from payload
+    // Calculate Y position for this specific line
+    const lineSpacing = Math.round(scaledFontSize * lineHeight);
+    const totalTextHeight = totalLines * lineSpacing;
+    const startY = playResY / 2 - totalTextHeight / 2;
+    const lineY = startY + lineIndex * lineSpacing + scaledFontSize / 2;
+
+    if (textAlign === 'center') {
+      // Center alignment: each line is centered relative to screen center
+      params.push(`x=(w-text_w)/2`);
+    } else if (textAlign === 'right') {
+      // Right alignment: each line is right-aligned relative to screen
+      params.push(`x=w-text_w`);
+    } else {
+      // Left alignment
+      params.push(`x=0`);
+    }
+    params.push(`y=${Math.round(lineY)}`);
   }
 
   // Border/stroke (if strokeColor is set)
@@ -415,14 +439,6 @@ export function generateDrawtextFilter(
     params.push(`boxborderw=5`);
   }
 
-  // Line spacing for multi-line text
-  if (mergedStyle.lineHeight !== undefined && mergedStyle.lineHeight > 1) {
-    const extraSpacing = Math.round(
-      scaledFontSize * (mergedStyle.lineHeight - 1),
-    );
-    params.push(`line_spacing=${extraSpacing}`);
-  }
-
   // Enable expression for time-based visibility
   params.push(
     `enable='between(t,${segment.startTime.toFixed(3)},${segment.endTime.toFixed(3)})'`,
@@ -432,8 +448,80 @@ export function generateDrawtextFilter(
 }
 
 /**
+ * Generates FFmpeg drawtext filter(s) for a single text segment
+ * For multi-line text, returns an array of filters (one per line) to center each line individually
+ * @returns Array of filter strings - each line gets its own filter
+ */
+export function generateDrawtextFilters(
+  segment: TextSegment,
+  globalStyle?: TextStyleOptions,
+  videoDimensions?: { width: number; height: number },
+): string[] {
+  const mergedStyle = mergeTextStyles(globalStyle, segment.style);
+  const playResX = videoDimensions?.width || 1920;
+  const playResY = videoDimensions?.height || 1080;
+
+  // Apply text transformations
+  const text = applyTextTransform(segment.text, mergedStyle.textTransform);
+
+  // Split text into lines - preserve all lines including empty ones for proper positioning
+  const lines = text.split('\n');
+
+  // Log text alignment received from frontend
+  const textAlign = mergedStyle.textAlign || 'center';
+  console.log(
+    `[TextLayers] Text alignment from frontend: "${mergedStyle.textAlign}" (using: "${textAlign}"), lines: ${lines.length}`,
+  );
+
+  // Generate a filter for each line
+  const filters: string[] = [];
+  let validLineIndex = 0; // Track index of non-empty lines for Y positioning
+  const totalValidLines = lines.filter(
+    (l) => l.trim() !== '' || lines.length === 1,
+  ).length;
+
+  lines.forEach((line) => {
+    // Skip completely empty lines for rendering, but preserve their spacing
+    if (line.trim() === '' && lines.length > 1) {
+      return;
+    }
+
+    const lineFilter = generateDrawtextFilterForLine(
+      line,
+      validLineIndex, // Use valid line index for Y positioning
+      totalValidLines,
+      segment,
+      mergedStyle,
+      { width: playResX, height: playResY },
+    );
+    filters.push(lineFilter);
+    validLineIndex++;
+  });
+
+  return filters;
+}
+
+/**
+ * @deprecated Use generateDrawtextFilters instead - this only returns the first filter
+ * Kept for backward compatibility
+ */
+export function generateDrawtextFilter(
+  segment: TextSegment,
+  globalStyle?: TextStyleOptions,
+  videoDimensions?: { width: number; height: number },
+): string {
+  const filters = generateDrawtextFilters(
+    segment,
+    globalStyle,
+    videoDimensions,
+  );
+  return filters[0] || '';
+}
+
+/**
  * Generates all drawtext filters for text segments
  * Returns an array of filter strings to be added to the filter complex
+ * For multi-line text, creates separate filters for each line to center each line individually
  */
 export function generateTextLayerFilters(
   segments: TextSegment[],
@@ -449,12 +537,53 @@ export function generateTextLayerFilters(
     `📝 [TextLayers] Generating drawtext filters for ${segments.length} text segments`,
   );
 
-  const filters = segments.map((segment, index) => {
+  const filters: string[] = [];
+
+  segments.forEach((segment, segmentIndex) => {
     console.log(
-      `📝 [TextLayers] Processing segment ${index + 1}: "${segment.text.substring(0, 30)}..." [${segment.startTime.toFixed(3)}s-${segment.endTime.toFixed(3)}s]`,
+      `📝 [TextLayers] Processing segment ${segmentIndex + 1}: "${segment.text.substring(0, 30)}..." [${segment.startTime.toFixed(3)}s-${segment.endTime.toFixed(3)}s]`,
     );
 
-    return generateDrawtextFilter(segment, globalStyle, videoDimensions);
+    const mergedStyle = mergeTextStyles(globalStyle, segment.style);
+    const playResX = videoDimensions?.width || 1920;
+    const playResY = videoDimensions?.height || 1080;
+
+    // Apply text transformations
+    const text = applyTextTransform(segment.text, mergedStyle.textTransform);
+
+    // Split text into lines - preserve empty lines if they're part of the original text structure
+    const lines = text.split('\n');
+
+    // Log multi-line detection
+    if (lines.length > 1) {
+      console.log(
+        `📝 [TextLayers] Multi-line text detected: ${lines.length} lines, splitting into individual filters for center alignment`,
+      );
+    }
+
+    // Generate a filter for each line
+    let validLineIndex = 0; // Track index of non-empty lines for Y positioning
+    const totalValidLines = lines.filter(
+      (l) => l.trim() !== '' || lines.length === 1,
+    ).length;
+
+    lines.forEach((line) => {
+      // Skip completely empty lines for rendering, but preserve their spacing
+      if (line.trim() === '' && lines.length > 1) {
+        return;
+      }
+
+      const lineFilter = generateDrawtextFilterForLine(
+        line,
+        validLineIndex, // Use valid line index for Y positioning
+        totalValidLines,
+        segment,
+        mergedStyle,
+        { width: playResX, height: playResY },
+      );
+      filters.push(lineFilter);
+      validLineIndex++;
+    });
   });
 
   console.log(`✅ [TextLayers] Generated ${filters.length} drawtext filters`);

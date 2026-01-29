@@ -11,7 +11,10 @@ import {
   VideoProcessingContext,
 } from '../schema/ffmpegConfig';
 import { getFontDirectoriesForFamilies } from '../subtitles/fontMapper';
-import { generateDrawtextFilter } from '../subtitles/textLayers';
+import {
+  generateDrawtextFilter,
+  generateDrawtextFilters,
+} from '../subtitles/textLayers';
 import { findFileIndexForSegment, processAudioTimeline } from './audioHandling';
 import type { HardwareAcceleration } from './hardwareAccelerationDetector';
 import {
@@ -1748,23 +1751,34 @@ export function buildSeparateTimelineFilterComplex(
         `   ✅ Overlaid image at layer ${overlay.layer} -> [${compositeLabel}]`,
       );
     } else if (overlay.type === 'text') {
-      // Text overlay
+      // Text overlay - handle multi-line text by chaining multiple drawtext filters
       const textSegment = overlay.segment;
-      const drawtextFilter = generateDrawtextFilter(
+      const drawtextFilters = generateDrawtextFilters(
         textSegment,
         job.operations.textStyle,
         job.videoDimensions,
       );
 
-      const compositeLabel = isLast
-        ? 'video_composite'
-        : `composite_${overlay.layer}_text`;
-      videoFilters.push(
-        `[${currentCompositeLabel}]${drawtextFilter}[${compositeLabel}]`,
-      );
-      currentCompositeLabel = compositeLabel;
+      // Chain multiple filters for multi-line text
+      let currentInput = currentCompositeLabel;
+      drawtextFilters.forEach((filter, filterIndex) => {
+        const isLastFilter = filterIndex === drawtextFilters.length - 1;
+        const compositeLabel = isLast && isLastFilter
+          ? 'video_composite'
+          : `composite_${overlay.layer}_text_${filterIndex}`;
+
+        videoFilters.push(
+          `[${currentInput}]${filter}[${compositeLabel}]`,
+        );
+        currentInput = compositeLabel;
+
+        if (isLastFilter) {
+          currentCompositeLabel = compositeLabel;
+        }
+      });
+
       console.log(
-        `   ✅ Applied text overlay at layer ${overlay.layer} -> [${compositeLabel}]`,
+        `   ✅ Applied ${drawtextFilters.length} text overlay filter(s) at layer ${overlay.layer} -> [${currentCompositeLabel}]`,
       );
     }
   }

@@ -208,11 +208,6 @@ export function processAudioTimeline(
     return { audioFilters, audioConcatInputs };
   }
 
-  // ============================================
-  // RAM OPTIMIZATION: Analyze duplicate audio inputs
-  // Note: We DON'T use asplit filters because they require buffering the entire stream
-  // Instead, we rely on FFmpeg's internal optimization for sequential access
-  // ============================================
   const audioInputUsageCount = new Map<number, number>();
 
   // Count how many times each audio input is used (for logging)
