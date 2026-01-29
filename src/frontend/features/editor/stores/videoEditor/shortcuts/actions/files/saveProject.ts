@@ -1,23 +1,17 @@
-/**
- * Save Project Action Handler (Ctrl+S)
- * Forces an immediate save and shows feedback
- */
-
-import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
+import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
 import { toast } from 'sonner';
 
 export const saveProjectAction = async () => {
   try {
-    const projectStore = useProjectStore.getState();
-    const currentProject = projectStore.currentProject;
+    const videoEditorStore = useVideoEditorStore.getState();
+    const { currentProjectId, lastSavedAt, saveProjectData } = videoEditorStore;
 
-    if (!currentProject) {
-      toast.info('No project to save');
+    if (!currentProjectId) {
+      toast.info('No project open to save');
       return;
     }
 
     // Check if already saved recently (within 2 seconds)
-    const { lastSavedAt } = projectStore;
     if (lastSavedAt) {
       const timeSinceLastSave = Date.now() - new Date(lastSavedAt).getTime();
       if (timeSinceLastSave < 2000) {
@@ -29,7 +23,7 @@ export const saveProjectAction = async () => {
     }
 
     // Force an immediate save
-    await projectStore.saveCurrentProject();
+    await saveProjectData();
 
     // Show feedback with disk icon
     toast.success('💾 All changes saved', {

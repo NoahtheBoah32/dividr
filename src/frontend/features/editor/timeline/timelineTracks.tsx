@@ -129,6 +129,7 @@ const TrackItemWrapper: React.FC<{
   isSplitModeActive: boolean;
   isDuplicationFeedback: boolean;
   isProxyProcessing: boolean;
+  isTranscoding: boolean;
   children: React.ReactNode;
   onClick: (e: React.MouseEvent) => void;
   onMouseDown: (e: React.MouseEvent) => void;
@@ -143,6 +144,7 @@ const TrackItemWrapper: React.FC<{
     isSplitModeActive,
     isDuplicationFeedback,
     isProxyProcessing,
+    isTranscoding,
     children,
     onClick,
     onMouseDown,
@@ -176,6 +178,7 @@ const TrackItemWrapper: React.FC<{
     };
 
     const getCursorClass = () => {
+      if (isTranscoding) return 'cursor-not-allowed';
       if (isResizing) return 'cursor-trim';
       if (isSplitModeActive) return 'cursor-split';
       if (track.locked || isProxyProcessing) return 'cursor-not-allowed';
@@ -194,6 +197,7 @@ const TrackItemWrapper: React.FC<{
           track.visible ? 'opacity-100' : 'opacity-50',
           isDuplicationFeedback ? 'track-duplicate-feedback z-50' : 'z-10',
           isBeingDragged ? 'opacity-0' : '',
+          isTranscoding ? 'opacity-50 grayscale' : '',
         )}
         style={{
           transform: `translate3d(${left}px, 0, 0)`,
@@ -257,6 +261,19 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
       return mediaItem?.proxy?.status === 'processing';
     }, [mediaLibrary, track.source, track.mediaId, track.type]);
 
+    // Check if transcoding is in progress (for AVI videos or other incompatible formats)
+    const isTranscoding = useMemo(() => {
+      const mediaItem = mediaLibrary.find(
+        (m) =>
+          m.source === track.source ||
+          (track.mediaId && m.id === track.mediaId),
+      );
+      return (
+        mediaItem?.transcoding?.status === 'pending' ||
+        mediaItem?.transcoding?.status === 'processing'
+      );
+    }, [mediaLibrary, track.source, track.mediaId]);
+
     // Tool mode subscriptions for resetting text-edit mode on track interaction
     const previewInteractionMode = useVideoEditorStore(
       (state) => state.preview.interactionMode,
@@ -295,6 +312,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
 
     const handleClick = useCallback(
       (e: React.MouseEvent) => {
+        if (isTranscoding) return;
         if (isSplitModeActive || e.button === 2) return;
 
         // Reset text tool mode when selecting tracks
@@ -309,6 +327,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
       },
       [
         isSplitModeActive,
+        isTranscoding,
         onSelect,
         previewInteractionMode,
         setPreviewInteractionMode,
@@ -320,6 +339,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         if (
           track.locked ||
           isProxyProcessing ||
+          isTranscoding ||
           isSplitModeActive ||
           e.button === 2
         )
@@ -361,6 +381,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         track.type,
         isSplitModeActive,
         isProxyProcessing,
+        isTranscoding,
         previewInteractionMode,
         setPreviewInteractionMode,
       ],
@@ -368,7 +389,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
 
     const handleResizeMouseDown = useCallback(
       (side: 'left' | 'right', e: React.MouseEvent) => {
-        if (isSplitModeActive || isProxyProcessing) return;
+        if (isSplitModeActive || isProxyProcessing || isTranscoding) return;
         e.stopPropagation();
         e.preventDefault();
 
@@ -393,6 +414,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         track.endFrame,
         isSplitModeActive,
         isProxyProcessing,
+        isTranscoding,
         isSelected,
         onSelect,
       ],
@@ -836,6 +858,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
           isSplitModeActive={isSplitModeActive}
           isDuplicationFeedback={isDuplicationFeedback}
           isProxyProcessing={isProxyProcessing}
+          isTranscoding={isTranscoding}
           onClick={handleClick}
           onMouseDown={handleMouseDown}
         >

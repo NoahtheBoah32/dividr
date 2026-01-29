@@ -1384,6 +1384,20 @@ async function processSpriteSheetsInBackground(
             clearTimeout(processTimeout);
             if (code === 0) {
               console.log(`✅ Sprite sheet ${i + 1} generated successfully`);
+
+              // Progressive loading: Notify renderer that this sheet is ready
+              if (mainWindow) {
+                mainWindow.webContents.send('sprite-sheet-sheet-ready', {
+                  jobId,
+                  sheetIndex: i,
+                  totalSheets: job.commands.length,
+                  sheetPath: path.join(
+                    absoluteOutputDir,
+                    `sprite_${i.toString().padStart(3, '0')}.jpg`,
+                  ),
+                });
+              }
+
               resolve({ success: true });
             } else {
               console.error(

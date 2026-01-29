@@ -120,9 +120,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ) =>
     ipcRenderer.on('sprite-sheet-job-error', (event, data) => callback(data)),
 
+  // Progressive loading: Per-sheet ready event
+  onSpriteSheetSheetReady: (
+    callback: (data: {
+      jobId: string;
+      sheetIndex: number;
+      totalSheets: number;
+      sheetPath: string;
+    }) => void,
+  ) =>
+    ipcRenderer.on('sprite-sheet-sheet-ready', (event, data) => callback(data)),
+
   removeSpriteSheetListeners: () => {
     ipcRenderer.removeAllListeners('sprite-sheet-job-completed');
     ipcRenderer.removeAllListeners('sprite-sheet-job-error');
+    ipcRenderer.removeAllListeners('sprite-sheet-sheet-ready');
   },
 
   // FFmpeg diagnostics

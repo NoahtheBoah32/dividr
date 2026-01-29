@@ -70,6 +70,13 @@ export interface MediaLibraryItem {
     }>;
     cacheKey: string;
     generatedAt?: number;
+    /** Progressive generation tracking for streaming sprite sheet loading */
+    generation?: {
+      status: 'idle' | 'generating' | 'completed' | 'failed';
+      totalSheets: number;
+      completedSheets: number;
+      jobId?: string;
+    };
   };
   proxy?: {
     status: 'none' | 'processing' | 'ready' | 'failed';

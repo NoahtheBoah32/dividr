@@ -257,6 +257,15 @@ declare global {
       onSpriteSheetJobError: (
         callback: (data: { jobId: string; error: string }) => void,
       ) => void;
+      // Progressive loading: Per-sheet ready event
+      onSpriteSheetSheetReady: (
+        callback: (data: {
+          jobId: string;
+          sheetIndex: number;
+          totalSheets: number;
+          sheetPath: string;
+        }) => void,
+      ) => void;
       removeSpriteSheetListeners: () => void;
 
       // ========================================================================

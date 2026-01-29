@@ -1,17 +1,10 @@
 import {
   SpriteSheet,
   SpriteSheetThumbnail,
-  default as VideoSpriteSheetGenerator,
 } from '@/backend/frontend_use/videoSpriteSheetGenerator';
 import { Loader2 } from 'lucide-react';
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import { useMediaReadiness } from '../../editor/hooks/useMediaReadiness';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSpriteSheetProgress } from '../../editor/hooks/useMediaReadiness';
 import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
 import { getDisplayFps } from '../stores/videoEditor/types/timeline.types';
 
@@ -40,6 +33,25 @@ interface HybridTile {
   repeatIndex: number; // Which repeat of the thumbnail this is
   clipOffset: number; // How much to offset the background for partial tiles
 }
+
+// Placeholder for tiles from sprite sheets not yet generated (progressive loading)
+const PlaceholderTile: React.FC<{
+  tileStartX: number;
+  tileWidth: number;
+  height: number;
+  viewportOffset: number;
+}> = React.memo(({ tileStartX, tileWidth, height, viewportOffset }) => (
+  <div
+    className="absolute top-0 bg-gray-700/40"
+    style={{
+      transform: `translate3d(${tileStartX - viewportOffset}px, 0, 0)`,
+      width: tileWidth,
+      height,
+      willChange: 'transform',
+    }}
+  />
+));
+PlaceholderTile.displayName = 'PlaceholderTile';
 
 // GPU-accelerated sprite renderer component
 const GPUAcceleratedSprite: React.FC<{
@@ -140,7 +152,9 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         ],
       );
 
-      const isMediaReady = useMediaReadiness(track.mediaId);
+      // Progressive loading: Track sprite sheet generation progress
+      const { completedSheets, totalSheets, isComplete } =
+        useSpriteSheetProgress(track.mediaId);
 
       const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
       const mediaItem = useMemo(() => {
@@ -335,138 +349,56 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         updateViewport();
       }, [width, zoomLevel]);
 
-      // Sprite sheet generation - with job state coordination
-      const isGeneratingSpriteSheet = useVideoEditorStore(
-        (state) => state.isGeneratingSpriteSheet,
-      );
-
-      const generateSpriteSheets = useCallback(async () => {
-        if (!track.source || track.type !== 'video') return;
-
-        const videoPath = track.tempFilePath || track.source;
-        if (videoPath.startsWith('blob:')) {
-          setState((prev) => ({
-            ...prev,
-            isLoading: false,
-            error: 'Blob URLs not supported',
-          }));
-          return;
+      // CONSUME-ONLY: Read sprite sheets from store, never trigger generation
+      // Generation is handled by mediaLibrarySlice during import
+      // CRITICAL: Support progressive loading - don't require success=true
+      // Sprite sheets are added progressively as they complete, before success is set
+      const storeSpriteSheets = useMemo(() => {
+        // First check from store via getSpriteSheetsBySource
+        const preloaded = getSpriteSheetsBySource(track.source);
+        // Return sprite sheets even during progressive loading (success may be false)
+        if (preloaded?.spriteSheets && preloaded.spriteSheets.length > 0) {
+          return preloaded.spriteSheets;
         }
 
-        // Check preloaded sheets first
-        const preloaded = getSpriteSheetsBySource(track.source);
-        if (preloaded?.success && preloaded.spriteSheets.length > 0) {
+        // Fallback to mediaItem.spriteSheets - also support progressive loading
+        if (mediaItem?.spriteSheets?.spriteSheets?.length) {
+          return mediaItem.spriteSheets.spriteSheets;
+        }
+
+        return [];
+      }, [getSpriteSheetsBySource, track.source, mediaItem?.spriteSheets]);
+
+      // Sync store sprite sheets to local state for rendering
+      useEffect(() => {
+        if (storeSpriteSheets.length > 0) {
           setState({
-            spriteSheets: preloaded.spriteSheets,
+            spriteSheets: storeSpriteSheets,
             isLoading: false,
             error: null,
           });
-          return;
         }
+      }, [storeSpriteSheets]);
 
-        // CRITICAL: Defer generation if proxy is still processing
-        // This allows proxy generation to finish first (same as mediaLibrarySlice logic)
-        if (isProxyProcessing) {
-          console.log(
-            `⏳ [VideoSpriteSheetStrip] Deferring sprite sheet for: ${track.name} (waiting for proxy)`,
-          );
-          // Don't generate until proxy is ready
-          return;
-        }
+      // Track generation status from media library (consume-only, no triggers)
+      const isGenerating = useMemo(() => {
+        const jobState = mediaItem?.jobStates?.spriteSheet;
+        return jobState === 'processing';
+      }, [mediaItem?.jobStates?.spriteSheet]);
 
-        // CRITICAL: Check job state from media library for idempotency
-        // This prevents regeneration when track is dropped on timeline during active generation
-        const currentMediaItem = mediaItem;
-        const jobState = currentMediaItem?.jobStates?.spriteSheet;
-
-        if (jobState === 'processing') {
-          console.log(
-            `⏳ [VideoSpriteSheetStrip] Sprite sheet job already processing for track: ${track.name} (skipping)`,
-          );
-          // Don't set loading state - let the media library handle it
-          return;
-        }
-
-        // Also check if already generating via store flag
-        if (track.mediaId && isGeneratingSpriteSheet(track.mediaId)) {
-          console.log(
-            `⏳ [VideoSpriteSheetStrip] Sprite sheet already generating via store for: ${track.name} (skipping)`,
-          );
-          return;
-        }
-
-        // Check cache
-        try {
-          const cached = await VideoSpriteSheetGenerator.getCachedSpriteSheets({
-            videoPath,
-            duration: trackMetrics.durationSeconds,
-            fps: displayFps,
-            sourceStartTime: trackMetrics.trackStartTime,
-            thumbWidth: 120,
-            thumbHeight: 68,
-          });
-
-          if (cached?.success) {
-            setState({
-              spriteSheets: cached.spriteSheets,
-              isLoading: false,
-              error: null,
-            });
-            return;
-          }
-        } catch (err) {
-          console.warn('Cache check failed:', err);
-        }
-
-        // Generate if needed - but only if not already loading locally
-        if (state.isLoading) return;
-
-        setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
-        try {
-          const result = await VideoSpriteSheetGenerator.generateForTrack(
-            track,
-            displayFps,
-          );
-
-          if (result.success) {
-            setState({
-              spriteSheets: result.spriteSheets,
-              isLoading: false,
-              error: null,
-            });
-          } else {
-            setState((prev) => ({
-              ...prev,
-              isLoading: false,
-              error: result.error || 'Generation failed',
-            }));
-          }
-        } catch (error) {
-          setState((prev) => ({
-            ...prev,
-            isLoading: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          }));
-        }
-      }, [
-        track.source,
-        track.tempFilePath,
-        track.type,
-        track.name,
-        track.mediaId,
-        trackMetrics,
-        displayFps,
-        getSpriteSheetsBySource,
-        state.isLoading,
-        mediaItem,
-        isGeneratingSpriteSheet,
-        isProxyProcessing,
-      ]);
-
+      // Update loading state based on generation status
+      // CRITICAL: Only show loading if we have NO sheets yet
+      // Once we have any sheets, hide loading to enable progressive display
       useEffect(() => {
-        generateSpriteSheets();
-      }, [generateSpriteSheets]);
+        if (isGenerating && state.spriteSheets.length === 0) {
+          setState((prev) => ({ ...prev, isLoading: true }));
+        } else if (state.spriteSheets.length > 0 && state.isLoading) {
+          // Have sheets now - hide loading regardless of generation status
+          setState((prev) => ({ ...prev, isLoading: false }));
+        } else if (!isGenerating && state.isLoading) {
+          setState((prev) => ({ ...prev, isLoading: false }));
+        }
+      }, [isGenerating, state.spriteSheets.length, state.isLoading]);
 
       // Render with GPU acceleration
       return (
@@ -480,16 +412,13 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
             willChange: 'transform',
           }}
         >
-          {/* Status indicators */}
-          {/* Show loading state if media is not ready (transcoding, generating sprites/waveform) */}
-          {!isMediaReady && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-800 z-20">
-              {/* Sprite generation loading indicator removed */}
+          {/* Status indicators - progressive loading */}
+          {/* Show progress indicator during sprite generation */}
+          {!isComplete && state.isLoading && totalSheets > 0 && (
+            <div className="absolute top-0 left-0 px-2 py-0.5 bg-black/60 rounded-br text-xs text-gray-300 z-10 pointer-events-none">
+              {completedSheets}/{totalSheets} sheets
             </div>
           )}
-
-          {/* Proxy generation - no visual overlay, just defer sprite rendering */}
-          {/* Sprites will naturally not render until proxy is ready via isMediaReady check */}
 
           {isTranscoding && !state.isLoading && !track.proxyBlocked && (
             <div className="absolute top-0 left-0 flex items-center space-x-2 px-2 py-1 bg-purple-900/90 backdrop-blur-sm rounded-r border border-purple-700/50 z-10 pointer-events-none">
@@ -514,19 +443,17 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
           {/* Background */}
           <div className="absolute inset-0 bg-gray-800" />
 
-          {/* GPU-accelerated sprite container */}
-          {isMediaReady && (
-            <div
-              className="absolute inset-0"
-              style={{
-                transform: 'translateZ(0)',
-                willChange: 'contents',
-              }}
-            >
-              {visibleTiles.map((tile) => {
-                const sheet = state.spriteSheets[tile.thumbnail.sheetIndex];
-                if (!sheet) return null;
-
+          {/* GPU-accelerated sprite container - renders progressively */}
+          <div
+            className="absolute inset-0"
+            style={{
+              transform: 'translateZ(0)',
+              willChange: 'contents',
+            }}
+          >
+            {visibleTiles.map((tile) => {
+              const sheet = state.spriteSheets[tile.thumbnail.sheetIndex];
+              if (sheet) {
                 return (
                   <GPUAcceleratedSprite
                     key={tile.id}
@@ -536,9 +463,20 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
                     viewportOffset={viewportBounds.start}
                   />
                 );
-              })}
-            </div>
-          )}
+              } else {
+                // Placeholder for tiles from sheets not yet generated
+                return (
+                  <PlaceholderTile
+                    key={tile.id}
+                    tileStartX={tile.tileStartX}
+                    tileWidth={tile.tileWidth}
+                    height={height}
+                    viewportOffset={viewportBounds.start}
+                  />
+                );
+              }
+            })}
+          </div>
 
           {/* Track name overlay */}
           <div

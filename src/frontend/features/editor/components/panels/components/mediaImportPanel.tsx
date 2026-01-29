@@ -138,6 +138,12 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
   const hideBatchDuplicateDialog = useVideoEditorStore(
     (state) => state.hideBatchDuplicateDialog,
   );
+  const transcodingBlockedMedia = useVideoEditorStore(
+    (state) => state.transcodingBlockedMedia,
+  );
+  const setTranscodingBlockedMedia = useVideoEditorStore(
+    (state) => state.setTranscodingBlockedMedia,
+  );
 
   // Check if any transcription is in progress (from media library or timeline)
   const isAnyTranscribing = !!(
@@ -872,14 +878,17 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
         file.isGeneratingSubtitles ||
         file.isTranscoding;
 
+      // Prevent interactions if transcoding (AVI import)
+      const isLocked = file.isTranscoding;
+
       return (
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div className="flex flex-col space-y-2">
               <div
-                draggable={!file.isOnTimeline}
+                draggable={!file.isOnTimeline && !isLocked}
                 onDragStart={(e) => {
-                  if (!file.isOnTimeline) {
+                  if (!file.isOnTimeline && !isLocked) {
                     handleMediaDragStart(e, file.id);
                   } else {
                     e.preventDefault();
@@ -887,11 +896,14 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
                 }}
                 className={cn(
                   'group relative h-[98px] rounded-md transition-all duration-200 overflow-hidden',
-                  !file.isOnTimeline && 'cursor-grab active:cursor-grabbing',
+                  !file.isOnTimeline &&
+                    !isLocked &&
+                    'cursor-grab active:cursor-grabbing',
                   file.isOnTimeline && 'cursor-default',
+                  isLocked && 'cursor-not-allowed opacity-60',
                 )}
                 onClick={async () => {
-                  if (!file.isOnTimeline) {
+                  if (!file.isOnTimeline && !isLocked) {
                     await handleAddToTimeline(file.id);
                   }
                 }}
@@ -961,18 +973,20 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
                 )}
                 <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   <div className="absolute bottom-1 right-2">
-                    <Button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeFile(file.id);
-                      }}
-                      variant="ghost"
-                      size="sm"
-                      className="!size-5 !p-1.5 rounded-sm bg-accent/20"
-                      title="Remove from media library"
-                    >
-                      <Trash className="h-3 w-3" />
-                    </Button>
+                    {!isLocked && (
+                      <Button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFile(file.id);
+                        }}
+                        variant="ghost"
+                        size="sm"
+                        className="!size-5 !p-1.5 rounded-sm bg-accent/20"
+                        title="Remove from media library"
+                      >
+                        <Trash className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 </div>
                 {file.isOnTimeline && (
@@ -991,13 +1005,14 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           <ContextMenuContent className="w-fit !text-xs">
             <ContextMenuItem
               onClick={() => removeFile(file.id)}
+              disabled={isLocked}
               className="group text-red-500 dark:text-red-400 focus:text-red-600 dark:focus:text-red-300 data-[highlighted]:bg-red-500/10 dark:data-[highlighted]:bg-red-400/20 data-[highlighted]:text-red-600 dark:data-[highlighted]:text-red-300"
             >
               <Trash2 className="h-3 w-3 text-current" />
               <span>Delete</span>
             </ContextMenuItem>
             <ContextMenuItem
-              disabled={file.isOnTimeline}
+              disabled={file.isOnTimeline || isLocked}
               onClick={() => handleAddToTimeline(file.id)}
             >
               <PlusCircle className="h-4 w-4" />
@@ -1366,6 +1381,33 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
         onUseAnyway={handleProxyUseAnyway}
         onWaitForOptimization={handleProxyWaitForOptimization}
       />
+
+      {/* Transcoding Blocked Dialog */}
+      <AlertDialog
+        open={!!transcodingBlockedMedia}
+        onOpenChange={(open) => {
+          if (!open) setTranscodingBlockedMedia(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Transcoding in Progress</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{transcodingBlockedMedia?.name}" is currently being converted for
+              compatibility. Please wait for transcoding to complete before
+              adding it to the timeline.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setTranscodingBlockedMedia(null)}>
+              Got it
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <div className="absolute top-4 right-4 z-50">
+        {/* Placeholder for future blocking mechanism if needed */}
+      </div>
     </>
   );
 };

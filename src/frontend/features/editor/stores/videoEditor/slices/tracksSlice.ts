@@ -391,21 +391,18 @@ export const createTracksSlice: StateCreator<
         state.tracks,
         [], // No tracks to exclude for new additions
       );
+      // Audio row index: use the provided trackRowIndex if available, otherwise calculate
+      // This allows audio to share rows with existing audio (CapCut behavior)
       const audioRowIndex =
         trackData.trackRowIndex ??
         getNextAvailableRowIndex(state.tracks, 'audio');
 
-      // Linked audio should START AT THE SAME POSITION as its video
-      // NOT after existing independent audio tracks (CapCut behavior)
-      // The linked audio follows the video's timeline position, not the audio track's consecutive placement
-      const linkedAudioStartFrame = findNearestAvailablePositionInRow(
-        videoStartFrame, // <-- Use video's start frame, not consecutive audio end
-        duration,
-        'audio',
-        audioRowIndex,
-        state.tracks,
-        [],
-      );
+      // CRITICAL FIX: Linked audio MUST start at the EXACT same position as its video
+      // Do NOT use findNearestAvailablePositionInRow - it shifts audio if there's existing content
+      // Linked audio should overlap with independent audio if they share a row - that's allowed
+      // The collision detection is only for preventing clips from covering each other during moves,
+      // but for initial placement of linked video+audio, they must be time-locked
+      const linkedAudioStartFrame = videoStartFrame;
 
       const mediaItem = state.mediaLibrary?.find(
         (item: any) =>
@@ -806,6 +803,21 @@ export const createTracksSlice: StateCreator<
       (item: any) => item.id === mediaId,
     );
     if (!mediaItem) {
+      return '';
+    }
+
+    // Check for transcoding status first
+    if (
+      mediaItem.transcoding?.status === 'pending' ||
+      mediaItem.transcoding?.status === 'processing'
+    ) {
+      console.log(
+        `🚫 Blocking timeline addition for transcoding media: ${mediaItem.name}`,
+      );
+      // Trigger global blocked modal if available
+      if (state.setTranscodingBlockedMedia) {
+        state.setTranscodingBlockedMedia(mediaItem);
+      }
       return '';
     }
 
@@ -1504,7 +1516,7 @@ export const createTracksSlice: StateCreator<
           };
         }
 
-        // Also move linked track to the same row
+        // Also move linked track (audio follows video, video follows audio)
         if (trackToMove.isLinked && trackToMove.linkedTrackId === track.id) {
           const linkedDuration = track.endFrame - track.startFrame;
 
@@ -1512,27 +1524,37 @@ export const createTracksSlice: StateCreator<
           const originalOffset = track.startFrame - trackToMove.startFrame;
           let linkedFinalStart = finalStartFrame + originalOffset;
 
-          const linkedTargetRowIndex = normalizedTargetIndex; // Same row change
+          // CRITICAL FIX: For linked video+audio pairs, the audio MUST stay time-locked
+          // to the video. Do NOT use collision detection to shift the audio away.
+          // Linked audio can overlap with independent audio - that's allowed (CapCut behavior).
+          // Only apply collision detection if the linked track is a VIDEO (not audio).
+          const isLinkedAudio = track.type === 'audio';
 
-          const linkedWouldCollide = hasCollision(
-            linkedFinalStart,
-            linkedFinalStart + linkedDuration,
-            track.type,
-            linkedTargetRowIndex,
-            state.tracks,
-            { excludeTrackIds: excludeIds },
-          );
+          if (!isLinkedAudio) {
+            // For linked video tracks, still do collision detection
+            const linkedTargetRowIndex = normalizedTargetIndex;
 
-          if (linkedWouldCollide) {
-            linkedFinalStart = findNearestAvailablePositionInRowWithPlayhead(
+            const linkedWouldCollide = hasCollision(
               linkedFinalStart,
-              linkedDuration,
+              linkedFinalStart + linkedDuration,
               track.type,
               linkedTargetRowIndex,
               state.tracks,
-              excludeIds,
+              { excludeTrackIds: excludeIds },
             );
+
+            if (linkedWouldCollide) {
+              linkedFinalStart = findNearestAvailablePositionInRowWithPlayhead(
+                linkedFinalStart,
+                linkedDuration,
+                track.type,
+                linkedTargetRowIndex,
+                state.tracks,
+                excludeIds,
+              );
+            }
           }
+          // For linked audio: linkedFinalStart stays as calculated (time-locked to video)
 
           return {
             ...track,

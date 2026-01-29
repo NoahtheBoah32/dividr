@@ -25,7 +25,9 @@ export const createGlobalShortcuts = (
     priority: 'high',
     handler: (e) => {
       e?.preventDefault();
-      getStore().togglePlayback();
+      const store = getStore();
+      if (store.render?.isRendering) return;
+      store.togglePlayback();
     },
   },
   {
@@ -38,6 +40,7 @@ export const createGlobalShortcuts = (
       e?.preventDefault();
       // Always get fresh state from store
       const store = getStore();
+      if (store.render?.isRendering) return;
       const currentFrame = store.timeline.currentFrame;
       store.setCurrentFrame(Math.max(0, currentFrame - 1));
     },
@@ -52,6 +55,7 @@ export const createGlobalShortcuts = (
       e?.preventDefault();
       // Always get fresh state from store
       const store = getStore();
+      if (store.render?.isRendering) return;
       const currentFrame = store.timeline.currentFrame;
       store.setCurrentFrame(Math.min(effectiveEndFrame - 1, currentFrame + 1));
     },
@@ -66,6 +70,7 @@ export const createGlobalShortcuts = (
       e?.preventDefault();
       // Always get fresh state from store
       const store = getStore();
+      if (store.render?.isRendering) return;
       const currentFrame = store.timeline.currentFrame;
       const fps = store.timeline.fps || 30;
       // Use 5 frames for most frame rates, 10 for higher frame rates (60fps+)
@@ -83,6 +88,7 @@ export const createGlobalShortcuts = (
       e?.preventDefault();
       // Always get fresh state from store
       const store = getStore();
+      if (store.render?.isRendering) return;
       const currentFrame = store.timeline.currentFrame;
       const fps = store.timeline.fps || 30;
       // Use 5 frames for most frame rates, 10 for higher frame rates (60fps+)
@@ -102,6 +108,7 @@ export const createGlobalShortcuts = (
       e?.preventDefault();
       // Get fresh state from store
       const store = getStore();
+      if (store.render?.isRendering) return;
       const currentFrame = store.timeline.currentFrame;
       const tracks = store.tracks || [];
 
@@ -136,6 +143,7 @@ export const createGlobalShortcuts = (
       e?.preventDefault();
       // Get fresh state from store
       const store = getStore();
+      if (store.render?.isRendering) return;
       const currentFrame = store.timeline.currentFrame;
       const tracks = store.tracks || [];
 

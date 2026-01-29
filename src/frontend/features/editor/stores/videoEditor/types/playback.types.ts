@@ -15,6 +15,7 @@ export interface PlaybackState {
   // Transform drag state for canvas element transforms (video, image, text, subtitle)
   isDraggingTransform: boolean;
   wasPlayingBeforeTransformDrag: boolean;
+  wasPlayingBeforeRender: boolean;
 
   // Force drag tracking for progressive boundary bypass
   dragStartFrame: number | null; // Initial position when drag started

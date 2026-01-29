@@ -388,24 +388,27 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
       const isSelected = selectedTrackIds.includes(track.id);
 
       if (track.type === 'image') {
-        return renderImageTrack(
-          track,
-          zIndex,
-          isSelected,
-          renderScale,
-          previewScale,
-          baseVideoWidth,
-          baseVideoHeight,
-          actualWidth,
-          actualHeight,
-          panX,
-          panY,
-          interactionMode,
-          onImageTransformUpdate,
-          onImageSelect,
-          onRotationStateChange,
-          onDragStateChange,
-          getTopElementAtPoint,
+        return (
+          <ImageTrackLayer
+            key={track.id}
+            track={track}
+            zIndex={zIndex}
+            isSelected={isSelected}
+            renderScale={renderScale}
+            previewScale={previewScale}
+            baseVideoWidth={baseVideoWidth}
+            baseVideoHeight={baseVideoHeight}
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={panX}
+            panY={panY}
+            interactionMode={interactionMode}
+            onTransformUpdate={onImageTransformUpdate}
+            onSelect={onImageSelect}
+            onRotationStateChange={onRotationStateChange}
+            onDragStateChange={onDragStateChange}
+            getTopElementAtPoint={getTopElementAtPoint}
+          />
         );
       }
 
@@ -916,25 +919,68 @@ function renderSubtitleContent(
   );
 }
 
-function renderImageTrack(
-  track: VideoTrack,
-  zIndex: number,
-  isSelected: boolean,
-  renderScale: number,
-  previewScale: number,
-  baseVideoWidth: number,
-  baseVideoHeight: number,
-  actualWidth: number,
-  actualHeight: number,
-  panX: number,
-  panY: number,
-  interactionMode: InteractionMode | undefined,
-  onTransformUpdate: (id: string, t: any) => void,
-  onSelect: (id: string) => void,
-  onRotationStateChange: (r: boolean) => void,
-  onDragStateChange: (d: boolean, p?: any) => void,
-  getTopElementAtPoint?: (screenX: number, screenY: number) => string | null,
-) {
+// Refactored ImageTrackLayer component to handle GIF freezing
+const ImageTrackLayer: React.FC<{
+  track: VideoTrack;
+  zIndex: number;
+  isSelected: boolean;
+  renderScale: number;
+  previewScale: number;
+  baseVideoWidth: number;
+  baseVideoHeight: number;
+  actualWidth: number;
+  actualHeight: number;
+  panX: number;
+  panY: number;
+  interactionMode: InteractionMode | undefined;
+  onTransformUpdate: (id: string, t: any) => void;
+  onSelect: (id: string) => void;
+  onRotationStateChange: (r: boolean) => void;
+  onDragStateChange: (d: boolean, p?: any) => void;
+  getTopElementAtPoint?: (screenX: number, screenY: number) => string | null;
+}> = ({
+  track,
+  zIndex,
+  isSelected,
+  renderScale,
+  previewScale,
+  baseVideoWidth,
+  baseVideoHeight,
+  actualWidth,
+  actualHeight,
+  panX,
+  panY,
+  interactionMode,
+  onTransformUpdate,
+  onSelect,
+  onRotationStateChange,
+  onDragStateChange,
+  getTopElementAtPoint,
+}) => {
+  const isRendering = useVideoEditorStore((state) => state.render?.isRendering);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [frozenSrc, setFrozenSrc] = useState<string | null>(null);
+
+  // Freeze GIF/Image when rendering starts
+  useEffect(() => {
+    if (isRendering && imgRef.current) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = imgRef.current.naturalWidth;
+        canvas.height = imgRef.current.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(imgRef.current, 0, 0);
+          setFrozenSrc(canvas.toDataURL());
+        }
+      } catch (e) {
+        console.warn('Failed to freeze image for render', e);
+      }
+    } else if (!isRendering) {
+      setFrozenSrc(null);
+    }
+  }, [isRendering]);
+
   const url = track.previewUrl || track.source;
   const w = track.width || baseVideoWidth;
   const h = track.height || baseVideoHeight;
@@ -946,6 +992,8 @@ function renderImageTrack(
     width: w,
     height: h,
   };
+
+  const displaySrc = isRendering && frozenSrc ? frozenSrc : url;
 
   return (
     <div
@@ -993,7 +1041,8 @@ function renderImageTrack(
           }}
         >
           <img
-            src={url}
+            ref={imgRef}
+            src={displaySrc}
             alt={track.name}
             className="w-full h-full object-contain"
             style={{ userSelect: 'none', pointerEvents: 'none' }}
@@ -1003,7 +1052,7 @@ function renderImageTrack(
       </ImageTransformBoundary>
     </div>
   );
-}
+};
 
 function renderTextTrack(
   track: VideoTrack,

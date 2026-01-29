@@ -61,6 +61,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
       e?.preventDefault();
       // Use fresh state to avoid stale closure issues
       const freshState = useVideoEditorStore.getState();
+      if (freshState.render?.isRendering) return;
       freshState.toggleSplitMode();
     },
   },
@@ -74,6 +75,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
       e?.preventDefault();
       // Use fresh state to avoid stale closure issues
       const freshState = useVideoEditorStore.getState();
+      if (freshState.render?.isRendering) return;
       freshState.toggleSplitMode();
     },
   },
@@ -87,6 +89,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
       e?.preventDefault();
       // Use fresh state to avoid stale closure issues
       const freshState = useVideoEditorStore.getState();
+      if (freshState.render?.isRendering) return;
       freshState.splitAtPlayhead();
     },
   },
@@ -100,6 +103,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
       e?.preventDefault();
       // Use fresh state to avoid stale closure issues
       const freshState = useVideoEditorStore.getState();
+      if (freshState.render?.isRendering) return;
       freshState.setSplitMode(false);
     },
   },
@@ -113,6 +117,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
       e?.preventDefault();
       // Use fresh state to avoid stale closure issues
       const freshState = useVideoEditorStore.getState();
+      if (freshState.render?.isRendering) return;
       const allTrackIds = freshState.tracks.map((track: any) => track.id);
       freshState.setSelectedTracks(allTrackIds);
     },
@@ -131,6 +136,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
       e?.preventDefault();
       // Use fresh state to avoid stale closure issues
       const freshState = useVideoEditorStore.getState();
+      if (freshState.render?.isRendering) return;
       const allTrackIds = freshState.tracks.map((track: any) => track.id);
       freshState.setSelectedTracks(allTrackIds);
     },

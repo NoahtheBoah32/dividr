@@ -224,7 +224,11 @@ export const createProjectSlice: StateCreator<
       const existingTrackCount = currentProject.videoEditor.tracks?.length || 0;
       const newTrackCount = state.tracks?.length || 0;
 
-      if (existingTrackCount > 0 && newTrackCount === 0) {
+      if (
+        existingTrackCount > 0 &&
+        newTrackCount === 0 &&
+        !state.hasUnsavedChanges
+      ) {
         console.warn(
           `⚠️ SAFETY BLOCK: Attempted to save empty timeline (0 tracks) over populated one (${existingTrackCount} tracks). ` +
             `This may indicate a data loss condition. Save operation aborted.`,

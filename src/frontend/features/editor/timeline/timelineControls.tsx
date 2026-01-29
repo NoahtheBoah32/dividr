@@ -129,11 +129,17 @@ const PlayPauseButton: React.FC<{
   onPlayToggle: () => void;
 }> = React.memo(({ onPlayToggle }) => {
   const isPlaying = useVideoEditorStore((state) => state.playback.isPlaying);
+  const isRendering = useVideoEditorStore((state) => state.render.isRendering);
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button onClick={onPlayToggle} variant="native" size="icon">
+        <Button
+          onClick={onPlayToggle}
+          variant="native"
+          size="icon"
+          disabled={isRendering}
+        >
           {isPlaying ? (
             <Pause className="fill-zinc-900 dark:fill-zinc-100" />
           ) : (
@@ -141,7 +147,9 @@ const PlayPauseButton: React.FC<{
           )}
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{isPlaying ? 'Pause' : 'Play'} (Space)</TooltipContent>
+      <TooltipContent>
+        {isRendering ? 'Exporting...' : isPlaying ? 'Pause' : 'Play'} (Space)
+      </TooltipContent>
     </Tooltip>
   );
 });
@@ -920,6 +928,9 @@ export const TimelineControls: React.FC = React.memo(
       (state) => state.timeline.snapEnabled,
     );
     const toggleSnap = useVideoEditorStore((state) => state.toggleSnap);
+    const isRendering = useVideoEditorStore(
+      (state) => state.render.isRendering,
+    );
 
     // Get current frame non-reactively
     const getCurrentFrame = useCallback(() => {
@@ -1000,6 +1011,7 @@ export const TimelineControls: React.FC = React.memo(
                   }
                   variant="native"
                   size="icon"
+                  disabled={isRendering}
                 >
                   <SkipBack />
                 </Button>
@@ -1024,6 +1036,7 @@ export const TimelineControls: React.FC = React.memo(
                   }
                   variant="native"
                   size="icon"
+                  disabled={isRendering}
                 >
                   <SkipForward />
                 </Button>
