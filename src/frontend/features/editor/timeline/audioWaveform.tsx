@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { useMediaReadiness } from '../../editor/hooks/useMediaReadiness';
+import { useWaveformReadiness } from '../../editor/hooks/useMediaReadiness';
 import { NoiseReductionCache } from '../preview/services/NoiseReductionCache';
 import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
 import { getDisplayFps } from '../stores/videoEditor/types/timeline.types';
@@ -50,7 +50,8 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
     // Version counter to trigger waveformData re-evaluation after NR waveform generation
     const [nrWaveformVersion, setNrWaveformVersion] = useState(0);
 
-    const isMediaReady = useMediaReadiness(track.mediaId);
+    // Use waveform-specific readiness (independent of sprite sheet generation)
+    const isWaveformReady = useWaveformReadiness(track.mediaId);
 
     // Calculate volume gain from dB for waveform visual scaling
     // This is a visual-only transformation - no re-analysis of audio data
@@ -79,13 +80,22 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       setNrCacheState(state);
 
       // Subscribe to changes for the specific engine
-      const unsubscribe = NoiseReductionCache.subscribe(track.source, () => {
-        const newState = NoiseReductionCache.getState(track.source, engine);
-        setNrCacheState(newState);
-      }, engine);
+      const unsubscribe = NoiseReductionCache.subscribe(
+        track.source,
+        () => {
+          const newState = NoiseReductionCache.getState(track.source, engine);
+          setNrCacheState(newState);
+        },
+        engine,
+      );
 
       return unsubscribe;
-    }, [track.type, track.source, track.noiseReductionEnabled, track.noiseReductionEngine]);
+    }, [
+      track.type,
+      track.source,
+      track.noiseReductionEnabled,
+      track.noiseReductionEngine,
+    ]);
 
     const setCurrentFrame = useVideoEditorStore(
       (state) => state.setCurrentFrame,
@@ -99,9 +109,8 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
     const isGeneratingWaveform = useVideoEditorStore(
       (state) => state.isGeneratingWaveform,
     );
-    const generateWaveformForMedia = useVideoEditorStore(
-      (state) => state.generateWaveformForMedia,
-    );
+    // CONSUME-ONLY: Do not trigger generation from timeline components
+    // Generation is handled by mediaLibrarySlice during import
     const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
     const allTracks = useVideoEditorStore((state) => state.tracks);
     // Get display FPS from source video tracks (dynamic but static once determined)
@@ -128,7 +137,13 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       // CRITICAL: Use the track's stored engine to get the correct processed URL
       const engine = track.noiseReductionEngine || 'ffmpeg';
       return NoiseReductionCache.getProcessedUrl(track.source, engine);
-    }, [track.type, track.source, track.noiseReductionEnabled, track.noiseReductionEngine, nrCacheState]);
+    }, [
+      track.type,
+      track.source,
+      track.noiseReductionEnabled,
+      track.noiseReductionEngine,
+      nrCacheState,
+    ]);
 
     // Get waveform data from the store
     const waveformData = useMemo(() => {
@@ -607,72 +622,12 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       trackMetrics.durationSeconds,
     ]);
 
-    useEffect(() => {
-      // Skip if not audio, already have waveform data, loading, or waveform exists in media library
-      // Also skip if using noise-reduced audio (handled by separate effect above)
-      if (
-        track.type !== 'audio' ||
-        waveformData ||
-        isLoading ||
-        hasExistingWaveform ||
-        effectiveAudioSource
-      )
-        return;
-
-      // CRITICAL: Use mediaId for accurate waveform generation if available
-      let mediaItem = null;
-      if (track.mediaId) {
-        mediaItem = mediaLibrary.find((item) => item.id === track.mediaId);
-      }
-
-      // Fallback to source-based lookup
-      if (!mediaItem) {
-        let sourceToCheck = track.source;
-        if (track.previewUrl && track.previewUrl.includes('extracted.wav')) {
-          const originalVideo = mediaLibrary.find(
-            (item) =>
-              item.type === 'video' &&
-              item.extractedAudio?.previewUrl === track.previewUrl,
-          );
-          if (originalVideo) {
-            sourceToCheck = originalVideo.source;
-          }
-        }
-        mediaItem = mediaLibrary.find((item) => item.source === sourceToCheck);
-      }
-
-      if (
-        mediaItem &&
-        !mediaItem.waveform?.success &&
-        !isGeneratingWaveform(mediaItem.id)
-      ) {
-        console.log(
-          `🎵 Triggering waveform generation for track ${track.id} (mediaId: ${track.mediaId || 'none'})`,
-        );
-        generateWaveformForMedia(mediaItem.id).catch((error) => {
-          console.warn(
-            `⚠️ Waveform generation failed for ${track.name}:`,
-            error,
-          );
-        });
-      }
-    }, [
-      track.type,
-      track.id,
-      track.mediaId,
-      track.source,
-      track.previewUrl,
-      track.sourceStartTime,
-      trackMetrics.durationSeconds,
-      track.name,
-      waveformData,
-      isLoading,
-      hasExistingWaveform,
-      generateWaveformForMedia,
-      isGeneratingWaveform,
-      mediaLibrary,
-      effectiveAudioSource,
-    ]);
+    // CONSUME-ONLY: Waveform generation is handled by mediaLibrarySlice during import
+    // This component only reads and displays waveform data from the store
+    // Generation should NOT be triggered from timeline components to prevent:
+    // - Duplicate generation calls causing stack overflow
+    // - Race conditions between multiple components
+    // - Re-generation loops on re-render
 
     // Get peaks for a specific range of bars using LOD-aware sampling
     // CRITICAL: No interpolation, no smoothing - discrete bar sampling only
@@ -1055,7 +1010,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       return null;
     }
 
-    if (isLoading || isGeneratingNrWaveform || !isMediaReady) {
+    if (isLoading || isGeneratingNrWaveform || !isWaveformReady) {
       return (
         <div
           className="relative flex items-center justify-center bg-gray-100/10 border border-gray-300/20 rounded overflow-hidden pointer-events-none"

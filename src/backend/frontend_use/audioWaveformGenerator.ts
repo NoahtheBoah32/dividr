@@ -644,11 +644,20 @@ class AudioWaveformGenerator {
 
   /**
    * Normalize peaks to 0-1 range
+   * NOTE: Uses iterative max-finding to avoid stack overflow with large arrays
+   * (Math.max(...array) causes stack overflow with 100k+ elements)
    */
   private normalizePeaks(peaks: number[]): number[] {
     if (peaks.length === 0) return peaks;
 
-    const maxPeak = Math.max(...peaks);
+    // Find max iteratively to avoid stack overflow on large arrays
+    let maxPeak = 0;
+    for (let i = 0; i < peaks.length; i++) {
+      if (peaks[i] > maxPeak) {
+        maxPeak = peaks[i];
+      }
+    }
+
     if (maxPeak > 0) {
       for (let i = 0; i < peaks.length; i++) {
         peaks[i] = peaks[i] / maxPeak;

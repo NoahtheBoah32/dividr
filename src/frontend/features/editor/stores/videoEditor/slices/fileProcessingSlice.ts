@@ -891,14 +891,43 @@ const processImportedFile = async (
     }
   }
 
-  // Generate waveform for direct audio files (immediate start)
+  // Generate waveform for direct audio files with retry logic
+  // Uses same retry mechanism as video files to handle race conditions
+  // where the media library item may not be fully populated yet
   if (trackType === 'audio' && generateWaveformFn) {
-    // Run waveform generation in background without blocking import
-    // For direct audio files, we can start immediately as no extraction is needed
-    generateWaveformFn(mediaId).catch((error) => {
+    const generateWaveformWithRetry = async () => {
+      const maxRetries = 5; // Fewer retries needed for audio (no extraction step)
+      let retryDelay = 300; // Start with 300ms
+      const maxDelay = 2000; // Cap at 2 seconds
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const result = await generateWaveformFn(mediaId);
+          if (result) {
+            console.log(
+              `✅ Waveform generated for ${fileInfo.name} on attempt ${attempt}`,
+            );
+            return;
+          }
+        } catch (error) {
+          console.warn(
+            `⚠️ Waveform generation attempt ${attempt}/${maxRetries} failed for ${fileInfo.name}:`,
+            error,
+          );
+        }
+
+        if (attempt < maxRetries) {
+          // Exponential backoff with jitter
+          const jitter = Math.random() * 100;
+          await new Promise((resolve) =>
+            setTimeout(resolve, retryDelay + jitter),
+          );
+          retryDelay = Math.min(retryDelay * 1.5, maxDelay);
+        }
+      }
+
       console.warn(
-        `⚠️ Waveform generation failed for ${fileInfo.name}:`,
-        error,
+        `⚠️ Waveform generation failed after ${maxRetries} retries for ${fileInfo.name}`,
       );
       if (updateMediaLibraryFn) {
         updateMediaLibraryFn(mediaId, {
@@ -912,7 +941,17 @@ const processImportedFile = async (
           },
         });
       }
-    });
+    };
+
+    // Start generation with small delay to ensure media library item is populated
+    setTimeout(() => {
+      generateWaveformWithRetry().catch((error) => {
+        console.warn(
+          `⚠️ Waveform generation retry handler failed for ${fileInfo.name}:`,
+          error,
+        );
+      });
+    }, 50); // Small delay to ensure store update completes
   }
 
   // Add to timeline if requested

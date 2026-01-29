@@ -8,6 +8,31 @@ import { v4 as uuidv4 } from 'uuid';
 import { StateCreator } from 'zustand';
 import { MediaLibraryItem } from '../types';
 
+/**
+ * Module-level tracking for progressive sprite sheet generation.
+ * Maps video source paths to their mediaIds for matching IPC events.
+ * This is needed because IPC events don't include mediaId, only jobId/sheetPath.
+ */
+const activeSpriteSheetJobs = new Map<
+  string, // videoPath (source)
+  {
+    mediaId: string;
+    intervalSeconds: number;
+    maxThumbnailsPerSheet: number;
+    finalTotalThumbnails: number;
+    thumbWidth: number;
+    thumbHeight: number;
+    duration: number;
+    fps: number;
+  }
+>();
+
+/**
+ * Global flag to track if the sprite sheet event listener is registered.
+ * We only need ONE listener that dispatches to the correct media based on path.
+ */
+let spriteSheetListenerRegistered = false;
+
 /** Duplicate detection user choice: 'use-existing' (skip) | 'import-copy' (keep both) */
 export type DuplicateChoice = 'use-existing' | 'import-copy';
 
@@ -69,6 +94,44 @@ export interface MediaLibrarySlice {
   isGeneratingWaveform: (mediaId: string) => boolean;
   setGeneratingWaveform: (mediaId: string, isGenerating: boolean) => void;
   generateWaveformForMedia: (mediaId: string) => Promise<boolean>;
+
+  // Progressive sprite sheet generation state
+  updateSpriteSheetProgress: (
+    mediaId: string,
+    progress: {
+      completedSheets: number;
+      totalSheets: number;
+      jobId: string;
+    },
+  ) => void;
+
+  // Progressive sprite sheet addition - adds individual sheets as they complete
+  addSpriteSheetProgressively: (
+    mediaId: string,
+    sheet: {
+      id: string;
+      url: string;
+      width: number;
+      height: number;
+      thumbnailsPerRow: number;
+      thumbnailsPerColumn: number;
+      thumbnailWidth: number;
+      thumbnailHeight: number;
+      thumbnails: Array<{
+        id: string;
+        timestamp: number;
+        frameNumber: number;
+        sheetIndex: number;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }>;
+    },
+    sheetIndex: number,
+    totalSheets: number,
+    cacheKey: string,
+  ) => void;
 
   // Duplicate detection (legacy single-file)
   findDuplicateBySignature: (
@@ -438,14 +501,24 @@ export const createMediaLibrarySlice: StateCreator<
 
     // Only generate waveforms for audio files or video files with extracted audio
     const isAudioFile = mediaItem.type === 'audio';
-    const isVideoWithExtractedAudio =
-      mediaItem.type === 'video' && mediaItem.extractedAudio;
+    const isVideoFile = mediaItem.type === 'video';
+    const isVideoWithExtractedAudio = isVideoFile && mediaItem.extractedAudio;
 
-    if (!isAudioFile && !isVideoWithExtractedAudio) {
+    // For non-audio/video files (images, subtitles), skip entirely
+    if (!isAudioFile && !isVideoFile) {
       console.log(
-        `Skipping waveform generation for: ${mediaItem.name} (not audio or video with extracted audio)`,
+        `Skipping waveform generation for: ${mediaItem.name} (not audio or video)`,
       );
       return true; // Not an error, just not applicable
+    }
+
+    // For video files without extracted audio, return false to trigger retry
+    // Audio extraction happens asynchronously and may not be complete yet
+    if (isVideoFile && !isVideoWithExtractedAudio) {
+      console.log(
+        `⏳ Audio not yet extracted for video: ${mediaItem.name} (will retry)`,
+      );
+      return false; // Return false to trigger retry logic
     }
 
     // Skip if waveform already exists and has valid peaks
@@ -692,6 +765,46 @@ export const createMediaLibrarySlice: StateCreator<
       return false;
     }
 
+    // Sprite sheet generation parameters (must match VideoSpriteSheetGenerator)
+    const thumbWidth = 120;
+    const thumbHeight = 68;
+    const maxThumbnailsPerSheet = 100;
+    const fps = mediaItem.metadata?.fps || 30;
+    const duration = mediaItem.duration;
+
+    // Calculate interval (same logic as VideoSpriteSheetGenerator.calculateOptimalInterval)
+    let intervalSeconds: number;
+    if (duration <= 5) {
+      intervalSeconds = 0.1;
+    } else if (duration <= 30) {
+      intervalSeconds = 0.25;
+    } else if (duration <= 120) {
+      intervalSeconds = 0.5;
+    } else if (duration <= 300) {
+      intervalSeconds = 1.0;
+    } else if (duration <= 600) {
+      intervalSeconds = 1.0;
+    } else if (duration <= 3599) {
+      intervalSeconds = duration / 300;
+    } else if (duration >= 3600) {
+      intervalSeconds = duration / 1200;
+    } else {
+      intervalSeconds = 2.0;
+    }
+
+    // Pre-compute expected sheet count for progressive loading
+    const exactThumbnails = Math.floor(duration / intervalSeconds) + 1;
+    const maxThumbnails = Math.min(exactThumbnails, 5000);
+    const adjustedTotalThumbnails = Math.max(5, maxThumbnails);
+    const maxPossibleThumbnails = Math.floor(duration / intervalSeconds) + 1;
+    const finalTotalThumbnails = Math.min(
+      adjustedTotalThumbnails,
+      maxPossibleThumbnails,
+    );
+    const numberOfSheets = Math.ceil(
+      finalTotalThumbnails / maxThumbnailsPerSheet,
+    );
+
     // CRITICAL: Set job state to 'processing' SYNCHRONOUSLY before any async work
     // This prevents race conditions when VideoSpriteSheetStrip mounts during import
     get().setGeneratingSpriteSheet(mediaId, true);
@@ -700,6 +813,16 @@ export const createMediaLibrarySlice: StateCreator<
         item.id === mediaId
           ? {
               ...item,
+              spriteSheets: {
+                success: false,
+                spriteSheets: [], // Initialize empty array for progressive loading
+                cacheKey: '',
+                generation: {
+                  status: 'generating' as const,
+                  completedSheets: 0,
+                  totalSheets: numberOfSheets,
+                },
+              },
               jobStates: {
                 ...item.jobStates,
                 spriteSheet: 'processing' as const,
@@ -712,6 +835,193 @@ export const createMediaLibrarySlice: StateCreator<
     console.log(
       `🎬 Generating sprite sheets for media library item: ${mediaItem.name}`,
     );
+    console.log(
+      `📊 Expected ${numberOfSheets} sheets, interval: ${intervalSeconds.toFixed(2)}s`,
+    );
+
+    // Track this generation job for progressive loading
+    // We use videoPath as the key since it's unique per media item
+    activeSpriteSheetJobs.set(videoPath, {
+      mediaId,
+      intervalSeconds,
+      maxThumbnailsPerSheet,
+      finalTotalThumbnails,
+      thumbWidth,
+      thumbHeight,
+      duration,
+      fps,
+    });
+
+    // Set up GLOBAL progressive loading listener (only once)
+    // This single listener dispatches to the correct media based on sheetPath
+    if (
+      typeof window !== 'undefined' &&
+      window.electronAPI &&
+      !spriteSheetListenerRegistered
+    ) {
+      spriteSheetListenerRegistered = true;
+
+      const handleSheetReady = (data: {
+        jobId: string;
+        sheetIndex: number;
+        totalSheets: number;
+        sheetPath: string;
+      }) => {
+        // Find the matching job by checking if the sheetPath contains any tracked videoPath info
+        // Since we can't match directly, we'll use the store to find the currently generating media
+        // and match by checking which media items are in 'processing' state
+        const storeState = get() as any;
+        const processingMedia = storeState.mediaLibrary.filter(
+          (item: MediaLibraryItem) =>
+            item.type === 'video' &&
+            item.jobStates?.spriteSheet === 'processing',
+        );
+
+        if (processingMedia.length === 0) {
+          console.warn(
+            '⚠️ Received sprite sheet ready event but no media is processing',
+          );
+          return;
+        }
+
+        // For each processing media, check if this event matches
+        // We can match by looking at the output directory in the sheetPath
+        for (const media of processingMedia) {
+          const jobInfo = activeSpriteSheetJobs.get(
+            media.tempFilePath || media.source,
+          );
+          if (!jobInfo) continue;
+
+          const {
+            mediaId: targetMediaId,
+            intervalSeconds: jobIntervalSeconds,
+            maxThumbnailsPerSheet: jobMaxThumbnailsPerSheet,
+            finalTotalThumbnails: jobFinalTotalThumbnails,
+            thumbWidth: jobThumbWidth,
+            thumbHeight: jobThumbHeight,
+            duration: jobDuration,
+            fps: jobFps,
+          } = jobInfo;
+
+          // Build sprite sheet metadata for this individual sheet
+          const sheetIndex = data.sheetIndex;
+          const startThumbnailIndex = sheetIndex * jobMaxThumbnailsPerSheet;
+          const endThumbnailIndex = Math.min(
+            startThumbnailIndex + jobMaxThumbnailsPerSheet,
+            jobFinalTotalThumbnails,
+          );
+          const thumbnailsInSheet = endThumbnailIndex - startThumbnailIndex;
+
+          // Calculate grid dimensions
+          let cols: number, rows: number;
+          if (thumbnailsInSheet <= 50) {
+            cols = thumbnailsInSheet;
+            rows = 1;
+          } else {
+            const perfectDivisors: Array<{ cols: number; rows: number }> = [];
+            for (let i = 1; i <= Math.sqrt(thumbnailsInSheet); i++) {
+              if (thumbnailsInSheet % i === 0) {
+                perfectDivisors.push({ cols: i, rows: thumbnailsInSheet / i });
+                if (i !== thumbnailsInSheet / i) {
+                  perfectDivisors.push({
+                    cols: thumbnailsInSheet / i,
+                    rows: i,
+                  });
+                }
+              }
+            }
+            if (perfectDivisors.length > 0) {
+              let best = perfectDivisors[0];
+              let bestRatio = Math.max(
+                best.cols / best.rows,
+                best.rows / best.cols,
+              );
+              for (const d of perfectDivisors) {
+                const ratio = Math.max(d.cols / d.rows, d.rows / d.cols);
+                if (ratio < bestRatio && ratio <= 10) {
+                  bestRatio = ratio;
+                  best = d;
+                }
+              }
+              cols = best.cols;
+              rows = best.rows;
+            } else {
+              cols = thumbnailsInSheet;
+              rows = 1;
+            }
+          }
+
+          // Build thumbnails array for this sheet
+          const thumbnails: Array<{
+            id: string;
+            timestamp: number;
+            frameNumber: number;
+            sheetIndex: number;
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          }> = [];
+
+          for (let i = 0; i < thumbnailsInSheet; i++) {
+            const globalThumbnailIndex = startThumbnailIndex + i;
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            const timestamp = globalThumbnailIndex * jobIntervalSeconds;
+
+            if (timestamp <= jobDuration) {
+              thumbnails.push({
+                id: `${targetMediaId}_${globalThumbnailIndex}`,
+                timestamp,
+                frameNumber: Math.floor(timestamp * jobFps),
+                sheetIndex,
+                x: col * jobThumbWidth,
+                y: row * jobThumbHeight,
+                width: jobThumbWidth,
+                height: jobThumbHeight,
+              });
+            }
+          }
+
+          // Convert file path to URL (handle absolute Windows paths)
+          const normalizedPath = data.sheetPath.replace(/\\/g, '/');
+          const publicIndex = normalizedPath.indexOf('/public/');
+          const relativePath =
+            publicIndex !== -1
+              ? normalizedPath.substring(publicIndex + 1)
+              : normalizedPath.includes('sprite-sheets/')
+                ? `public/${normalizedPath.substring(normalizedPath.indexOf('sprite-sheets/'))}`
+                : normalizedPath;
+          const sheetUrl = `http://localhost:3001/${relativePath}`;
+
+          // Add this sheet progressively to the store
+          get().addSpriteSheetProgressively(
+            targetMediaId,
+            {
+              id: `${targetMediaId}_sheet_${sheetIndex}`,
+              url: sheetUrl,
+              width: cols * jobThumbWidth,
+              height: rows * jobThumbHeight,
+              thumbnailsPerRow: cols,
+              thumbnailsPerColumn: rows,
+              thumbnailWidth: jobThumbWidth,
+              thumbnailHeight: jobThumbHeight,
+              thumbnails,
+            },
+            sheetIndex,
+            data.totalSheets,
+            `progressive_${targetMediaId}`,
+          );
+
+          // Only process for ONE media item per event
+          // (events should only match one job at a time)
+          break;
+        }
+      };
+
+      // Register the global listener
+      (window.electronAPI as any).onSpriteSheetSheetReady(handleSheetReady);
+    }
 
     try {
       const result = await VideoSpriteSheetGenerator.generateSpriteSheets({
@@ -724,7 +1034,8 @@ export const createMediaLibrarySlice: StateCreator<
       });
 
       if (result.success) {
-        // Update the media library item with sprite sheet data AND job state to 'completed'
+        // Final update with complete sprite sheet data (includes cacheKey for persistent caching)
+        // This ensures proper URLs and metadata from the generator
         set((state: any) => ({
           mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
             item.id === mediaId
@@ -735,6 +1046,11 @@ export const createMediaLibrarySlice: StateCreator<
                     spriteSheets: result.spriteSheets,
                     cacheKey: result.cacheKey,
                     generatedAt: Date.now(),
+                    generation: {
+                      status: 'completed' as const,
+                      completedSheets: result.spriteSheets.length,
+                      totalSheets: result.spriteSheets.length,
+                    },
                   },
                   jobStates: {
                     ...item.jobStates,
@@ -794,9 +1110,121 @@ export const createMediaLibrarySlice: StateCreator<
       );
       return false;
     } finally {
-      // Clear generating state
+      // Clear generating state and cleanup job tracking
       get().setGeneratingSpriteSheet(mediaId, false);
+      activeSpriteSheetJobs.delete(videoPath);
     }
+  },
+
+  updateSpriteSheetProgress: (
+    mediaId: string,
+    progress: {
+      completedSheets: number;
+      totalSheets: number;
+      jobId: string;
+    },
+  ) => {
+    set((state: any) => ({
+      mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+        item.id === mediaId
+          ? {
+              ...item,
+              spriteSheets: {
+                ...item.spriteSheets,
+                generation: {
+                  status: 'generating' as const,
+                  completedSheets: progress.completedSheets,
+                  totalSheets: progress.totalSheets,
+                  jobId: progress.jobId,
+                },
+              },
+            }
+          : item,
+      ),
+    }));
+  },
+
+  // Progressive sprite sheet addition - adds individual sheets as they complete
+  // This enables CapCut-style behavior where thumbnails appear immediately
+  addSpriteSheetProgressively: (
+    mediaId: string,
+    sheet: {
+      id: string;
+      url: string;
+      width: number;
+      height: number;
+      thumbnailsPerRow: number;
+      thumbnailsPerColumn: number;
+      thumbnailWidth: number;
+      thumbnailHeight: number;
+      thumbnails: Array<{
+        id: string;
+        timestamp: number;
+        frameNumber: number;
+        sheetIndex: number;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }>;
+    },
+    sheetIndex: number,
+    totalSheets: number,
+    cacheKey: string,
+  ) => {
+    set((state: any) => ({
+      mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) => {
+        if (item.id !== mediaId) return item;
+
+        // Get existing sprite sheets array or create new one
+        const existingSheets = item.spriteSheets?.spriteSheets || [];
+
+        // Avoid duplicates - check if this sheet index already exists
+        const alreadyExists = existingSheets.some(
+          (s: { id: string }) => s.id === sheet.id,
+        );
+        if (alreadyExists) {
+          return item;
+        }
+
+        // Add the new sheet to the array
+        const updatedSheets = [...existingSheets, sheet];
+
+        // Determine if generation is complete
+        const isComplete = updatedSheets.length >= totalSheets;
+
+        return {
+          ...item,
+          spriteSheets: {
+            success: isComplete, // Only mark success when all sheets are ready
+            spriteSheets: updatedSheets,
+            cacheKey,
+            generatedAt: isComplete
+              ? Date.now()
+              : item.spriteSheets?.generatedAt,
+            generation: {
+              status: isComplete
+                ? ('completed' as const)
+                : ('generating' as const),
+              completedSheets: updatedSheets.length,
+              totalSheets,
+              jobId: item.spriteSheets?.generation?.jobId,
+            },
+          },
+          // Update job state when complete
+          jobStates: isComplete
+            ? {
+                ...item.jobStates,
+                spriteSheet: 'completed' as const,
+              }
+            : item.jobStates,
+        };
+      }),
+    }));
+
+    console.log(
+      `📸 Progressive sprite sheet ${sheetIndex + 1}/${totalSheets} added for media ${mediaId}`,
+    );
   },
 
   generateThumbnailForMedia: async (mediaId: string) => {
