@@ -439,6 +439,16 @@ function generateDrawtextFilterForLine(
     params.push(`boxborderw=5`);
   }
 
+  // Line spacing for multi-line text
+  const effectiveLineHeight = mergedStyle.lineHeight ?? lineHeight;
+  const extraSpacing = Math.round(scaledFontSize * (effectiveLineHeight - 1));
+
+  console.log(
+    `[TextLayers] Line height: mergedStyle.lineHeight=${mergedStyle.lineHeight}, default=${lineHeight}, effective=${effectiveLineHeight}, extraSpacing=${extraSpacing}px`,
+  );
+
+  params.push(`line_spacing=${extraSpacing}`);
+
   // Enable expression for time-based visibility
   params.push(
     `enable='between(t,${segment.startTime.toFixed(3)},${segment.endTime.toFixed(3)})'`,
