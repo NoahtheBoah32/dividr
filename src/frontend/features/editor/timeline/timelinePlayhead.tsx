@@ -36,17 +36,20 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
 
     const styles = useMemo(
       () => ({
-        line: {
-          left,
+        hitbox: {
+          left: left - 9, // Centers 20px touch target on the playhead center (approx left+1)
+          width: 20,
           transform: 'translate3d(0, 0, 0)',
         },
-        handle: {
-          left: left - 11,
-          width: 24,
-          height: 24,
+        handleContainer: {
+          left: left - 19, // Centers 40px touch target on the playhead center
+          width: 40,
+          height: 40,
+          top: -32, // Position to align the 24px visual handle correctly (-24px top visual)
+          transform: 'translate3d(0, 0, 0)',
           filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
-          transform: 'translate3d(0, 0, 0)',
         },
+        // Keeping for reference if needed
         indicator: {
           left: left + 8,
           transform: 'translate3d(0, 0, 0)',
@@ -72,20 +75,25 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
 
     return (
       <>
-        {/* Playhead line - clickable for dragging */}
+        {/* Playhead line - Enhanced Hitbox */}
         <div
-          className={cn(
-            'absolute top-0 w-0.5 h-full rounded-full z-30 cursor-ew-resize will-change-transform pointer-events-auto',
-            isSnapping ? 'bg-secondary' : 'bg-primary',
-          )}
-          style={styles.line}
+          className="group absolute top-0 z-30 h-full cursor-ew-resize select-none touch-none pointer-events-auto"
+          style={styles.hitbox}
           onMouseDown={handleMouseDown}
-        />
+        >
+          {/* Visual Line - Centered in hitbox */}
+          <div
+            className={cn(
+              'absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 rounded-full transition-all duration-150 ease-out will-change-transform',
+              isSnapping ? 'bg-secondary' : 'bg-primary',
+            )}
+          />
+        </div>
 
-        {/* Playhead handle - draggable */}
+        {/* Playhead handle - Enhanced Hitbox */}
         <div
-          className="absolute -top-6 z-30 cursor-grab active:cursor-grabbing will-change-transform pointer-events-auto"
-          style={styles.handle}
+          className="absolute z-30 flex items-center justify-center cursor-grab active:cursor-grabbing will-change-transform pointer-events-auto"
+          style={styles.handleContainer}
           onMouseDown={handleMouseDown}
         >
           <svg width="24" height="24" viewBox="0 0 24 24">
