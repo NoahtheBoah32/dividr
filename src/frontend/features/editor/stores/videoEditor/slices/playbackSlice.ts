@@ -29,6 +29,8 @@ export interface PlaybackSlice {
     targetFrame: number | null,
   ) => void;
   clearDragGhost: () => void;
+  prepareForRender: () => void;
+  restoreAfterRender: () => void;
 }
 
 export const createPlaybackSlice: StateCreator<
@@ -51,13 +53,17 @@ export const createPlaybackSlice: StateCreator<
     boundaryCollisionCount: 0,
     lastAttemptedFrame: null,
     dragGhost: null,
+    wasPlayingBeforeRender: false,
     ...DEFAULT_PLAYBACK_CONFIG,
   },
 
   play: () =>
-    set((state: any) => ({
-      playback: { ...state.playback, isPlaying: true },
-    })),
+    set((state: any) => {
+      if (state.render?.isRendering) return state;
+      return {
+        playback: { ...state.playback, isPlaying: true },
+      };
+    }),
 
   pause: () =>
     set((state: any) => ({
@@ -74,9 +80,12 @@ export const createPlaybackSlice: StateCreator<
     })),
 
   togglePlayback: () =>
-    set((state: any) => ({
-      playback: { ...state.playback, isPlaying: !state.playback.isPlaying },
-    })),
+    set((state: any) => {
+      if (state.render?.isRendering) return state;
+      return {
+        playback: { ...state.playback, isPlaying: !state.playback.isPlaying },
+      };
+    }),
 
   setPlaybackRate: (rate) =>
     set((state: any) => ({
@@ -106,6 +115,7 @@ export const createPlaybackSlice: StateCreator<
 
   startDraggingTrack: (initialFrame) =>
     set((state: any) => {
+      if (state.render?.isRendering) return state;
       const wasPlaying = state.playback.isPlaying;
       return {
         playback: {
@@ -200,6 +210,7 @@ export const createPlaybackSlice: StateCreator<
 
   startDraggingPlayhead: () =>
     set((state: any) => {
+      if (state.render?.isRendering) return state;
       const wasPlaying = state.playback.isPlaying;
       return {
         playback: {
@@ -226,6 +237,7 @@ export const createPlaybackSlice: StateCreator<
 
   startDraggingTransform: () => {
     const state = get() as any;
+    if (state.render?.isRendering) return;
     // Begin undo grouping for transform operations
     state.beginGroup?.('Transform Object');
 
@@ -259,4 +271,25 @@ export const createPlaybackSlice: StateCreator<
     const state = get() as any;
     state.endGroup?.();
   },
+
+  prepareForRender: () =>
+    set((state: any) => {
+      const wasPlaying = state.playback.isPlaying;
+      return {
+        playback: {
+          ...state.playback,
+          isPlaying: false,
+          wasPlayingBeforeRender: wasPlaying,
+        },
+      };
+    }),
+
+  restoreAfterRender: () =>
+    set((state: any) => ({
+      playback: {
+        ...state.playback,
+        isPlaying: state.playback.wasPlayingBeforeRender,
+        wasPlayingBeforeRender: false,
+      },
+    })),
 });

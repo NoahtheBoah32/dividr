@@ -22,6 +22,12 @@ export const useExportHandler = () => {
   );
   const finishRender = useVideoEditorStore((state) => state.finishRender);
   const cancelRender = useVideoEditorStore((state) => state.cancelRender);
+  const prepareForRender = useVideoEditorStore(
+    (state) => state.prepareForRender,
+  );
+  const restoreAfterRender = useVideoEditorStore(
+    (state) => state.restoreAfterRender,
+  );
   const { getTimelineGaps } = useTimelineUtils();
 
   // Dialog state management
@@ -34,6 +40,8 @@ export const useExportHandler = () => {
   const executeExport = useCallback(
     async (job: VideoEditJob): Promise<void> => {
       try {
+        prepareForRender();
+
         // Get timeline gaps
         const gaps = getTimelineGaps();
         console.log('Gaps detected:', gaps);
@@ -126,6 +134,7 @@ export const useExportHandler = () => {
       updateRenderProgress,
       finishRender,
       cancelRender,
+      prepareForRender,
       getTimelineGaps,
     ],
   );
@@ -149,11 +158,12 @@ export const useExportHandler = () => {
   }, [cancelRender]);
 
   const handleCloseDialog = useCallback(() => {
+    restoreAfterRender();
     setIsRenderDialogOpen(false);
     setRenderDialogState('rendering');
     setRenderError(undefined);
     setOutputFilePath(undefined);
-  }, []);
+  }, [restoreAfterRender]);
 
   return {
     executeExport,

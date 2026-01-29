@@ -69,7 +69,10 @@ export const createTimelineSlice: StateCreator<
   duplicationFeedbackTrackIds: new Set(),
 
   setCurrentFrame: (frame) =>
-    set((state) => {
+    set((state: any) => {
+      // Block playhead movement during render
+      if (state.render?.isRendering) return state;
+
       // When tracks exist, use the maximum track end frame
       // Only use totalFrames as fallback when no tracks exist
       const effectiveEndFrame =
