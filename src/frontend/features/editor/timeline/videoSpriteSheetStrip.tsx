@@ -172,10 +172,19 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         );
       }, [mediaItem]);
 
-      // Check if proxy generation is in progress (for 4K videos)
-      const isProxyProcessing = useMemo(() => {
-        return mediaItem?.proxy?.status === 'processing';
-      }, [mediaItem]);
+      // Build a map from sheetIndex to SpriteSheet for O(1) lookup
+      // This is critical for progressive loading where sheets may arrive out of order
+      const sheetIndexMap = useMemo(() => {
+        const map = new Map<number, SpriteSheet>();
+        for (const sheet of state.spriteSheets) {
+          // Extract sheetIndex from the first thumbnail, or parse from sheet.id
+          const firstThumb = sheet.thumbnails[0];
+          if (firstThumb) {
+            map.set(firstThumb.sheetIndex, sheet);
+          }
+        }
+        return map;
+      }, [state.spriteSheets]);
 
       // Hybrid tile generation - pixel-position based for correct zoom behavior
       // Key insight: iterate by PIXEL POSITION at native tile width intervals,
@@ -188,7 +197,11 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         if (spriteSheets.length === 0) return [];
 
         const tiles: HybridTile[] = [];
-        const allThumbnails = spriteSheets.flatMap((sheet) => sheet.thumbnails);
+
+        // Collect all thumbnails and sort by timestamp for correct time mapping
+        const allThumbnails = spriteSheets
+          .flatMap((sheet) => sheet.thumbnails)
+          .sort((a, b) => a.timestamp - b.timestamp);
 
         if (allThumbnails.length === 0) return [];
 
@@ -452,7 +465,9 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
             }}
           >
             {visibleTiles.map((tile) => {
-              const sheet = state.spriteSheets[tile.thumbnail.sheetIndex];
+              // Use sheetIndexMap for O(1) lookup by sheetIndex (not array position)
+              // This correctly handles progressive loading where sheets arrive out of order
+              const sheet = sheetIndexMap.get(tile.thumbnail.sheetIndex);
               if (sheet) {
                 return (
                   <GPUAcceleratedSprite
