@@ -172,11 +172,6 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         );
       }, [mediaItem]);
 
-      // Check if proxy generation is in progress (for 4K videos)
-      const isProxyProcessing = useMemo(() => {
-        return mediaItem?.proxy?.status === 'processing';
-      }, [mediaItem]);
-
       // Hybrid tile generation - pixel-position based for correct zoom behavior
       // Key insight: iterate by PIXEL POSITION at native tile width intervals,
       // then pick the appropriate thumbnail for each position.
@@ -188,6 +183,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         if (spriteSheets.length === 0) return [];
 
         const tiles: HybridTile[] = [];
+
         const allThumbnails = spriteSheets.flatMap((sheet) => sheet.thumbnails);
 
         if (allThumbnails.length === 0) return [];

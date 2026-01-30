@@ -3,6 +3,10 @@
  * Handles text clip data extraction and formatting for export
  */
 import { TextClipData } from '@/backend/ffmpeg/schema/ffmpegConfig';
+import {
+  TEXT_CLIP_PADDING_HORIZONTAL,
+  TEXT_CLIP_PADDING_VERTICAL,
+} from '../../editor/preview/core/constants';
 import { VideoTrack } from '../../editor/stores/videoEditor/index';
 import { applyTextWrapping } from './textWrapUtils';
 
@@ -71,6 +75,16 @@ export function extractTextClips(
       style.isItalic ? 'italic' : style.fontStyle,
       style.letterSpacing,
       transform.scale,
+      {
+        lineHeight: style.lineHeight,
+        textTransform: style.textTransform,
+        textAlign: style.textAlign,
+        paddingX: TEXT_CLIP_PADDING_HORIZONTAL,
+        paddingY: TEXT_CLIP_PADDING_VERTICAL,
+        wordBreak: 'break-word',
+        overflowWrap: 'break-word',
+        whiteSpace: 'pre-wrap',
+      },
     );
 
     return {

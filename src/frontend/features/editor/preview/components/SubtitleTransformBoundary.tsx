@@ -4,6 +4,7 @@ import {
   useVideoEditorStore,
   VideoTrack,
 } from '../../stores/videoEditor/index';
+import { TRANSFORM_SNAP_TOLERANCE } from '../../stores/videoEditor/utils/constants';
 
 interface SubtitleTransformBoundaryProps {
   track: VideoTrack;
@@ -636,10 +637,18 @@ export const SubtitleTransformBoundary: React.FC<
         let newPixelX = initialVideoX + videoDeltaX;
         let newPixelY = initialVideoY + videoDeltaY;
 
-        // Snapping logic
-        if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          const snapTolerance = e.ctrlKey || e.metaKey ? 2 : 10;
+        // Snapping logic - Shift for forgiving snap, Ctrl/Cmd for precision snap
+        // Shift: Large tolerance (25px) - helps with intentional alignment, feels assistive
+        // Ctrl/Cmd: Small tolerance (8px) - for fine-tuned precision alignment
+        // No modifier: No snapping - free movement
+        const snapTolerance =
+          e.ctrlKey || e.metaKey
+            ? TRANSFORM_SNAP_TOLERANCE.PRECISION
+            : e.shiftKey
+              ? TRANSFORM_SNAP_TOLERANCE.SHIFT
+              : TRANSFORM_SNAP_TOLERANCE.DEFAULT;
 
+        if (snapTolerance > 0) {
           const snapPoints = {
             horizontal: [0],
             vertical: [0],
@@ -660,18 +669,32 @@ export const SubtitleTransformBoundary: React.FC<
             videoWidth / 2 - halfWidth,
           );
 
+          // Find the nearest snap point within tolerance for each axis
+          // Using nearest-point algorithm instead of first-match for better UX
+          let bestSnapY: number | null = null;
+          let bestSnapYDistance = Infinity;
           for (const snapY of snapPoints.horizontal) {
-            if (Math.abs(newPixelY - snapY) < snapTolerance) {
-              newPixelY = snapY;
-              break;
+            const distance = Math.abs(newPixelY - snapY);
+            if (distance < snapTolerance && distance < bestSnapYDistance) {
+              bestSnapY = snapY;
+              bestSnapYDistance = distance;
             }
           }
+          if (bestSnapY !== null) {
+            newPixelY = bestSnapY;
+          }
 
+          let bestSnapX: number | null = null;
+          let bestSnapXDistance = Infinity;
           for (const snapX of snapPoints.vertical) {
-            if (Math.abs(newPixelX - snapX) < snapTolerance) {
-              newPixelX = snapX;
-              break;
+            const distance = Math.abs(newPixelX - snapX);
+            if (distance < snapTolerance && distance < bestSnapXDistance) {
+              bestSnapX = snapX;
+              bestSnapXDistance = distance;
             }
+          }
+          if (bestSnapX !== null) {
+            newPixelX = bestSnapX;
           }
         }
 
@@ -718,9 +741,73 @@ export const SubtitleTransformBoundary: React.FC<
         let newScale = initialTransform.scale * scaleFactor;
         newScale = Math.max(0.01, newScale);
 
-        onTransformUpdate(track.id, {
-          scale: newScale,
-        });
+        // Dynamic anchor mode - check modifier keys in real-time during drag
+        // Shift/Ctrl/Cmd = center anchor (symmetric scaling)
+        // No modifier = corner anchor (opposite corner stays fixed)
+        // This allows users to switch modes mid-drag for smooth UX
+        const useCenterAnchor = e.shiftKey || e.ctrlKey || e.metaKey;
+
+        // Anchor-based scaling: compensate position to keep anchor point fixed
+        // Center anchor (modifier held): no position change needed - element scales symmetrically
+        // Corner anchor (no modifier): opposite corner stays fixed, center moves
+        // Note: Subtitles use font-based scaling, containerSize is already scaled
+        if (!useCenterAnchor && containerSize.width > 0) {
+          // Calculate the initial size and position in video space
+          const initialVideoX = initialTransform.x / effectiveRenderScale;
+          const initialVideoY = initialTransform.y / effectiveRenderScale;
+          // For subtitles, containerSize is already scaled by font size, so we use it directly
+          const initialWidth = containerSize.width / effectiveRenderScale;
+          const initialHeight = containerSize.height / effectiveRenderScale;
+
+          // Calculate the size change ratio
+          const sizeRatio = newScale / initialTransform.scale;
+          const newWidth = initialWidth * sizeRatio;
+          const newHeight = initialHeight * sizeRatio;
+
+          // Calculate position offset to keep the opposite corner fixed
+          let offsetX = 0;
+          let offsetY = 0;
+
+          switch (activeHandle) {
+            case 'tl': // Anchor: bottom-right corner
+              offsetX = (initialWidth - newWidth) / 2;
+              offsetY = (initialHeight - newHeight) / 2;
+              break;
+            case 'tr': // Anchor: bottom-left corner
+              offsetX = -(initialWidth - newWidth) / 2;
+              offsetY = (initialHeight - newHeight) / 2;
+              break;
+            case 'bl': // Anchor: top-right corner
+              offsetX = (initialWidth - newWidth) / 2;
+              offsetY = -(initialHeight - newHeight) / 2;
+              break;
+            case 'br': // Anchor: top-left corner
+              offsetX = -(initialWidth - newWidth) / 2;
+              offsetY = -(initialHeight - newHeight) / 2;
+              break;
+          }
+
+          // Apply the position offset
+          const newPixelX = initialVideoX + offsetX;
+          const newPixelY = initialVideoY + offsetY;
+
+          // Convert to normalized coordinates
+          const normalizedPos = pixelsToNormalized({
+            x: newPixelX,
+            y: newPixelY,
+          });
+
+          onTransformUpdate(track.id, {
+            scale: newScale,
+            x: normalizedPos.x,
+            y: normalizedPos.y,
+          });
+        } else {
+          // Center anchor - just update scale, position stays the same
+          onTransformUpdate(track.id, {
+            scale: newScale,
+          });
+        }
       } else if (isResizingWidth && activeHandle) {
         // Width-only resize - same logic as TextTransformBoundary
         const initialWidth =

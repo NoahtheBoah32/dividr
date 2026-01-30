@@ -2,6 +2,12 @@
 import { projectService } from '@/backend/services/projectService';
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
 import { StateCreator } from 'zustand';
+import { AUTO_SAVE_CONFIG } from '../utils/constants';
+
+// Auto-save manager state (module-level to persist across re-renders)
+let autoSaveTimeoutId: NodeJS.Timeout | null = null;
+let lastSaveTimestamp = 0;
+let pendingAutoSave = false;
 
 export interface ProjectSlice {
   currentProjectId: string | null;
@@ -20,6 +26,10 @@ export interface ProjectSlice {
   importProject: (data: string) => void;
   setProjectThumbnail: (thumbnailData: string) => Promise<void>;
   setIsSaving: (isSaving: boolean) => void;
+  // New: Trigger immediate save when transform/drag ends
+  triggerAutoSaveOnCommit: () => void;
+  // New: Cancel pending auto-save (useful when starting a new operation)
+  cancelPendingAutoSave: () => void;
 
   // Cross-slice helpers accessed by other slices
   updateProjectThumbnailFromTimeline?: () => Promise<void>;
@@ -305,39 +315,132 @@ export const createProjectSlice: StateCreator<
 
   markUnsavedChanges: () => {
     const state = get() as any;
+
+    // Always mark as having unsaved changes
     if (!state.hasUnsavedChanges) {
       set({ hasUnsavedChanges: true });
-
-      // Log the source of what triggered auto-save
-      // const stackTrace = new Error().stack;
-      // const callerMatch = stackTrace?.match(/at\s+(\w+\.?\w*)\s+\(/g);
-      // const callerInfo = callerMatch
-      //   ? callerMatch
-      //       .slice(1, 4)
-      //       .map((call) => call.replace(/at\s+/, '').replace(/\s+\(/, ''))
-      //       .join(' → ')
-      //   : 'Unknown source';
-
-      // console.log('🔄 Auto-save triggered by:', callerInfo);
-      // console.trace('📋 Full call stack:');
-
-      if (state.isAutoSaveEnabled && state.currentProjectId) {
-        const timeoutId = setTimeout(() => {
-          const currentState = get() as any;
-          if (currentState.hasUnsavedChanges && currentState.currentProjectId) {
-            // console.log(
-            //   '💾 Executing auto-save (triggered by:',
-            //   callerInfo,
-            //   ')',
-            // );
-            currentState.saveProjectData().catch(console.error);
-          }
-        }, 2000);
-
-        // Store timeout ID for potential cancellation (optional enhancement)
-        (state as any)._autoSaveTimeoutId = timeoutId;
-      }
     }
+
+    // Skip auto-save scheduling if disabled or no project
+    if (!state.isAutoSaveEnabled || !state.currentProjectId) {
+      return;
+    }
+
+    // Check if currently in a transform/drag operation
+    // During these operations, we defer auto-save until the operation ends
+    const isInContinuousOperation =
+      state.playback?.isDraggingTransform ||
+      state.playback?.isDraggingTrack ||
+      state.playback?.isDraggingPlayhead;
+
+    if (isInContinuousOperation) {
+      // Mark that we have pending changes but don't schedule save yet
+      // The save will be triggered by triggerAutoSaveOnCommit when the operation ends
+      pendingAutoSave = true;
+      return;
+    }
+
+    // Clear any existing timeout and reset the debounce timer
+    if (autoSaveTimeoutId) {
+      clearTimeout(autoSaveTimeoutId);
+      autoSaveTimeoutId = null;
+    }
+
+    // Schedule new auto-save with the standard debounce delay
+    autoSaveTimeoutId = setTimeout(() => {
+      const currentState = get() as any;
+      autoSaveTimeoutId = null;
+
+      // Double-check conditions before saving
+      if (
+        !currentState.hasUnsavedChanges ||
+        !currentState.currentProjectId ||
+        currentState.isSaving
+      ) {
+        return;
+      }
+
+      // Prevent saves too close together
+      const now = Date.now();
+      if (now - lastSaveTimestamp < AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS) {
+        // Reschedule for later
+        const remainingDelay =
+          AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS - (now - lastSaveTimestamp);
+        autoSaveTimeoutId = setTimeout(() => {
+          const s = get() as any;
+          if (s.hasUnsavedChanges && s.currentProjectId && !s.isSaving) {
+            lastSaveTimestamp = Date.now();
+            s.saveProjectData().catch(console.error);
+          }
+        }, remainingDelay);
+        return;
+      }
+
+      lastSaveTimestamp = now;
+      currentState.saveProjectData().catch(console.error);
+    }, AUTO_SAVE_CONFIG.DEBOUNCE_DELAY_MS);
+  },
+
+  triggerAutoSaveOnCommit: () => {
+    const state = get() as any;
+
+    // Only proceed if we have pending changes and auto-save is enabled
+    if (
+      !state.hasUnsavedChanges ||
+      !state.isAutoSaveEnabled ||
+      !state.currentProjectId
+    ) {
+      pendingAutoSave = false;
+      return;
+    }
+
+    // Clear any existing debounce timeout
+    if (autoSaveTimeoutId) {
+      clearTimeout(autoSaveTimeoutId);
+      autoSaveTimeoutId = null;
+    }
+
+    // Use shorter delay for commit saves to provide quick feedback
+    autoSaveTimeoutId = setTimeout(() => {
+      const currentState = get() as any;
+      autoSaveTimeoutId = null;
+      pendingAutoSave = false;
+
+      if (
+        !currentState.hasUnsavedChanges ||
+        !currentState.currentProjectId ||
+        currentState.isSaving
+      ) {
+        return;
+      }
+
+      // Prevent saves too close together
+      const now = Date.now();
+      if (now - lastSaveTimestamp < AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS) {
+        // Reschedule for later
+        const remainingDelay =
+          AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS - (now - lastSaveTimestamp);
+        autoSaveTimeoutId = setTimeout(() => {
+          const s = get() as any;
+          if (s.hasUnsavedChanges && s.currentProjectId && !s.isSaving) {
+            lastSaveTimestamp = Date.now();
+            s.saveProjectData().catch(console.error);
+          }
+        }, remainingDelay);
+        return;
+      }
+
+      lastSaveTimestamp = now;
+      currentState.saveProjectData().catch(console.error);
+    }, AUTO_SAVE_CONFIG.COMMIT_DELAY_MS);
+  },
+
+  cancelPendingAutoSave: () => {
+    if (autoSaveTimeoutId) {
+      clearTimeout(autoSaveTimeoutId);
+      autoSaveTimeoutId = null;
+    }
+    pendingAutoSave = false;
   },
 
   clearUnsavedChanges: () => {

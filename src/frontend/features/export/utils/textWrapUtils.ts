@@ -18,6 +18,24 @@ interface TextWrapOptions {
   fontStyle?: string;
   /** Letter spacing in pixels */
   letterSpacing?: number;
+  /** Word spacing in pixels */
+  wordSpacing?: number;
+  /** Line height (unitless multiplier) */
+  lineHeight?: number;
+  /** Text transform (e.g., 'none', 'uppercase') */
+  textTransform?: string;
+  /** Text alignment (left, center, right) */
+  textAlign?: string;
+  /** Word-break behavior */
+  wordBreak?: string;
+  /** Overflow-wrap behavior */
+  overflowWrap?: string;
+  /** White-space handling */
+  whiteSpace?: string;
+  /** Horizontal padding in pixels */
+  paddingX?: number;
+  /** Vertical padding in pixels */
+  paddingY?: number;
   /** Maximum width in pixels for wrapping */
   maxWidth: number;
 }
@@ -34,6 +52,9 @@ interface WrapResult {
 // Cache canvas context for performance
 let measureCanvas: HTMLCanvasElement | null = null;
 let measureContext: CanvasRenderingContext2D | null = null;
+let domMeasureContainer: HTMLDivElement | null = null;
+let domMeasureInner: HTMLDivElement | null = null;
+let domMeasureTextNode: Text | null = null;
 
 /**
  * Normalize line breaks in text content
@@ -109,6 +130,27 @@ function buildFontString(options: TextWrapOptions): string {
 }
 
 /**
+ * Apply text transform for measurement purposes
+ * Note: CSS text-transform does not change string length for supported transforms
+ */
+function applyTextTransformForMeasurement(
+  text: string,
+  transform?: string,
+): string {
+  switch (transform) {
+    case 'uppercase':
+      return text.toUpperCase();
+    case 'lowercase':
+      return text.toLowerCase();
+    case 'capitalize':
+      return text.replace(/\b\w/g, (char) => char.toUpperCase());
+    case 'none':
+    default:
+      return text;
+  }
+}
+
+/**
  * Measure text width using canvas
  */
 function measureTextWidth(
@@ -119,15 +161,208 @@ function measureTextWidth(
   const fontString = buildFontString(options);
   ctx.font = fontString;
 
-  const baseWidth = ctx.measureText(text).width;
+  const measureText = applyTextTransformForMeasurement(
+    text,
+    options.textTransform,
+  );
+  let baseWidth = ctx.measureText(measureText).width;
+
+  // Add word spacing for spaces
+  const wordSpacing = options.wordSpacing || 0;
+  if (wordSpacing !== 0 && measureText.includes(' ')) {
+    const spaceCount = measureText.split(' ').length - 1;
+    if (spaceCount > 0) {
+      baseWidth += wordSpacing * spaceCount;
+    }
+  }
 
   // Add letter spacing for each character except the last
   const letterSpacing = options.letterSpacing || 0;
-  if (letterSpacing !== 0 && text.length > 1) {
-    return baseWidth + letterSpacing * (text.length - 1);
+  if (letterSpacing !== 0 && measureText.length > 1) {
+    return baseWidth + letterSpacing * (measureText.length - 1);
   }
 
   return baseWidth;
+}
+
+/**
+ * Get or create DOM measurement elements for accurate text layout
+ */
+function getDomMeasureElements(): {
+  container: HTMLDivElement;
+  inner: HTMLDivElement;
+  textNode: Text;
+} | null {
+  if (typeof document === 'undefined' || !document.body) return null;
+
+  if (
+    domMeasureContainer &&
+    domMeasureInner &&
+    domMeasureTextNode &&
+    document.body.contains(domMeasureContainer)
+  ) {
+    return {
+      container: domMeasureContainer,
+      inner: domMeasureInner,
+      textNode: domMeasureTextNode,
+    };
+  }
+
+  const container = document.createElement('div');
+  container.setAttribute('data-text-wrap-measure', 'true');
+  container.style.position = 'absolute';
+  container.style.top = '-10000px';
+  container.style.left = '-10000px';
+  container.style.visibility = 'hidden';
+  container.style.pointerEvents = 'none';
+  container.style.zIndex = '-1';
+  container.style.contain = 'layout style paint';
+
+  const inner = document.createElement('div');
+  inner.style.display = 'inline-block';
+  inner.style.width = '100%';
+  inner.style.maxWidth = '100%';
+  // Match preview wrapping behavior when width is constrained
+  inner.style.whiteSpace = 'pre-wrap';
+  inner.style.wordBreak = 'break-word';
+  inner.style.overflowWrap = 'break-word';
+  inner.style.wordWrap = 'break-word';
+  inner.style.boxSizing = 'border-box';
+
+  const textNode = document.createTextNode('');
+  inner.appendChild(textNode);
+  container.appendChild(inner);
+  document.body.appendChild(container);
+
+  domMeasureContainer = container;
+  domMeasureInner = inner;
+  domMeasureTextNode = textNode;
+
+  return { container, inner, textNode };
+}
+
+/**
+ * Apply layout styles to DOM measurement elements
+ */
+function applyDomMeasureStyles(
+  elements: { container: HTMLDivElement; inner: HTMLDivElement },
+  options: TextWrapOptions,
+): void {
+  const { container, inner } = elements;
+  container.style.width = `${options.maxWidth}px`;
+
+  inner.style.fontFamily = options.fontFamily || 'sans-serif';
+  inner.style.fontSize = `${options.fontSize}px`;
+  inner.style.fontWeight = String(options.fontWeight || '400');
+  inner.style.fontStyle = options.fontStyle || 'normal';
+  inner.style.letterSpacing = `${options.letterSpacing || 0}px`;
+  inner.style.wordSpacing = `${options.wordSpacing || 0}px`;
+  inner.style.lineHeight =
+    options.lineHeight !== undefined ? String(options.lineHeight) : 'normal';
+  inner.style.textTransform = options.textTransform || 'none';
+  inner.style.textAlign = options.textAlign || 'left';
+
+  inner.style.whiteSpace = options.whiteSpace || 'pre-wrap';
+  inner.style.wordBreak = options.wordBreak || 'break-word';
+  inner.style.overflowWrap = options.overflowWrap || 'break-word';
+  inner.style.wordWrap =
+    options.wordBreak || options.overflowWrap || 'break-word';
+
+  const padX = options.paddingX || 0;
+  const padY = options.paddingY || 0;
+  inner.style.padding = `${padY}px ${padX}px`;
+}
+
+/**
+ * Compute line breaks from a text node using DOM layout
+ */
+function computeWrappedTextFromTextNode(
+  textNode: Text,
+  sourceText: string,
+): WrapResult {
+  if (!sourceText) {
+    return { wrappedText: '', lines: [], wasWrapped: false };
+  }
+
+  const range = document.createRange();
+  let offset = 0;
+  let lastLineTop: number | null = null;
+  const breakIndices: number[] = [];
+
+  for (const char of sourceText) {
+    const charLength = char.length;
+
+    // Respect manual line breaks
+    if (char === '\n') {
+      lastLineTop = null;
+      offset += charLength;
+      continue;
+    }
+
+    range.setStart(textNode, offset);
+    range.setEnd(textNode, offset + charLength);
+    const rects = range.getClientRects();
+    const rect = rects[0] || range.getBoundingClientRect();
+    if (rect) {
+      const top = rect.top;
+      if (lastLineTop === null) {
+        lastLineTop = top;
+      } else if (Math.abs(top - lastLineTop) > 0.5) {
+        breakIndices.push(offset);
+        lastLineTop = top;
+      }
+    }
+
+    offset += charLength;
+  }
+
+  if (breakIndices.length === 0) {
+    return {
+      wrappedText: sourceText,
+      lines: sourceText.split('\n'),
+      wasWrapped: false,
+    };
+  }
+
+  let wrappedText = '';
+  let lastIndex = 0;
+  for (const breakIndex of breakIndices) {
+    wrappedText += sourceText.slice(lastIndex, breakIndex) + '\n';
+    lastIndex = breakIndex;
+  }
+  wrappedText += sourceText.slice(lastIndex);
+
+  return {
+    wrappedText,
+    lines: wrappedText.split('\n'),
+    wasWrapped: true,
+  };
+}
+
+/**
+ * Wrap text using DOM layout measurement (matches preview rendering)
+ */
+function wrapTextToWidthWithDOM(
+  text: string,
+  options: TextWrapOptions,
+): WrapResult | null {
+  try {
+    const elements = getDomMeasureElements();
+    if (!elements) return null;
+
+    applyDomMeasureStyles(elements, options);
+    elements.textNode.nodeValue = text;
+
+    // Force layout to ensure measurements are accurate
+    if (elements.container.getClientRects().length === 0) {
+      return null;
+    }
+
+    return computeWrappedTextFromTextNode(elements.textNode, text);
+  } catch (error) {
+    console.warn('📐 [TextWrap] DOM measurement failed, falling back', error);
+    return null;
+  }
 }
 
 /**
@@ -142,17 +377,26 @@ export function wrapTextToWidth(
   text: string,
   options: TextWrapOptions,
 ): WrapResult {
+  const normalizedText = normalizeLineBreaks(text);
+
   // Validate inputs
-  if (!text || options.maxWidth <= 0) {
+  if (!normalizedText || options.maxWidth <= 0) {
     return {
-      wrappedText: text || '',
-      lines: text ? text.split('\n') : [],
+      wrappedText: normalizedText || '',
+      lines: normalizedText ? normalizedText.split('\n') : [],
       wasWrapped: false,
     };
   }
 
+  // Use DOM measurement first for pixel-accurate wrapping
+  const domResult = wrapTextToWidthWithDOM(normalizedText, options);
+  if (domResult) {
+    return domResult;
+  }
+
   const ctx = getMeasureContext();
-  const maxWidth = options.maxWidth;
+  const horizontalPadding = options.paddingX || 0;
+  const maxWidth = Math.max(0, options.maxWidth - horizontalPadding * 2);
   const resultLines: string[] = [];
   let wasWrapped = false;
 
@@ -172,14 +416,14 @@ export function wrapTextToWidth(
       `📐 [TextWrap] Font measurement seems unreliable (${testWidth.toFixed(1)}px < ${expectedMinWidth}px). Skipping auto-wrap.`,
     );
     return {
-      wrappedText: text,
-      lines: text.split('\n'),
+      wrappedText: normalizedText,
+      lines: normalizedText.split('\n'),
       wasWrapped: false,
     };
   }
 
   // Split by existing line breaks first (preserve manual breaks)
-  const existingLines = text.split('\n');
+  const existingLines = normalizedText.split('\n');
 
   for (const line of existingLines) {
     // Preserve empty lines
@@ -230,8 +474,8 @@ export function wrapTextToWidth(
           currentLine = testLine;
         } else {
           // Word doesn't fit - push current line and start new one
-          if (currentLine.trim()) {
-            resultLines.push(currentLine.trimEnd());
+          if (currentLine !== '') {
+            resultLines.push(currentLine);
           }
 
           const wordWidth = measureTextWidth(word, options, ctx);
@@ -244,15 +488,15 @@ export function wrapTextToWidth(
             currentLine = brokenLines[brokenLines.length - 1] || '';
           } else {
             // Start new line with this word
-            currentLine = word.trimStart();
+            currentLine = word;
           }
         }
       }
     }
 
     // Add remaining content
-    if (currentLine.trim()) {
-      resultLines.push(currentLine.trimEnd());
+    if (currentLine !== '') {
+      resultLines.push(currentLine);
     }
   }
 
@@ -310,7 +554,8 @@ function breakLongWord(
  * @param fontWeight - Font weight
  * @param fontStyle - Font style (normal/italic)
  * @param letterSpacing - Letter spacing in pixels
- * @param scale - Scale factor applied to the text (default 1)
+ * @param scale - Scale factor applied to font size/padding (default 1)
+ * @param wrapOptions - Optional layout overrides to match preview rendering
  * @returns Text with normalized and wrapped line breaks
  */
 export function applyTextWrapping(
@@ -322,6 +567,19 @@ export function applyTextWrapping(
   fontStyle?: string,
   letterSpacing?: number,
   scale?: number,
+  wrapOptions?: {
+    lineHeight?: number;
+    textTransform?: string;
+    textAlign?: string;
+    paddingX?: number;
+    paddingY?: number;
+    /** Whether letterSpacing should scale with transform scale (subtitles) */
+    scaleLetterSpacing?: boolean;
+    wordSpacing?: number;
+    wordBreak?: string;
+    overflowWrap?: string;
+    whiteSpace?: string;
+  },
 ): string {
   // First, normalize line breaks (this is always done)
   const normalizedText = normalizeLineBreaks(text);
@@ -335,25 +593,42 @@ export function applyTextWrapping(
   const validFontSize =
     typeof fontSize === 'number' && fontSize > 0 ? fontSize : 40;
 
-  // Account for scale - the width is in video space, but text renders at scale
+  // Account for scale - match preview by scaling font + padding (width stays in video space)
   const effectiveScale = scale || 1;
-  const effectiveWidth = trackWidth / effectiveScale;
+  const effectiveFontSize = validFontSize * effectiveScale;
+  const effectiveLetterSpacing =
+    (letterSpacing || 0) *
+    (wrapOptions?.scaleLetterSpacing ? effectiveScale : 1);
+  const effectiveWordSpacing =
+    (wrapOptions?.wordSpacing || 0) *
+    (wrapOptions?.scaleLetterSpacing ? effectiveScale : 1);
+  const effectivePaddingX = (wrapOptions?.paddingX || 0) * effectiveScale;
+  const effectivePaddingY = (wrapOptions?.paddingY || 0) * effectiveScale;
 
   // Debug: show raw input text with visible line breaks
   const debugText = text.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
   console.log(`📐 [TextWrap] Input text (raw): "${debugText}"`);
   console.log(
-    `📐 [TextWrap] Wrapping at width: ${trackWidth}px (effective: ${effectiveWidth.toFixed(0)}px), Font: ${validFontSize}px "${fontFamily}"`,
+    `📐 [TextWrap] Wrapping at width: ${trackWidth}px, Font: ${effectiveFontSize.toFixed(1)}px "${fontFamily}"`,
   );
 
   // Perform wrapping
   const result = wrapTextToWidth(normalizedText, {
     fontFamily,
-    fontSize: validFontSize,
+    fontSize: effectiveFontSize,
     fontWeight,
     fontStyle,
-    letterSpacing,
-    maxWidth: effectiveWidth,
+    letterSpacing: effectiveLetterSpacing,
+    wordSpacing: effectiveWordSpacing,
+    maxWidth: trackWidth,
+    lineHeight: wrapOptions?.lineHeight,
+    textTransform: wrapOptions?.textTransform,
+    textAlign: wrapOptions?.textAlign,
+    paddingX: effectivePaddingX,
+    paddingY: effectivePaddingY,
+    wordBreak: wrapOptions?.wordBreak,
+    overflowWrap: wrapOptions?.overflowWrap,
+    whiteSpace: wrapOptions?.whiteSpace,
   });
 
   console.log(

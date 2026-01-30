@@ -1,5 +1,7 @@
 export interface ThumbnailOptions {
   videoPath: string;
+  /** Optional content-based signature for stable caching across reimports */
+  contentSignature?: string;
   duration: number; // in seconds
   fps: number;
   intervalSeconds?: number; // Generate thumbnail every N seconds (default: 1)
@@ -7,6 +9,8 @@ export interface ThumbnailOptions {
   height?: number; // Thumbnail height (default: 90)
   quality?: number; // JPEG quality 1-31, lower is better (default: 5)
   sourceStartTime?: number; // Start time in source video (default: 0)
+  /** Persist cache entry across app restarts (localStorage) */
+  persist?: boolean;
 }
 
 export interface VideoThumbnail {
@@ -24,6 +28,12 @@ export interface ThumbnailGenerationResult {
   error?: string;
 }
 
+interface PersistentThumbnailCacheEntry {
+  thumbnails: VideoThumbnail[];
+  timestamp: number;
+  lastAccessed: number;
+}
+
 export class VideoThumbnailGenerator {
   private static thumbnailCache = new Map<string, VideoThumbnail[]>();
   private static activeGenerations = new Map<
@@ -32,6 +42,136 @@ export class VideoThumbnailGenerator {
   >();
   private static cacheAccessTimes = new Map<string, number>();
   private static readonly MAX_CACHE_SIZE = 50; // Limit cache to 50 entries
+  private static persistentCache = new Map<
+    string,
+    PersistentThumbnailCacheEntry
+  >();
+  private static cacheInitialized = false;
+  private static readonly CACHE_STORAGE_KEY = 'dividr_thumbnail_cache_v1';
+  private static readonly MAX_PERSISTENT_CACHE_SIZE = 100;
+
+  private static initializeCache(): void {
+    if (this.cacheInitialized) return;
+
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const stored = window.localStorage.getItem(this.CACHE_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored) as {
+            entries?: Record<string, PersistentThumbnailCacheEntry>;
+          };
+          const entries = parsed.entries || {};
+          for (const [key, entry] of Object.entries(entries)) {
+            if (entry?.thumbnails?.length) {
+              this.persistentCache.set(key, entry);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to load thumbnail cache from storage:', error);
+    }
+
+    this.cacheInitialized = true;
+  }
+
+  private static saveCacheToStorage(): void {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const entries: Record<string, PersistentThumbnailCacheEntry> = {};
+        for (const [key, entry] of this.persistentCache.entries()) {
+          entries[key] = entry;
+        }
+        window.localStorage.setItem(
+          this.CACHE_STORAGE_KEY,
+          JSON.stringify({ entries, version: 1, timestamp: Date.now() }),
+        );
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to save thumbnail cache to storage:', error);
+    }
+  }
+
+  private static cleanupPersistentCache(): void {
+    if (this.persistentCache.size <= this.MAX_PERSISTENT_CACHE_SIZE) return;
+
+    const entries = Array.from(this.persistentCache.entries()).sort(
+      ([, a], [, b]) => a.lastAccessed - b.lastAccessed,
+    );
+    const excess = this.persistentCache.size - this.MAX_PERSISTENT_CACHE_SIZE;
+    for (let i = 0; i < excess; i++) {
+      this.persistentCache.delete(entries[i][0]);
+    }
+  }
+
+  private static saveToCache(
+    cacheKey: string,
+    thumbnails: VideoThumbnail[],
+    persist?: boolean,
+  ): void {
+    this.thumbnailCache.set(cacheKey, thumbnails);
+    this.cacheAccessTimes.set(cacheKey, Date.now());
+
+    if (persist) {
+      const now = Date.now();
+      this.persistentCache.set(cacheKey, {
+        thumbnails,
+        timestamp: now,
+        lastAccessed: now,
+      });
+      this.cleanupPersistentCache();
+      this.saveCacheToStorage();
+    }
+
+    this.cleanupCache();
+  }
+
+  private static getCachedEntryByKey(
+    cacheKey: string,
+  ): { cacheKey: string; thumbnails: VideoThumbnail[] } | null {
+    const cached = this.thumbnailCache.get(cacheKey);
+    if (cached) {
+      this.cacheAccessTimes.set(cacheKey, Date.now());
+      return { cacheKey, thumbnails: cached };
+    }
+
+    const persistent = this.persistentCache.get(cacheKey);
+    if (persistent?.thumbnails?.length) {
+      persistent.lastAccessed = Date.now();
+      this.cacheAccessTimes.set(cacheKey, Date.now());
+      this.thumbnailCache.set(cacheKey, persistent.thumbnails);
+      return { cacheKey, thumbnails: persistent.thumbnails };
+    }
+
+    return null;
+  }
+
+  static getCachedThumbnailEntry(
+    options: ThumbnailOptions,
+  ): { cacheKey: string; thumbnails: VideoThumbnail[] } | null {
+    this.initializeCache();
+    const cacheKey = this.createCacheKey(options);
+    return this.getCachedEntryByKey(cacheKey);
+  }
+
+  static removeCacheEntryByKey(cacheKey: string): void {
+    this.thumbnailCache.delete(cacheKey);
+    this.cacheAccessTimes.delete(cacheKey);
+    this.persistentCache.delete(cacheKey);
+    this.saveCacheToStorage();
+  }
+
+  static async validateThumbnailUrl(url: string): Promise<boolean> {
+    if (!url) return false;
+    if (url.startsWith('data:')) return true;
+
+    try {
+      const response = await fetch(url, { method: 'HEAD' });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * Generate thumbnails for a video with optimized FFmpeg command
@@ -39,18 +179,17 @@ export class VideoThumbnailGenerator {
   static async generateThumbnails(
     options: ThumbnailOptions,
   ): Promise<ThumbnailGenerationResult> {
+    this.initializeCache();
     // Create cache key
     const cacheKey = this.createCacheKey(options);
 
     // Return cached result if available
-    if (this.thumbnailCache.has(cacheKey)) {
-      const cachedThumbnails = this.thumbnailCache.get(cacheKey);
-      if (cachedThumbnails) {
-        return {
-          success: true,
-          thumbnails: cachedThumbnails,
-        };
-      }
+    const cachedEntry = this.getCachedEntryByKey(cacheKey);
+    if (cachedEntry?.thumbnails) {
+      return {
+        success: true,
+        thumbnails: cachedEntry.thumbnails,
+      };
     }
 
     // Return active generation if already in progress
@@ -118,6 +257,7 @@ export class VideoThumbnailGenerator {
   private static createCacheKey(options: ThumbnailOptions): string {
     const {
       videoPath,
+      contentSignature,
       intervalSeconds = 1,
       width = 160,
       height = 90,
@@ -130,9 +270,12 @@ export class VideoThumbnailGenerator {
     const roundedDuration = Math.round(duration * 10) / 10; // Round to 1 decimal place
     const roundedStartTime = Math.round(sourceStartTime * 10) / 10;
 
+    if (contentSignature) {
+      return `thumb_sig_${contentSignature}_${roundedStartTime}_${roundedDuration}_${roundedInterval}_${width}x${height}_q${quality}`;
+    }
+
     // Use just the filename instead of full path for better cache sharing
     const filename = videoPath.split(/[\\/]/).pop() || videoPath;
-
     return `${filename}_${roundedStartTime}_${roundedDuration}_${roundedInterval}_${width}x${height}_q${quality}`;
   }
 
@@ -142,6 +285,10 @@ export class VideoThumbnailGenerator {
   static clearCache(): void {
     this.thumbnailCache.clear();
     this.cacheAccessTimes.clear();
+    this.persistentCache.clear();
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(this.CACHE_STORAGE_KEY);
+    }
   }
 
   /**
@@ -163,7 +310,12 @@ export class VideoThumbnailGenerator {
     const keysToRemove = Array.from(this.thumbnailCache.keys()).filter((key) =>
       key.startsWith(videoPath),
     );
-    keysToRemove.forEach((key) => this.thumbnailCache.delete(key));
+    keysToRemove.forEach((key) => {
+      this.thumbnailCache.delete(key);
+      this.cacheAccessTimes.delete(key);
+      this.persistentCache.delete(key);
+    });
+    this.saveCacheToStorage();
   }
 
   /**
@@ -172,18 +324,14 @@ export class VideoThumbnailGenerator {
   static getCachedThumbnails(
     options: ThumbnailOptions,
   ): VideoThumbnail[] | null {
-    const cacheKey = this.createCacheKey(options);
-    const cached = this.thumbnailCache.get(cacheKey);
-
-    if (cached) {
-      // Update access time for LRU cache management
-      this.cacheAccessTimes.set(cacheKey, Date.now());
-      console.log(`✅ Cache HIT for ${cacheKey}`);
-    } else {
-      console.log(`❌ Cache MISS for ${cacheKey}`);
+    const entry = this.getCachedThumbnailEntry(options);
+    if (entry?.thumbnails) {
+      console.log(`✅ Cache HIT for ${entry.cacheKey}`);
+      return entry.thumbnails;
     }
 
-    return cached ?? null;
+    console.log(`❌ Cache MISS for ${this.createCacheKey(options)}`);
+    return null;
   }
 
   /**
@@ -298,9 +446,7 @@ export class VideoThumbnailGenerator {
       }
 
       // Cache the result with cleanup
-      this.cleanupCache();
-      this.thumbnailCache.set(cacheKey, thumbnails);
-      this.cacheAccessTimes.set(cacheKey, Date.now());
+      this.saveToCache(cacheKey, thumbnails, options.persist);
 
       return {
         success: true,
@@ -381,7 +527,7 @@ export class VideoThumbnailGenerator {
     }
 
     // Cache the result
-    this.thumbnailCache.set(cacheKey, thumbnails);
+    this.saveToCache(cacheKey, thumbnails, options.persist);
 
     return {
       success: true,

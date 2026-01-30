@@ -33,6 +33,14 @@ const activeSpriteSheetJobs = new Map<
  */
 let spriteSheetListenerRegistered = false;
 
+const getContentSignatureKey = (
+  mediaItem: MediaLibraryItem,
+): string | undefined => {
+  const signature = mediaItem.contentSignature;
+  if (!signature?.partialHash || !signature?.fileSize) return undefined;
+  return `${signature.partialHash}_${signature.fileSize}`;
+};
+
 /** Duplicate detection user choice: 'use-existing' (skip) | 'import-copy' (keep both) */
 export type DuplicateChoice = 'use-existing' | 'import-copy';
 
@@ -512,6 +520,47 @@ export const createMediaLibrarySlice: StateCreator<
       return true; // Not an error, just not applicable
     }
 
+    // Cache-first: try content-signature-based cache before any other checks
+    const contentSignatureKey = getContentSignatureKey(mediaItem);
+    if (contentSignatureKey) {
+      const cachedWaveform = AudioWaveformGenerator.getCachedWaveform(
+        mediaItem.source,
+        mediaItem.duration,
+        8000,
+        50,
+        contentSignatureKey,
+      );
+
+      if (cachedWaveform?.success && cachedWaveform.peaks.length > 0) {
+        set((state: any) => ({
+          mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+            item.id === mediaId
+              ? {
+                  ...item,
+                  waveform: {
+                    success: cachedWaveform.success,
+                    peaks: cachedWaveform.peaks,
+                    duration: cachedWaveform.duration,
+                    sampleRate: cachedWaveform.sampleRate,
+                    cacheKey: cachedWaveform.cacheKey,
+                    lodTiers: cachedWaveform.lodTiers,
+                    generatedAt: Date.now(),
+                  },
+                  jobStates: {
+                    ...item.jobStates,
+                    waveform: 'completed' as const,
+                  },
+                }
+              : item,
+          ),
+        }));
+
+        state.markUnsavedChanges?.();
+        console.log(`✅ Waveform cache HIT (signature) for: ${mediaItem.name}`);
+        return true;
+      }
+    }
+
     // For video files without extracted audio, return false to trigger retry
     // Audio extraction happens asynchronously and may not be complete yet
     if (isVideoFile && !isVideoWithExtractedAudio) {
@@ -577,7 +626,14 @@ export const createMediaLibrarySlice: StateCreator<
     }
 
     // Check if waveform generator already has an active job for this path
-    if (AudioWaveformGenerator.isJobActive(audioPath)) {
+    if (
+      AudioWaveformGenerator.isJobActive(
+        audioPath,
+        0,
+        Infinity,
+        contentSignatureKey,
+      )
+    ) {
       console.log(`Waveform job already active for: ${mediaItem.name}`);
       return true;
     }
@@ -613,6 +669,7 @@ export const createMediaLibrarySlice: StateCreator<
         duration: mediaItem.duration,
         sampleRate: 8000, // Low sample rate for fast processing
         peaksPerSecond: 50, // Optimized for speed while maintaining quality
+        contentSignature: contentSignatureKey,
       });
 
       if (result.success) {
@@ -719,6 +776,64 @@ export const createMediaLibrarySlice: StateCreator<
       return true;
     }
 
+    const contentSignatureKey = getContentSignatureKey(mediaItem);
+
+    // Prefer proxy for generation if available to avoid memory issues with 4K sources
+    const videoPath =
+      mediaItem.proxy?.status === 'ready' && mediaItem.proxy?.path
+        ? mediaItem.proxy.path
+        : mediaItem.tempFilePath || mediaItem.source;
+
+    // Cache-first: try content-signature-based cache before any other checks
+    if (contentSignatureKey) {
+      const cachedSpriteSheets =
+        await VideoSpriteSheetGenerator.getCachedSpriteSheets({
+          videoPath,
+          contentSignature: contentSignatureKey,
+          duration: mediaItem.duration,
+          fps: mediaItem.metadata?.fps || 30,
+          thumbWidth: 120,
+          thumbHeight: 68,
+          maxThumbnailsPerSheet: 100,
+        });
+
+      if (
+        cachedSpriteSheets?.success &&
+        cachedSpriteSheets.spriteSheets.length > 0
+      ) {
+        set((state: any) => ({
+          mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+            item.id === mediaId
+              ? {
+                  ...item,
+                  spriteSheets: {
+                    success: cachedSpriteSheets.success,
+                    spriteSheets: cachedSpriteSheets.spriteSheets,
+                    cacheKey: cachedSpriteSheets.cacheKey,
+                    generatedAt: Date.now(),
+                    generation: {
+                      status: 'completed' as const,
+                      completedSheets: cachedSpriteSheets.spriteSheets.length,
+                      totalSheets: cachedSpriteSheets.spriteSheets.length,
+                    },
+                  },
+                  jobStates: {
+                    ...item.jobStates,
+                    spriteSheet: 'completed' as const,
+                  },
+                }
+              : item,
+          ),
+        }));
+
+        state.markUnsavedChanges?.();
+        console.log(
+          `✅ Sprite sheet cache HIT (signature) for: ${mediaItem.name}`,
+        );
+        return true;
+      }
+    }
+
     // CRITICAL: Check job state for idempotency
     // Prevents regeneration loops when media is dragged to timeline during active jobs
     const currentJobState = mediaItem.jobStates?.spriteSheet;
@@ -750,12 +865,6 @@ export const createMediaLibrarySlice: StateCreator<
       );
       return true;
     }
-
-    // Prefer proxy for generation if available to avoid memory issues with 4K sources
-    const videoPath =
-      mediaItem.proxy?.status === 'ready' && mediaItem.proxy?.path
-        ? mediaItem.proxy.path
-        : mediaItem.tempFilePath || mediaItem.source;
 
     // Skip blob URLs (they won't work with FFmpeg)
     if (videoPath.startsWith('blob:')) {
@@ -1026,6 +1135,7 @@ export const createMediaLibrarySlice: StateCreator<
     try {
       const result = await VideoSpriteSheetGenerator.generateSpriteSheets({
         videoPath,
+        contentSignature: contentSignatureKey,
         duration: mediaItem.duration,
         fps: mediaItem.metadata?.fps || 30,
         thumbWidth: 120,
@@ -1251,6 +1361,89 @@ export const createMediaLibrarySlice: StateCreator<
       return true;
     }
 
+    const contentSignatureKey = getContentSignatureKey(mediaItem);
+
+    // Prefer proxy for generation if available to avoid memory issues with 4K sources
+    const videoPath =
+      mediaItem.proxy?.status === 'ready' && mediaItem.proxy?.path
+        ? mediaItem.proxy.path
+        : mediaItem.tempFilePath || mediaItem.source;
+
+    // Generate a single thumbnail at 1 second (or 10% of duration, whichever is smaller)
+    const thumbnailTime = Math.min(1, mediaItem.duration * 0.1);
+
+    // Calculate thumbnail dimensions based on video aspect ratio
+    // Target width is 320px, height is calculated to preserve aspect ratio
+    const thumbnailWidth = 320;
+    let thumbnailHeight = 180; // Default 16:9
+
+    if (mediaItem.metadata?.width && mediaItem.metadata?.height) {
+      const aspectRatio = mediaItem.metadata.width / mediaItem.metadata.height;
+      thumbnailHeight = Math.round(thumbnailWidth / aspectRatio);
+      console.log(
+        `📐 Using video aspect ratio: ${mediaItem.metadata.width}x${mediaItem.metadata.height} (${aspectRatio.toFixed(2)}) -> thumbnail: ${thumbnailWidth}x${thumbnailHeight}`,
+      );
+    }
+
+    // Cache-first: try content-signature-based cache before any other checks
+    const cachedEntry = VideoThumbnailGenerator.getCachedThumbnailEntry({
+      videoPath,
+      contentSignature: contentSignatureKey,
+      duration: 0.1, // Very short duration, just one frame
+      fps: 30,
+      intervalSeconds: 0.1,
+      width: thumbnailWidth,
+      height: thumbnailHeight,
+      sourceStartTime: thumbnailTime,
+      persist: true,
+    });
+
+    if (cachedEntry?.thumbnails?.length) {
+      const cachedUrl = cachedEntry.thumbnails[0].url;
+      const isValid =
+        await VideoThumbnailGenerator.validateThumbnailUrl(cachedUrl);
+      if (isValid) {
+        set((state: any) => ({
+          mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+            item.id === mediaId
+              ? {
+                  ...item,
+                  thumbnail: cachedUrl,
+                  jobStates: {
+                    ...item.jobStates,
+                    thumbnail: 'completed' as const,
+                  },
+                }
+              : item,
+          ),
+        }));
+
+        state.markUnsavedChanges?.();
+        console.log(
+          `✅ Thumbnail cache HIT (signature) for: ${mediaItem.name}`,
+        );
+        return true;
+      }
+
+      // Cached entry is stale - remove it so we can regenerate
+      VideoThumbnailGenerator.removeCacheEntryByKey(cachedEntry.cacheKey);
+    }
+
+    // CRITICAL: Check job state for idempotency
+    const currentJobState = mediaItem.jobStates?.thumbnail;
+    if (currentJobState === 'processing') {
+      console.log(
+        `⏳ Thumbnail job already processing for: ${mediaItem.name} (idempotent skip)`,
+      );
+      return true;
+    }
+    if (currentJobState === 'completed') {
+      console.log(
+        `✅ Thumbnail job already completed for: ${mediaItem.name} (idempotent skip)`,
+      );
+      return true;
+    }
+
     // Defer generation if proxy is currently processing
     if (mediaItem.proxy?.status === 'processing') {
       console.log(
@@ -1258,12 +1451,6 @@ export const createMediaLibrarySlice: StateCreator<
       );
       return true;
     }
-
-    // Prefer proxy for generation if available to avoid memory issues with 4K sources
-    const videoPath =
-      mediaItem.proxy?.status === 'ready' && mediaItem.proxy?.path
-        ? mediaItem.proxy.path
-        : mediaItem.tempFilePath || mediaItem.source;
 
     // Skip blob URLs (they won't work with FFmpeg)
     if (videoPath.startsWith('blob:')) {
@@ -1273,36 +1460,36 @@ export const createMediaLibrarySlice: StateCreator<
       return false;
     }
 
+    // Mark job state as processing before starting async generation
+    set((state: any) => ({
+      mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+        item.id === mediaId
+          ? {
+              ...item,
+              jobStates: {
+                ...item.jobStates,
+                thumbnail: 'processing' as const,
+              },
+            }
+          : item,
+      ),
+    }));
+
     try {
       console.log(
         `📸 Generating thumbnail for media library item: ${mediaItem.name}`,
       );
 
-      // Generate a single thumbnail at 1 second (or 10% of duration, whichever is smaller)
-      const thumbnailTime = Math.min(1, mediaItem.duration * 0.1);
-
-      // Calculate thumbnail dimensions based on video aspect ratio
-      // Target width is 320px, height is calculated to preserve aspect ratio
-      const thumbnailWidth = 320;
-      let thumbnailHeight = 180; // Default 16:9
-
-      if (mediaItem.metadata?.width && mediaItem.metadata?.height) {
-        const aspectRatio =
-          mediaItem.metadata.width / mediaItem.metadata.height;
-        thumbnailHeight = Math.round(thumbnailWidth / aspectRatio);
-        console.log(
-          `📐 Using video aspect ratio: ${mediaItem.metadata.width}x${mediaItem.metadata.height} (${aspectRatio.toFixed(2)}) -> thumbnail: ${thumbnailWidth}x${thumbnailHeight}`,
-        );
-      }
-
       const result = await VideoThumbnailGenerator.generateThumbnails({
         videoPath,
+        contentSignature: contentSignatureKey,
         duration: 0.1, // Very short duration, just one frame
         fps: 30,
         intervalSeconds: 0.1,
         width: thumbnailWidth,
         height: thumbnailHeight,
         sourceStartTime: thumbnailTime,
+        persist: true,
       });
 
       if (result.success && result.thumbnails.length > 0) {
@@ -1318,6 +1505,10 @@ export const createMediaLibrarySlice: StateCreator<
               ? {
                   ...item,
                   thumbnail: base64Thumbnail,
+                  jobStates: {
+                    ...item.jobStates,
+                    thumbnail: 'completed' as const,
+                  },
                 }
               : item,
           ),
@@ -1329,6 +1520,19 @@ export const createMediaLibrarySlice: StateCreator<
         console.log(`✅ Thumbnail generated and cached for: ${mediaItem.name}`);
         return true;
       } else {
+        set((state: any) => ({
+          mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+            item.id === mediaId
+              ? {
+                  ...item,
+                  jobStates: {
+                    ...item.jobStates,
+                    thumbnail: 'failed' as const,
+                  },
+                }
+              : item,
+          ),
+        }));
         console.error(
           `❌ Failed to generate thumbnail for ${mediaItem.name}:`,
           result.error,
@@ -1336,6 +1540,19 @@ export const createMediaLibrarySlice: StateCreator<
         return false;
       }
     } catch (error) {
+      set((state: any) => ({
+        mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+          item.id === mediaId
+            ? {
+                ...item,
+                jobStates: {
+                  ...item.jobStates,
+                  thumbnail: 'failed' as const,
+                },
+              }
+            : item,
+        ),
+      }));
       console.error(
         `❌ Error generating thumbnail for ${mediaItem.name}:`,
         error,
