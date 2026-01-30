@@ -11,6 +11,18 @@ export const TRACK_COLORS = [
 
 export const SNAP_THRESHOLD = 5; // frames
 
+// Snap tolerances for transform operations (in video pixels)
+// These control how close an element needs to be to a snap point before snapping occurs
+export const TRANSFORM_SNAP_TOLERANCE = {
+  // Default snap tolerance (no modifier) - no snapping
+  DEFAULT: 0,
+  // Shift key: forgiving/assistive snap - large tolerance for easy alignment acquisition
+  // Similar to Figma/CapCut behavior where Shift helps with intentional alignment
+  SHIFT: 25,
+  // Ctrl/Cmd key: precision/strong snap - smaller tolerance for fine control
+  PRECISION: 8,
+} as const;
+
 export const SUBTITLE_EXTENSIONS = [
   '.srt',
   '.vtt',

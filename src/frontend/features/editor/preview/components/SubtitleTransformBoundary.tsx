@@ -4,6 +4,7 @@ import {
   useVideoEditorStore,
   VideoTrack,
 } from '../../stores/videoEditor/index';
+import { TRANSFORM_SNAP_TOLERANCE } from '../../stores/videoEditor/utils/constants';
 
 interface SubtitleTransformBoundaryProps {
   track: VideoTrack;
@@ -636,10 +637,18 @@ export const SubtitleTransformBoundary: React.FC<
         let newPixelX = initialVideoX + videoDeltaX;
         let newPixelY = initialVideoY + videoDeltaY;
 
-        // Snapping logic
-        if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          const snapTolerance = e.ctrlKey || e.metaKey ? 2 : 10;
+        // Snapping logic - Shift for forgiving snap, Ctrl/Cmd for precision snap
+        // Shift: Large tolerance (25px) - helps with intentional alignment, feels assistive
+        // Ctrl/Cmd: Small tolerance (8px) - for fine-tuned precision alignment
+        // No modifier: No snapping - free movement
+        const snapTolerance =
+          e.ctrlKey || e.metaKey
+            ? TRANSFORM_SNAP_TOLERANCE.PRECISION
+            : e.shiftKey
+              ? TRANSFORM_SNAP_TOLERANCE.SHIFT
+              : TRANSFORM_SNAP_TOLERANCE.DEFAULT;
 
+        if (snapTolerance > 0) {
           const snapPoints = {
             horizontal: [0],
             vertical: [0],
@@ -660,18 +669,32 @@ export const SubtitleTransformBoundary: React.FC<
             videoWidth / 2 - halfWidth,
           );
 
+          // Find the nearest snap point within tolerance for each axis
+          // Using nearest-point algorithm instead of first-match for better UX
+          let bestSnapY: number | null = null;
+          let bestSnapYDistance = Infinity;
           for (const snapY of snapPoints.horizontal) {
-            if (Math.abs(newPixelY - snapY) < snapTolerance) {
-              newPixelY = snapY;
-              break;
+            const distance = Math.abs(newPixelY - snapY);
+            if (distance < snapTolerance && distance < bestSnapYDistance) {
+              bestSnapY = snapY;
+              bestSnapYDistance = distance;
             }
           }
+          if (bestSnapY !== null) {
+            newPixelY = bestSnapY;
+          }
 
+          let bestSnapX: number | null = null;
+          let bestSnapXDistance = Infinity;
           for (const snapX of snapPoints.vertical) {
-            if (Math.abs(newPixelX - snapX) < snapTolerance) {
-              newPixelX = snapX;
-              break;
+            const distance = Math.abs(newPixelX - snapX);
+            if (distance < snapTolerance && distance < bestSnapXDistance) {
+              bestSnapX = snapX;
+              bestSnapXDistance = distance;
             }
+          }
+          if (bestSnapX !== null) {
+            newPixelX = bestSnapX;
           }
         }
 
