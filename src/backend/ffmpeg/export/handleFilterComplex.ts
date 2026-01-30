@@ -11,10 +11,7 @@ import {
   VideoProcessingContext,
 } from '../schema/ffmpegConfig';
 import { getFontDirectoriesForFamilies } from '../subtitles/fontMapper';
-import {
-  generateDrawtextFilter,
-  generateDrawtextFilters,
-} from '../subtitles/textLayers';
+import { generateDrawtextFilters } from '../subtitles/textLayers';
 import { findFileIndexForSegment, processAudioTimeline } from './audioHandling';
 import type { HardwareAcceleration } from './hardwareAccelerationDetector';
 import {
@@ -660,14 +657,29 @@ export function processLayerSegments(
           }
         } else {
           // No transform - use standard scaling logic
-          // GIF files: never scale, preserve original size
           // Base layer: scale to match target dimensions (e.g., 608x1080 → 1080x1920)
           // Upper layers (overlays): preserve original size unless larger than target dimensions
+          // GIF files: preserve original size and overlay on black background (for bottom layer)
           if (isGifFile) {
-            // GIF files - never scale, preserve original size regardless of layer
-            console.log(
-              `📐 Layer ${layerIndex}: GIF file detected - preserving original size ${trackInfo.width || 'unknown'}x${trackInfo.height || 'unknown'} (no scaling applied)`,
-            );
+            if (isBottomLayer) {
+              // GIF on bottom layer - create black background and overlay GIF centered on top
+              // This preserves the GIF's original size while ensuring correct dimensions for concat
+              const gifDuration = trackInfo.duration || segment.duration || 5;
+              const blackBgRef = `[${uniqueIndex}_gif_bg]`;
+              const gifOverlayRef = `[${uniqueIndex}_gif_overlay]`;
+
+              // Create black background at target dimensions
+              videoFilters.push(
+                `color=black:size=${targetDimensions.width}x${targetDimensions.height}:duration=${gifDuration}:rate=${targetFps},setpts=PTS-STARTPTS${blackBgRef}`,
+              );
+
+              // Overlay GIF centered on black background
+              videoFilters.push(
+                `${blackBgRef}${videoStreamRef}overlay=(W-w)/2:(H-h)/2:shortest=1${gifOverlayRef}`,
+              );
+
+              videoStreamRef = gifOverlayRef;
+            }
           } else if (isBottomLayer) {
             // Bottom layer - scale to match target dimensions
             const needsScaling =
@@ -1652,7 +1664,7 @@ export function buildSeparateTimelineFilterComplex(
       // The overlay enable expression controls when it's visible, but the stream
       // must have content available at those times
       const imageDuration = duration;
-      
+
       // Loop the image to generate frames at target FPS for the image duration
       // loop=loop=-1:size=1:start=0 creates infinite loop from single frame
       // setpts=N/(targetFps*TB) generates frames at target FPS
@@ -1763,13 +1775,12 @@ export function buildSeparateTimelineFilterComplex(
       let currentInput = currentCompositeLabel;
       drawtextFilters.forEach((filter, filterIndex) => {
         const isLastFilter = filterIndex === drawtextFilters.length - 1;
-        const compositeLabel = isLast && isLastFilter
-          ? 'video_composite'
-          : `composite_${overlay.layer}_text_${filterIndex}`;
+        const compositeLabel =
+          isLast && isLastFilter
+            ? 'video_composite'
+            : `composite_${overlay.layer}_text_${filterIndex}`;
 
-        videoFilters.push(
-          `[${currentInput}]${filter}[${compositeLabel}]`,
-        );
+        videoFilters.push(`[${currentInput}]${filter}[${compositeLabel}]`);
         currentInput = compositeLabel;
 
         if (isLastFilter) {
@@ -1850,7 +1861,8 @@ export function buildSeparateTimelineFilterComplex(
     } else {
       // Fallback for other cases (shouldn't normally happen)
       console.log('⚠️ No video layers found, creating black base');
-      const totalDuration = audioTimeline.totalDuration || totalVideoDuration || 1;
+      const totalDuration =
+        audioTimeline.totalDuration || totalVideoDuration || 1;
       videoFilters.push(
         `color=black:size=${targetDimensions.width}x${targetDimensions.height}:duration=${totalDuration}:rate=${targetFps},setsar=1[video_base]`,
       );
