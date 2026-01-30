@@ -7,7 +7,14 @@ import {
   runFfmpegWithProgress,
 } from '@/backend/ffmpeg/export/ffmpegRunner';
 import { VideoEditJob } from '@/backend/ffmpeg/schema/ffmpegConfig';
-import { useCallback, useState } from 'react';
+import {
+  analyzeProjectForExport,
+  LIMITATION_THRESHOLDS,
+  resetExportReminderTimer,
+  showLongExportReminderToast,
+  showPreExportLimitationToast,
+} from '@/frontend/utils/mediaLimitations';
+import { useCallback, useRef, useState } from 'react';
 import {
   useTimelineUtils,
   useVideoEditorStore,
@@ -16,6 +23,8 @@ import { RenderState } from '../components/renderProcessDialog';
 
 export const useExportHandler = () => {
   const render = useVideoEditorStore((state) => state.render);
+  const tracks = useVideoEditorStore((state) => state.tracks);
+  const timelineFps = useVideoEditorStore((state) => state.timeline.fps);
   const startRender = useVideoEditorStore((state) => state.startRender);
   const updateRenderProgress = useVideoEditorStore(
     (state) => state.updateRenderProgress,
@@ -37,9 +46,37 @@ export const useExportHandler = () => {
   const [renderError, setRenderError] = useState<string | undefined>();
   const [outputFilePath, setOutputFilePath] = useState<string | undefined>();
 
+  // Long-running export reminder timer
+  const exportReminderTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clear export reminder timer
+  const clearExportReminderTimer = useCallback(() => {
+    if (exportReminderTimerRef.current) {
+      clearTimeout(exportReminderTimerRef.current);
+      exportReminderTimerRef.current = null;
+    }
+  }, []);
+
+  // Start export reminder timer for long-running exports
+  const startExportReminderTimer = useCallback(() => {
+    clearExportReminderTimer();
+    resetExportReminderTimer();
+
+    exportReminderTimerRef.current = setTimeout(() => {
+      showLongExportReminderToast();
+    }, LIMITATION_THRESHOLDS.LONG_EXPORT_REMINDER_MS);
+  }, [clearExportReminderTimer]);
+
   const executeExport = useCallback(
     async (job: VideoEditJob): Promise<void> => {
       try {
+        // Analyze project and show pre-export limitation toast if applicable
+        const projectInfo = analyzeProjectForExport(tracks, timelineFps);
+        showPreExportLimitationToast(projectInfo);
+
+        // Start long-running export reminder timer
+        startExportReminderTimer();
+
         prepareForRender();
 
         // Get timeline gaps
@@ -109,16 +146,19 @@ export const useExportHandler = () => {
         // Check if export was cancelled
         if (result.cancelled) {
           console.log('🛑 Export was cancelled by user');
+          clearExportReminderTimer();
           cancelRender();
           setRenderDialogState('cancelled');
           return;
         }
 
+        clearExportReminderTimer();
         finishRender();
 
         // Update dialog to completed state
         setRenderDialogState('completed');
       } catch (error) {
+        clearExportReminderTimer();
         cancelRender();
 
         // Update dialog to failed state with error message
@@ -130,17 +170,24 @@ export const useExportHandler = () => {
       render.progress,
       render.currentTime,
       render.status,
+      tracks,
+      timelineFps,
       startRender,
       updateRenderProgress,
       finishRender,
       cancelRender,
       prepareForRender,
       getTimelineGaps,
+      startExportReminderTimer,
+      clearExportReminderTimer,
     ],
   );
 
   const handleCancelRender = useCallback(async () => {
     try {
+      // Clear export reminder timer
+      clearExportReminderTimer();
+
       // Call IPC to kill FFmpeg process
       console.log('🛑 Calling ffmpeg:cancel IPC...');
       const result = await window.electronAPI.invoke('ffmpeg:cancel');
@@ -155,7 +202,7 @@ export const useExportHandler = () => {
       cancelRender();
       setRenderDialogState('cancelled');
     }
-  }, [cancelRender]);
+  }, [cancelRender, clearExportReminderTimer]);
 
   const handleCloseDialog = useCallback(() => {
     restoreAfterRender();

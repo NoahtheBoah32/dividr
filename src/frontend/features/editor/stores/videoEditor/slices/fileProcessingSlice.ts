@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { generateContentSignatureFromPath } from '@/frontend/utils/contentSignature';
 import { FileIntegrityValidator } from '@/frontend/utils/fileValidator';
+import { showImportLimitationToast } from '@/frontend/utils/mediaLimitations';
 import { toast } from 'sonner';
 import { StateCreator } from 'zustand';
 import { getNextAvailableRowIndex } from '../../../timeline/utils/dynamicTrackRows';
@@ -464,6 +465,16 @@ const processImportedFile = async (
   };
 
   const mediaId = addToLibraryFn(mediaLibraryItem);
+
+  // Show import limitation toast for video files that exceed duration/resolution thresholds
+  if (trackType === 'video') {
+    showImportLimitationToast(
+      fileInfo.path,
+      videoDimensions.width,
+      videoDimensions.height,
+      actualDurationSeconds,
+    );
+  }
 
   // Check for 4K video (>2K width) requiring proxy for smooth playback
   const needsProxy = trackType === 'video' && videoDimensions.width > 2000;
