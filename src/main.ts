@@ -148,6 +148,101 @@ interface SpriteSheetJob {
 const activeSpriteSheetJobs = new Map<string, SpriteSheetJob>();
 const spriteSheetJobCounter = 0;
 
+// =============================================================================
+// FFmpeg Priority Queue System
+// Priority levels: 1 (highest) = audio extraction, 2 = metadata/probing, 3 (lowest) = sprites/thumbnails
+// This ensures audio tasks complete before heavy sprite sheet generation
+// =============================================================================
+type FFmpegPriority = 1 | 2 | 3;
+
+interface FFmpegQueueTask {
+  id: string;
+  priority: FFmpegPriority;
+  execute: () => Promise<void>;
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+}
+
+const ffmpegTaskQueue: FFmpegQueueTask[] = [];
+let isProcessingFFmpegQueue = false;
+let currentQueuedFFmpegProcess: ReturnType<typeof spawn> | null = null;
+
+/**
+ * Add a task to the FFmpeg priority queue.
+ * Tasks are executed in priority order (1 = highest, 3 = lowest).
+ * Within the same priority, FIFO order is maintained.
+ */
+function queueFFmpegTask<T>(
+  priority: FFmpegPriority,
+  taskFn: () => Promise<T>,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const taskId = `ffmpeg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const task: FFmpegQueueTask = {
+      id: taskId,
+      priority,
+      execute: async () => {
+        try {
+          const result = await taskFn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      },
+      resolve: resolve as (value: unknown) => void,
+      reject,
+    };
+
+    // Insert task in priority order (lower number = higher priority)
+    let insertIndex = ffmpegTaskQueue.length;
+    for (let i = 0; i < ffmpegTaskQueue.length; i++) {
+      if (ffmpegTaskQueue[i].priority > priority) {
+        insertIndex = i;
+        break;
+      }
+    }
+    ffmpegTaskQueue.splice(insertIndex, 0, task);
+
+    console.log(
+      `📋 FFmpeg task queued: ${taskId} (priority ${priority}), queue length: ${ffmpegTaskQueue.length}`,
+    );
+
+    // Start processing if not already running
+    processFFmpegQueue();
+  });
+}
+
+/**
+ * Process the FFmpeg task queue sequentially by priority.
+ */
+async function processFFmpegQueue() {
+  if (isProcessingFFmpegQueue) return;
+  isProcessingFFmpegQueue = true;
+
+  while (ffmpegTaskQueue.length > 0) {
+    const task = ffmpegTaskQueue.shift();
+    if (!task) break;
+
+    console.log(
+      `⚙️ Processing FFmpeg task: ${task.id} (priority ${task.priority}), remaining: ${ffmpegTaskQueue.length}`,
+    );
+
+    try {
+      await task.execute();
+    } catch (error) {
+      console.error(`❌ FFmpeg task ${task.id} failed:`, error);
+      // Error is already handled by the task's reject
+    }
+  }
+
+  isProcessingFFmpegQueue = false;
+  currentQueuedFFmpegProcess = null;
+  console.log('✅ FFmpeg queue empty');
+}
+
+// =============================================================================
+
 // Initialize ffmpeg paths dynamically with fallbacks
 async function initializeFfmpegPaths() {
   console.log('🔍 Initializing FFmpeg paths...');
@@ -893,18 +988,12 @@ ipcMain.handle('run-ffmpeg-with-progress', async (event, job: VideoEditJob) => {
 });
 
 // IPC Handler for audio extraction from video files
+// Uses PRIORITY 1 (highest) in FFmpeg queue - audio extraction should complete before sprite sheets
 ipcMain.handle(
   'extract-audio-from-video',
   async (event, videoPath: string, outputDir?: string) => {
     console.log('🎵 MAIN PROCESS: extractAudioFromVideo handler called!');
     console.log('🎵 MAIN PROCESS: Video path:', videoPath);
-
-    if (currentFfmpegProcess && !currentFfmpegProcess.killed) {
-      return {
-        success: false,
-        error: 'Another FFmpeg process is already running',
-      };
-    }
 
     if (!ffmpegPath) {
       return {
@@ -914,7 +1003,9 @@ ipcMain.handle(
       };
     }
 
-    try {
+    // Use priority queue with HIGHEST priority (1) for audio extraction
+    // This ensures audio extracts before sprite sheets to prevent waveform delays
+    return queueFFmpegTask(1, async () => {
       // Create a unique output directory for extracted audio files
       const audioOutputDir =
         outputDir || path.join(os.tmpdir(), 'dividr-audio-extracts');
@@ -1065,30 +1156,18 @@ ipcMain.handle(
           });
         });
       });
-    } catch (error) {
-      console.error('❌ Audio extraction setup error:', error);
-      return {
-        success: false,
-        error: `Audio extraction setup failed: ${error.message}`,
-      };
-    }
+    }); // End queueFFmpegTask
   },
 );
 
 // IPC Handler for custom FFmpeg commands (specifically for thumbnail extraction)
+// Uses PRIORITY 3 (lowest) in FFmpeg queue - thumbnails should yield to audio extraction
 ipcMain.handle(
   'run-custom-ffmpeg',
   async (event, args: string[], outputDir: string) => {
     console.log('🎯 MAIN PROCESS: runCustomFFmpeg handler called!');
     console.log('🎯 MAIN PROCESS: FFmpeg args:', args);
     console.log('🎯 MAIN PROCESS: Output directory:', outputDir);
-
-    if (currentFfmpegProcess && !currentFfmpegProcess.killed) {
-      return {
-        success: false,
-        error: 'Another FFmpeg process is already running',
-      };
-    }
 
     if (!ffmpegPath) {
       return {
@@ -1135,73 +1214,79 @@ ipcMain.handle(
     console.log('🎬 COMPLETE CUSTOM FFMPEG COMMAND:');
     console.log(['ffmpeg', ...finalArgs].join(' '));
 
-    return new Promise((resolve) => {
-      const ffmpeg = spawn(ffmpegPath, finalArgs);
-      currentFfmpegProcess = ffmpeg;
+    // Use priority queue with LOWEST priority (3) for thumbnail extraction
+    return queueFFmpegTask(
+      3,
+      () =>
+        new Promise((resolve) => {
+          const ffmpeg = spawn(ffmpegPath, finalArgs);
+          currentFfmpegProcess = ffmpeg;
 
-      let stdout = '';
-      let stderr = '';
+          let stdout = '';
+          let stderr = '';
 
-      ffmpeg.stdout.on('data', (data) => {
-        const text = data.toString();
-        stdout += text;
-        console.log(`[FFmpeg stdout] ${text.trim()}`);
-      });
+          ffmpeg.stdout.on('data', (data) => {
+            const text = data.toString();
+            stdout += text;
+            console.log(`[FFmpeg stdout] ${text.trim()}`);
+          });
 
-      ffmpeg.stderr.on('data', (data) => {
-        const text = data.toString();
-        stderr += text;
-        console.log(`[FFmpeg stderr] ${text.trim()}`);
-      });
+          ffmpeg.stderr.on('data', (data) => {
+            const text = data.toString();
+            stderr += text;
+            console.log(`[FFmpeg stderr] ${text.trim()}`);
+          });
 
-      ffmpeg.on('close', (code) => {
-        currentFfmpegProcess = null;
-        console.log(`🎬 FFmpeg process exited with code: ${code}`);
+          ffmpeg.on('close', (code) => {
+            currentFfmpegProcess = null;
+            console.log(`🎬 FFmpeg process exited with code: ${code}`);
 
-        if (code === 0) {
-          // List generated files
-          try {
-            const outputFiles = fs
-              .readdirSync(absoluteOutputDir)
-              .filter(
-                (file) => file.startsWith('thumb_') && file.endsWith('.jpg'),
-              )
-              .sort();
+            if (code === 0) {
+              // List generated files
+              try {
+                const outputFiles = fs
+                  .readdirSync(absoluteOutputDir)
+                  .filter(
+                    (file) =>
+                      file.startsWith('thumb_') && file.endsWith('.jpg'),
+                  )
+                  .sort();
 
-            console.log(
-              `✅ Generated ${outputFiles.length} thumbnail files:`,
-              outputFiles,
-            );
+                console.log(
+                  `✅ Generated ${outputFiles.length} thumbnail files:`,
+                  outputFiles,
+                );
 
-            resolve({
-              success: true,
-              output: outputFiles,
-            });
-          } catch (listError) {
-            console.error('❌ Error listing output files:', listError);
+                resolve({
+                  success: true,
+                  output: outputFiles,
+                });
+              } catch (listError) {
+                console.error('❌ Error listing output files:', listError);
+                resolve({
+                  success: false,
+                  error: `FFmpeg succeeded but failed to list output files: ${listError.message}`,
+                });
+              }
+            } else {
+              console.error(`❌ FFmpeg failed with exit code: ${code}`);
+              resolve({
+                success: false,
+                error: `FFmpeg process failed with exit code ${code}. stderr: ${stderr}`,
+              });
+            }
+          });
+
+          ffmpeg.on('error', (error) => {
+            currentFfmpegProcess = null;
+            console.error('❌ FFmpeg spawn error:', error);
             resolve({
               success: false,
-              error: `FFmpeg succeeded but failed to list output files: ${listError.message}`,
+              error: `Failed to spawn FFmpeg process: ${error.message}`,
             });
-          }
-        } else {
-          console.error(`❌ FFmpeg failed with exit code: ${code}`);
-          resolve({
-            success: false,
-            error: `FFmpeg process failed with exit code ${code}. stderr: ${stderr}`,
           });
-        }
-      });
-
-      ffmpeg.on('error', (error) => {
-        currentFfmpegProcess = null;
-        console.error('❌ FFmpeg spawn error:', error);
-        resolve({
-          success: false,
-          error: `Failed to spawn FFmpeg process: ${error.message}`,
-        });
-      });
-    });
+        }),
+    );
   },
 );
 
@@ -1349,93 +1434,97 @@ async function processSpriteSheetsInBackground(
       );
 
       // Execute FFmpeg command with improved error handling and timeout
-      const result = await new Promise<{ success: boolean; error?: string }>(
-        (resolve) => {
-          const ffmpeg = spawn(ffmpegPath as string, adjustedCommand, {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true, // Hide console window on Windows
-          });
-
-          let stderr = '';
-          let stdout = '';
-
-          // Set adaptive timeout based on video complexity
-          const timeoutMs = Math.min(300000, 60000 + i * 60000); // Max 5 minutes, min 1 minute + 1 minute per sheet
-          const processTimeout: NodeJS.Timeout = setTimeout(() => {
-            ffmpeg.kill('SIGKILL');
-            resolve({
-              success: false,
-              error: `FFmpeg process timed out after ${timeoutMs / 1000} seconds`,
+      // Uses PRIORITY 3 (lowest) in FFmpeg queue - sprite sheets should yield to audio extraction
+      const result = await queueFFmpegTask(
+        3,
+        () =>
+          new Promise<{ success: boolean; error?: string }>((resolve) => {
+            const ffmpeg = spawn(ffmpegPath as string, adjustedCommand, {
+              stdio: ['ignore', 'pipe', 'pipe'],
+              windowsHide: true, // Hide console window on Windows
             });
-          }, timeoutMs);
 
-          ffmpeg.stdout.on('data', (data) => {
-            stdout += data.toString();
-            // Optional: Could parse progress from stdout for more detailed progress
-          });
+            let stderr = '';
+            let stdout = '';
 
-          ffmpeg.stderr.on('data', (data) => {
-            const text = data.toString();
-            stderr += text;
-            // Progress updates could be parsed here if needed
-          });
+            // Set adaptive timeout based on video complexity
+            const timeoutMs = Math.min(300000, 60000 + i * 60000); // Max 5 minutes, min 1 minute + 1 minute per sheet
+            const processTimeout: NodeJS.Timeout = setTimeout(() => {
+              ffmpeg.kill('SIGKILL');
+              resolve({
+                success: false,
+                error: `FFmpeg process timed out after ${timeoutMs / 1000} seconds`,
+              });
+            }, timeoutMs);
 
-          ffmpeg.on('close', (code) => {
-            clearTimeout(processTimeout);
-            if (code === 0) {
-              console.log(`✅ Sprite sheet ${i + 1} generated successfully`);
+            ffmpeg.stdout.on('data', (data) => {
+              stdout += data.toString();
+              // Optional: Could parse progress from stdout for more detailed progress
+            });
 
-              // Progressive loading: Notify renderer that this sheet is ready
-              if (mainWindow) {
-                mainWindow.webContents.send('sprite-sheet-sheet-ready', {
-                  jobId,
-                  sheetIndex: i,
-                  totalSheets: job.commands.length,
-                  sheetPath: path.join(
-                    absoluteOutputDir,
-                    `sprite_${i.toString().padStart(3, '0')}.jpg`,
-                  ),
+            ffmpeg.stderr.on('data', (data) => {
+              const text = data.toString();
+              stderr += text;
+              // Progress updates could be parsed here if needed
+            });
+
+            ffmpeg.on('close', (code) => {
+              clearTimeout(processTimeout);
+              if (code === 0) {
+                console.log(`✅ Sprite sheet ${i + 1} generated successfully`);
+
+                // Progressive loading: Notify renderer that this sheet is ready
+                if (mainWindow) {
+                  mainWindow.webContents.send('sprite-sheet-sheet-ready', {
+                    jobId,
+                    sheetIndex: i,
+                    totalSheets: job.commands.length,
+                    sheetPath: path.join(
+                      absoluteOutputDir,
+                      `sprite_${i.toString().padStart(3, '0')}.jpg`,
+                    ),
+                  });
+                }
+
+                resolve({ success: true });
+              } else {
+                console.error(
+                  `❌ Sprite sheet ${i + 1} failed with exit code: ${code}`,
+                );
+                // Try to extract meaningful error from stderr
+                const errorMatch =
+                  stderr.match(/Error: (.+)/i) ||
+                  stderr.match(/\[error\] (.+)/i);
+                const meaningfulError = errorMatch
+                  ? errorMatch[1]
+                  : `Process failed with code ${code}`;
+                resolve({
+                  success: false,
+                  error: `FFmpeg: ${meaningfulError}`,
                 });
               }
-
-              resolve({ success: true });
-            } else {
-              console.error(
-                `❌ Sprite sheet ${i + 1} failed with exit code: ${code}`,
-              );
-              // Try to extract meaningful error from stderr
-              const errorMatch =
-                stderr.match(/Error: (.+)/i) || stderr.match(/\[error\] (.+)/i);
-              const meaningfulError = errorMatch
-                ? errorMatch[1]
-                : `Process failed with code ${code}`;
-              resolve({
-                success: false,
-                error: `FFmpeg: ${meaningfulError}`,
-              });
-            }
-          });
-
-          ffmpeg.on('error', (error) => {
-            clearTimeout(processTimeout);
-            console.error('❌ FFmpeg spawn error:', error);
-            resolve({
-              success: false,
-              error: `Failed to spawn FFmpeg process: ${error.message}`,
             });
-          });
 
-          // Handle process being killed
-          ffmpeg.on('exit', (code, signal) => {
-            clearTimeout(processTimeout);
-            if (signal === 'SIGKILL') {
+            ffmpeg.on('error', (error) => {
+              clearTimeout(processTimeout);
+              console.error('❌ FFmpeg spawn error:', error);
               resolve({
                 success: false,
-                error: 'Process was terminated due to timeout',
+                error: `Failed to spawn FFmpeg process: ${error.message}`,
               });
-            }
-          });
-        },
+            });
+
+            // Handle process being killed
+            ffmpeg.on('exit', (code, signal) => {
+              clearTimeout(processTimeout);
+              if (signal === 'SIGKILL') {
+                resolve({
+                  success: false,
+                  error: 'Process was terminated due to timeout',
+                });
+              }
+            });
+          }),
       );
 
       if (!result.success) {

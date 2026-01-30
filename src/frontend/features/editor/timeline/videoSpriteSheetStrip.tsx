@@ -172,20 +172,6 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         );
       }, [mediaItem]);
 
-      // Build a map from sheetIndex to SpriteSheet for O(1) lookup
-      // This is critical for progressive loading where sheets may arrive out of order
-      const sheetIndexMap = useMemo(() => {
-        const map = new Map<number, SpriteSheet>();
-        for (const sheet of state.spriteSheets) {
-          // Extract sheetIndex from the first thumbnail, or parse from sheet.id
-          const firstThumb = sheet.thumbnails[0];
-          if (firstThumb) {
-            map.set(firstThumb.sheetIndex, sheet);
-          }
-        }
-        return map;
-      }, [state.spriteSheets]);
-
       // Hybrid tile generation - pixel-position based for correct zoom behavior
       // Key insight: iterate by PIXEL POSITION at native tile width intervals,
       // then pick the appropriate thumbnail for each position.
@@ -198,10 +184,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
 
         const tiles: HybridTile[] = [];
 
-        // Collect all thumbnails and sort by timestamp for correct time mapping
-        const allThumbnails = spriteSheets
-          .flatMap((sheet) => sheet.thumbnails)
-          .sort((a, b) => a.timestamp - b.timestamp);
+        const allThumbnails = spriteSheets.flatMap((sheet) => sheet.thumbnails);
 
         if (allThumbnails.length === 0) return [];
 
@@ -465,9 +448,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
             }}
           >
             {visibleTiles.map((tile) => {
-              // Use sheetIndexMap for O(1) lookup by sheetIndex (not array position)
-              // This correctly handles progressive loading where sheets arrive out of order
-              const sheet = sheetIndexMap.get(tile.thumbnail.sheetIndex);
+              const sheet = state.spriteSheets[tile.thumbnail.sheetIndex];
               if (sheet) {
                 return (
                   <GPUAcceleratedSprite

@@ -740,46 +740,25 @@ const processImportedFile = async (
     } // End try/catch for transcoding check
   }
 
-  // Generate sprite sheets and thumbnails for video files (async, don't wait)
+  // Generate sprite sheets, thumbnails, and audio for video files
+  // PRIORITY ORDER (to prevent FFmpeg resource starvation):
+  // 1. Audio extraction (HIGH priority - fast, required for waveform)
+  // 2. Waveform generation (HIGH priority - depends on audio extraction)
+  // 3. Sprite sheet generation (LOW priority - slow, runs in background)
+  // 4. Thumbnail generation (LOW priority - can wait)
   if (trackType === 'video') {
-    // Skip if we are generating a proxy - the proxy success handler will trigger these later
-    if (!needsProxy) {
-      if (generateSpriteFn) {
-        // Run sprite sheet generation in background without blocking import
-        generateSpriteFn(mediaId).catch((error) => {
-          console.warn(
-            `⚠️ Sprite sheet generation failed for ${fileInfo.name}:`,
-            error,
-          );
-          if (updateMediaLibraryFn) {
-            updateMediaLibraryFn(mediaId, {
-              spriteSheets: {
-                success: false,
-                spriteSheets: [],
-                cacheKey: 'failed',
-                generatedAt: Date.now(),
-              },
-            });
-          }
-        });
-      }
+    // Track when audio extraction completes for coordinating dependent tasks
+    let audioExtractionComplete = false;
+    let audioExtractionPromise: Promise<void> | null = null;
 
-      if (generateThumbnailFn) {
-        // Run thumbnail generation in background without blocking import
-        generateThumbnailFn(mediaId).catch((error) => {
-          console.warn(
-            `⚠️ Thumbnail generation failed for ${fileInfo.name}:`,
-            error,
-          );
-        });
-      }
-    }
-
-    // Extract audio from video file for independent audio track usage
-    // Use a retry mechanism to handle FFmpeg concurrency issues
-    const extractAudioWithRetry = async (retries = 3, delay = 2000) => {
+    // STEP 1: Extract audio FIRST (highest priority)
+    // Audio extraction is fast and required for waveform generation
+    const extractAudioWithRetry = async (retries = 3, delay = 1000) => {
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
+          console.log(
+            `🎵 Audio extraction attempt ${attempt}/${retries} for ${fileInfo.name}`,
+          );
           const result = await window.electronAPI.extractAudioFromVideo(
             fileInfo.path,
           );
@@ -796,11 +775,16 @@ const processImportedFile = async (
                 },
               });
             }
+            console.log(`✅ Audio extracted successfully for ${fileInfo.name}`);
+            audioExtractionComplete = true;
             return; // Success, exit retry loop
           } else if (
             result.error?.includes('Another FFmpeg process is already running')
           ) {
             if (attempt < retries) {
+              console.log(
+                `⏳ FFmpeg busy, retrying audio extraction in ${delay}ms...`,
+              );
               await new Promise((resolve) => setTimeout(resolve, delay));
               continue; // Retry
             } else {
@@ -829,22 +813,26 @@ const processImportedFile = async (
       }
     };
 
-    // Run audio extraction with retry logic (non-blocking)
-    extractAudioWithRetry().catch((error) => {
+    // Start audio extraction immediately (non-blocking but tracked)
+    audioExtractionPromise = extractAudioWithRetry().catch((error) => {
       console.warn(
         `⚠️ Audio extraction retry handler failed for ${fileInfo.name}:`,
         error,
       );
     });
 
-    // Generate waveform for video files (coordinated with audio extraction)
+    // STEP 2: Generate waveform (depends on audio extraction)
     if (generateWaveformFn) {
-      // Run waveform generation with optimized retry logic
-      // Uses shorter initial delay with exponential backoff for faster response
       const generateWaveformWithRetry = async () => {
-        const maxRetries = 8; // More retries with shorter delays
-        let retryDelay = 500; // Start with 500ms (was 5000ms)
-        const maxDelay = 4000; // Cap at 4 seconds
+        // Wait for audio extraction to complete before starting waveform generation
+        // This prevents the "Audio not yet extracted" retry loop
+        if (audioExtractionPromise) {
+          await audioExtractionPromise;
+        }
+
+        const maxRetries = 5; // Fewer retries needed since we wait for audio
+        let retryDelay = 300; // Start with 300ms
+        const maxDelay = 2000; // Cap at 2 seconds
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           try {
@@ -863,42 +851,80 @@ const processImportedFile = async (
           }
 
           if (attempt < maxRetries) {
-            // Exponential backoff with jitter for better coordination
-            const jitter = Math.random() * 200;
+            const jitter = Math.random() * 100;
             await new Promise((resolve) =>
               setTimeout(resolve, retryDelay + jitter),
             );
-            retryDelay = Math.min(retryDelay * 1.5, maxDelay); // Exponential backoff
+            retryDelay = Math.min(retryDelay * 1.5, maxDelay);
           }
         }
 
         console.warn(
           `⚠️ Waveform generation failed after ${maxRetries} retries for ${fileInfo.name}`,
         );
+        if (updateMediaLibraryFn) {
+          updateMediaLibraryFn(mediaId, {
+            waveform: {
+              success: false,
+              peaks: [],
+              duration: 0,
+              sampleRate: 0,
+              cacheKey: 'failed',
+              generatedAt: Date.now(),
+            },
+          });
+        }
       };
 
-      // Start generation with retry logic (non-blocking)
-      // Add small initial delay to allow audio extraction to start first
-      setTimeout(() => {
-        generateWaveformWithRetry().catch((error) => {
-          console.warn(
-            `⚠️ Waveform generation retry handler failed for ${fileInfo.name}:`,
-            error,
+      // Start waveform generation (will wait for audio extraction internally)
+      generateWaveformWithRetry().catch((error) => {
+        console.warn(
+          `⚠️ Waveform generation retry handler failed for ${fileInfo.name}:`,
+          error,
+        );
+      });
+    }
+
+    // STEP 3: Generate sprite sheets AFTER audio tasks start (lower priority)
+    // Skip if we are generating a proxy - the proxy success handler will trigger these later
+    if (!needsProxy) {
+      if (generateSpriteFn) {
+        // Delay sprite sheet generation to give audio extraction priority
+        // This prevents FFmpeg resource contention
+        setTimeout(() => {
+          console.log(
+            `🎬 Starting sprite sheet generation for ${fileInfo.name} (deferred for audio priority)`,
           );
-          if (updateMediaLibraryFn) {
-            updateMediaLibraryFn(mediaId, {
-              waveform: {
-                success: false,
-                peaks: [],
-                duration: 0,
-                sampleRate: 0,
-                cacheKey: 'failed',
-                generatedAt: Date.now(),
-              },
-            });
-          }
-        });
-      }, 100); // Small delay to let audio extraction start
+          generateSpriteFn(mediaId).catch((error) => {
+            console.warn(
+              `⚠️ Sprite sheet generation failed for ${fileInfo.name}:`,
+              error,
+            );
+            if (updateMediaLibraryFn) {
+              updateMediaLibraryFn(mediaId, {
+                spriteSheets: {
+                  success: false,
+                  spriteSheets: [],
+                  cacheKey: 'failed',
+                  generatedAt: Date.now(),
+                },
+              });
+            }
+          });
+        }, 500); // 500ms delay to let audio extraction start and potentially complete
+      }
+
+      // STEP 4: Generate thumbnail (lowest priority, can run alongside sprites)
+      if (generateThumbnailFn) {
+        setTimeout(() => {
+          generateThumbnailFn(mediaId).catch((error) => {
+            console.warn(
+              `⚠️ Thumbnail generation failed for ${fileInfo.name}:`,
+              error,
+            );
+          });
+        }, 600); // Slightly after sprite sheets
+      }
     }
   }
 
