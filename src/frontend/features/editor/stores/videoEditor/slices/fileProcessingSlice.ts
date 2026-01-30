@@ -25,6 +25,8 @@ const TRACK_COLORS = [
   '#34495e',
 ];
 
+const SPRITE_SHEET_SKIP_DURATION_SECONDS = 1800;
+
 // Helper function to detect subtitle files
 const isSubtitleFile = (fileName: string): boolean => {
   const subtitleExtensions = [
@@ -446,6 +448,9 @@ const processImportedFile = async (
     size: fileInfo.size,
     mimeType,
     contentSignature,
+    spriteSheetDisabled:
+      trackType === 'video' &&
+      actualDurationSeconds >= SPRITE_SHEET_SKIP_DURATION_SECONDS,
     metadata:
       trackType === 'audio'
         ? {
@@ -465,6 +470,7 @@ const processImportedFile = async (
   };
 
   const mediaId = addToLibraryFn(mediaLibraryItem);
+  const spriteSheetDisabled = !!mediaLibraryItem.spriteSheetDisabled;
 
   // Show import limitation toast for video files that exceed duration/resolution thresholds
   if (trackType === 'video') {
@@ -594,12 +600,16 @@ const processImportedFile = async (
                 );
 
                 // Trigger deferred background jobs now that proxy is ready
-                if (generateSpriteFn) {
+                if (generateSpriteFn && !spriteSheetDisabled) {
                   console.log(
                     `🎬 Starting deferred sprite sheet generation for proxy: ${fileInfo.name}`,
                   );
                   generateSpriteFn(mediaId).catch((err) =>
                     console.warn('Deferred sprite gen failed:', err),
+                  );
+                } else if (spriteSheetDisabled) {
+                  console.log(
+                    `⏭️ Sprite sheets disabled for long-form video: ${fileInfo.name}`,
                   );
                 }
                 if (generateThumbnailFn) {
@@ -901,7 +911,7 @@ const processImportedFile = async (
     // STEP 3: Generate sprite sheets AFTER audio tasks start (lower priority)
     // Skip if we are generating a proxy - the proxy success handler will trigger these later
     if (!needsProxy) {
-      if (generateSpriteFn) {
+      if (generateSpriteFn && !spriteSheetDisabled) {
         // Delay sprite sheet generation to give audio extraction priority
         // This prevents FFmpeg resource contention
         setTimeout(() => {
@@ -925,6 +935,10 @@ const processImportedFile = async (
             }
           });
         }, 500); // 500ms delay to let audio extraction start and potentially complete
+      } else if (spriteSheetDisabled) {
+        console.log(
+          `⏭️ Sprite sheets disabled for long-form video: ${fileInfo.name}`,
+        );
       }
 
       // STEP 4: Generate thumbnail (lowest priority, can run alongside sprites)

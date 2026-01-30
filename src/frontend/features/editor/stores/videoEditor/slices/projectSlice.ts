@@ -4,6 +4,8 @@ import { useProjectStore } from '@/frontend/features/projects/store/projectStore
 import { StateCreator } from 'zustand';
 import { AUTO_SAVE_CONFIG } from '../utils/constants';
 
+const SPRITE_SHEET_SKIP_DURATION_SECONDS = 1800;
+
 // Auto-save manager state (module-level to persist across re-renders)
 let autoSaveTimeoutId: NodeJS.Timeout | null = null;
 let lastSaveTimestamp = 0;
@@ -130,6 +132,18 @@ export const createProjectSlice: StateCreator<
       const loadedMediaLibrary = JSON.parse(
         JSON.stringify((videoEditor as any).mediaLibrary || []),
       );
+      const normalizedMediaLibrary = loadedMediaLibrary.map((item: any) => {
+        if (item?.type === 'video') {
+          const shouldDisableSprites =
+            item.duration >= SPRITE_SHEET_SKIP_DURATION_SECONDS;
+          return {
+            ...item,
+            spriteSheetDisabled:
+              item.spriteSheetDisabled ?? shouldDisableSprites,
+          };
+        }
+        return item;
+      });
 
       // Log what we're loading for debugging data persistence issues
       console.log(
@@ -158,7 +172,7 @@ export const createProjectSlice: StateCreator<
         // This ensures all track properties including textTransform and subtitleTransform
         // are fully restored from the saved project data
         tracks: loadedTracks,
-        mediaLibrary: loadedMediaLibrary,
+        mediaLibrary: normalizedMediaLibrary,
         timeline: { ...state.timeline, ...videoEditor.timeline },
         playback: {
           ...state.playback,

@@ -440,6 +440,9 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) =>
         item.source === source || item.tempFilePath === source,
     );
+    if (mediaItem?.spriteSheetDisabled) {
+      return undefined;
+    }
     return mediaItem?.spriteSheets;
   },
 
@@ -768,6 +771,26 @@ export const createMediaLibrarySlice: StateCreator<
         `Skipping sprite sheet generation for non-video: ${mediaItem.name}`,
       );
       return true; // Not an error, just not applicable
+    }
+
+    if (mediaItem.spriteSheetDisabled) {
+      console.log(
+        `⏭️ Sprite sheets disabled for long-form video: ${mediaItem.name}`,
+      );
+      set((state: any) => ({
+        mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
+          item.id === mediaId
+            ? {
+                ...item,
+                jobStates: {
+                  ...item.jobStates,
+                  spriteSheet: 'completed' as const,
+                },
+              }
+            : item,
+        ),
+      }));
+      return true;
     }
 
     // Skip if sprite sheets already exist

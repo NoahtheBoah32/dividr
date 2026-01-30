@@ -251,28 +251,31 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
 
     // Check if proxy generation is in progress for this track's media (for 4K videos)
     const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
-    const isProxyProcessing = useMemo(() => {
-      if (track.type !== 'video') return false;
-      const mediaItem = mediaLibrary.find(
+    const mediaItem = useMemo(() => {
+      return mediaLibrary.find(
         (m) =>
           m.source === track.source ||
           (track.mediaId && m.id === track.mediaId),
       );
+    }, [mediaLibrary, track.source, track.mediaId]);
+
+    const isProxyProcessing = useMemo(() => {
+      if (track.type !== 'video') return false;
       return mediaItem?.proxy?.status === 'processing';
-    }, [mediaLibrary, track.source, track.mediaId, track.type]);
+    }, [mediaItem, track.type]);
 
     // Check if transcoding is in progress (for AVI videos or other incompatible formats)
     const isTranscoding = useMemo(() => {
-      const mediaItem = mediaLibrary.find(
-        (m) =>
-          m.source === track.source ||
-          (track.mediaId && m.id === track.mediaId),
-      );
       return (
         mediaItem?.transcoding?.status === 'pending' ||
         mediaItem?.transcoding?.status === 'processing'
       );
-    }, [mediaLibrary, track.source, track.mediaId]);
+    }, [mediaItem]);
+
+    const spriteSheetDisabled = useMemo(() => {
+      if (track.type !== 'video') return false;
+      return !!mediaItem?.spriteSheetDisabled;
+    }, [mediaItem, track.type]);
 
     // Tool mode subscriptions for resetting text-edit mode on track interaction
     const previewInteractionMode = useVideoEditorStore(
@@ -797,6 +800,27 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
       const contentHeight = getTrackItemHeight(track.type);
 
       if (track.type === 'video') {
+        if (spriteSheetDisabled) {
+          return (
+            <div className="relative w-full h-full">
+              <div className="absolute inset-0 bg-gray-800" />
+              {mediaItem?.thumbnail ? (
+                <img
+                  src={mediaItem.thumbnail}
+                  alt={track.name}
+                  className="absolute inset-0 h-full w-full object-cover opacity-80"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                  <Film className="h-4 w-4" />
+                </div>
+              )}
+              <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-black/30" />
+            </div>
+          );
+        }
+
         return (
           <VideoSpriteSheetStrip
             track={track}
@@ -845,7 +869,15 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
               : track.name}
         </div>
       );
-    }, [track, track.muted, frameWidth, width, zoomLevel]);
+    }, [
+      track,
+      track.muted,
+      frameWidth,
+      width,
+      zoomLevel,
+      spriteSheetDisabled,
+      mediaItem?.thumbnail,
+    ]);
 
     return (
       <>

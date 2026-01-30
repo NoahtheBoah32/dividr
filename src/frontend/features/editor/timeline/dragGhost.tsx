@@ -1,6 +1,7 @@
 import { cn } from '@/frontend/utils/utils';
-import React, { useEffect, useRef } from 'react';
-import { VideoTrack } from '../stores/videoEditor/index';
+import { Film } from 'lucide-react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
 import { AudioWaveform } from './audioWaveform';
 import { ImageTrackStrip } from './imageTrackStrip';
 import {
@@ -73,10 +74,43 @@ export const DragGhost: React.FC<DragGhostProps> = React.memo(
 
     // Get the correct height for this track type
     const trackHeight = getTrackItemHeight(track.type);
+    const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
+    const mediaItem = useMemo(() => {
+      return mediaLibrary.find(
+        (m) =>
+          m.source === track.source ||
+          (track.mediaId && m.id === track.mediaId),
+      );
+    }, [mediaLibrary, track.source, track.mediaId]);
+    const spriteSheetDisabled = useMemo(() => {
+      if (track.type !== 'video') return false;
+      return !!mediaItem?.spriteSheetDisabled;
+    }, [mediaItem, track.type]);
 
     // Render appropriate content based on track type
     const renderContent = () => {
       if (track.type === 'video') {
+        if (spriteSheetDisabled) {
+          return (
+            <div className="relative w-full h-full">
+              <div className="absolute inset-0 bg-gray-800" />
+              {mediaItem?.thumbnail ? (
+                <img
+                  src={mediaItem.thumbnail}
+                  alt={track.name}
+                  className="absolute inset-0 h-full w-full object-cover opacity-80"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                  <Film className="h-4 w-4" />
+                </div>
+              )}
+              <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-black/30" />
+            </div>
+          );
+        }
+
         return (
           <VideoSpriteSheetStrip
             track={track}

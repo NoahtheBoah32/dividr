@@ -31,7 +31,8 @@ export const useMediaReadiness = (mediaId?: string): boolean => {
       mediaItem.transcoding?.status === 'pending';
 
     const isWaveformReady = !!mediaItem.waveform;
-    const isSpritesReady = !!mediaItem.spriteSheets;
+    const isSpritesReady =
+      mediaItem.spriteSheetDisabled || !!mediaItem.spriteSheets;
 
     // Requirement: "Wait until both [sprites and waveform] are ready." and "Transcoding is complete"
     return !isTranscoding && isWaveformReady && isSpritesReady;
@@ -83,6 +84,15 @@ export const useSpriteSheetProgress = (
   );
 
   if (!mediaId || !mediaItem || mediaItem.type !== 'video') {
+    return {
+      hasAnySheets: false,
+      completedSheets: 0,
+      totalSheets: 0,
+      isComplete: true,
+    };
+  }
+
+  if (mediaItem.spriteSheetDisabled) {
     return {
       hasAnySheets: false,
       completedSheets: 0,

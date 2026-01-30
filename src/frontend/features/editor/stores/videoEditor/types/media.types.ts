@@ -10,6 +10,8 @@ export interface MediaLibraryItem {
   size: number;
   mimeType: string;
   thumbnail?: string;
+  /** Skip sprite sheet generation/rendering for long-form videos */
+  spriteSheetDisabled?: boolean;
   /** Content signature for duplicate detection (partial hash) */
   contentSignature?: {
     partialHash: string;
