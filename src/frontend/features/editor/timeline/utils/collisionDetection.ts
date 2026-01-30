@@ -19,6 +19,15 @@ export interface CollisionCheckOptions {
   includeTouchingEdges?: boolean;
 }
 
+export interface RowAvailabilityOptions {
+  /** Preferred row index to try first */
+  preferredRowIndex?: number;
+  /** Minimum row index allowed (default: 0) */
+  minRowIndex?: number;
+  /** Track IDs to exclude from collision checks */
+  excludeTrackIds?: string[];
+}
+
 /**
  * Check if two time ranges overlap (exclusive of touching edges by default)
  */
@@ -701,4 +710,63 @@ export const calculateDropPosition = (
     finalStartFrame,
     finalRowIndex: targetRowIndex,
   };
+};
+
+/**
+ * Find the nearest available row index for a time range without collisions.
+ * Tries the preferred row first, then searches upward for the next available row.
+ */
+export const findAvailableRowIndexForRange = (
+  proposedStartFrame: number,
+  proposedEndFrame: number,
+  trackType: VideoTrack['type'],
+  allTracks: VideoTrack[],
+  options: RowAvailabilityOptions = {},
+): number => {
+  const { preferredRowIndex, minRowIndex = 0, excludeTrackIds = [] } = options;
+
+  const normalizedPreferred =
+    preferredRowIndex !== undefined && !Number.isNaN(preferredRowIndex)
+      ? Math.max(minRowIndex, Math.round(preferredRowIndex))
+      : undefined;
+
+  const existingRowIndices = allTracks
+    .filter((t) => t.type === trackType)
+    .map((t) => t.trackRowIndex ?? 0);
+
+  const maxExistingIndex =
+    existingRowIndices.length > 0
+      ? Math.max(...existingRowIndices)
+      : minRowIndex;
+
+  const maxCandidateIndex =
+    Math.max(maxExistingIndex, normalizedPreferred ?? minRowIndex) + 1;
+
+  const hasOverlapInRow = (rowIndex: number) =>
+    hasCollision(
+      proposedStartFrame,
+      proposedEndFrame,
+      trackType,
+      rowIndex,
+      allTracks,
+      { excludeTrackIds },
+    );
+
+  if (
+    normalizedPreferred !== undefined &&
+    !hasOverlapInRow(normalizedPreferred)
+  ) {
+    return normalizedPreferred;
+  }
+
+  const startIndex =
+    normalizedPreferred !== undefined ? normalizedPreferred + 1 : minRowIndex;
+
+  for (let rowIndex = startIndex; rowIndex <= maxCandidateIndex; rowIndex++) {
+    if (!hasOverlapInRow(rowIndex)) {
+      return rowIndex;
+    }
+  }
+
+  return maxCandidateIndex;
 };

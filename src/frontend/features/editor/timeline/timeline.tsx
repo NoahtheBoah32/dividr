@@ -29,6 +29,7 @@ import { TimelineRuler } from './timelineRuler';
 import { TimelineTrackControllers } from './timelineTrackControllers';
 import { TimelineTracks } from './timelineTracks';
 import {
+  findAvailableRowIndexForRange,
   findNearestAvailablePositionInRowWithPlayhead,
   hasCollision,
 } from './utils/collisionDetection';
@@ -2053,6 +2054,35 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                       targetRowParsed &&
                       targetRowParsed.type === primaryTrack.type;
 
+                    // Resolve primary audio row if needed (linked audio avoids overlap)
+                    let resolvedPrimaryRowId = dragGhost.targetRow;
+                    if (
+                      isValidDrop &&
+                      targetRowParsed &&
+                      primaryTrack.type === 'audio' &&
+                      primaryTrack.isLinked &&
+                      dragGhost.targetFrame !== null
+                    ) {
+                      const duration =
+                        primaryTrack.endFrame - primaryTrack.startFrame;
+                      const proposedStart = dragGhost.targetFrame;
+                      const proposedEnd = proposedStart + duration;
+
+                      const resolvedAudioRowIndex =
+                        findAvailableRowIndexForRange(
+                          proposedStart,
+                          proposedEnd,
+                          'audio',
+                          tracks,
+                          {
+                            preferredRowIndex: targetRowParsed.rowIndex,
+                            excludeTrackIds: dragGhost.selectedTrackIds,
+                          },
+                        );
+
+                      resolvedPrimaryRowId = `audio-${resolvedAudioRowIndex}`;
+                    }
+
                     // Additionally check for collisions at the drop position
                     if (isValidDrop && targetRowParsed) {
                       const duration =
@@ -2070,7 +2100,12 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                         { excludeTrackIds: dragGhost.selectedTrackIds },
                       );
 
-                      if (wouldCollide) {
+                      if (
+                        wouldCollide &&
+                        !(
+                          primaryTrack.type === 'audio' && primaryTrack.isLinked
+                        )
+                      ) {
                         isValidDrop = false;
                       }
                     }
@@ -2092,10 +2127,40 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
                           // Each track shows in its own row (maintaining relative positions)
                           // But we use the target row from drag ghost for the primary track
-                          const trackTargetRow =
+                          let trackTargetRow =
                             track.id === primaryTrack.id
-                              ? dragGhost.targetRow
+                              ? resolvedPrimaryRowId
                               : getTrackRowId(track);
+
+                          if (targetRowParsed) {
+                            const isLinkedPartner =
+                              primaryTrack.isLinked &&
+                              primaryTrack.linkedTrackId === track.id;
+
+                            if (isLinkedPartner && track.type === 'audio') {
+                              const resolvedAudioRowIndex =
+                                findAvailableRowIndexForRange(
+                                  targetStartFrame,
+                                  targetEndFrame,
+                                  'audio',
+                                  tracks,
+                                  {
+                                    preferredRowIndex: targetRowParsed.rowIndex,
+                                    excludeTrackIds: dragGhost.selectedTrackIds,
+                                  },
+                                );
+
+                              trackTargetRow = `audio-${resolvedAudioRowIndex}`;
+                            } else if (
+                              isLinkedPartner &&
+                              track.type === 'video' &&
+                              primaryTrack.type === 'audio'
+                            ) {
+                              trackTargetRow = `video-${Math.round(
+                                targetRowParsed.rowIndex,
+                              )}`;
+                            }
+                          }
 
                           return (
                             <DropZoneIndicator
