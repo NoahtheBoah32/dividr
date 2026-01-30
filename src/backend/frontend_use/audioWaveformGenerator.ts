@@ -1,5 +1,7 @@
 export interface WaveformOptions {
   audioPath: string;
+  /** Optional content-based signature for stable caching across reimports */
+  contentSignature?: string;
   duration: number; // in seconds
   sampleRate?: number; // Target sample rate for peak generation (default: 8000)
   peaksPerSecond?: number; // Number of peaks per second (default: 20)
@@ -89,6 +91,7 @@ class AudioWaveformGenerator {
   ): Promise<WaveformGenerationResult> {
     const {
       audioPath,
+      contentSignature,
       duration,
       sampleRate = this.DEFAULT_SAMPLE_RATE,
       peaksPerSecond = this.DEFAULT_PEAKS_PER_SECOND,
@@ -104,6 +107,7 @@ class AudioWaveformGenerator {
       peaksPerSecond,
       startTime,
       endTime,
+      contentSignature,
     );
 
     // Check cache first
@@ -118,7 +122,12 @@ class AudioWaveformGenerator {
     }
 
     // Check for active job deduplication
-    const jobKey = this.getJobKey(audioPath, startTime, endTime);
+    const jobKey = this.getJobKey(
+      audioPath,
+      startTime,
+      endTime,
+      contentSignature,
+    );
     const existingJob = this.activeJobs.get(jobKey);
     if (existingJob) {
       console.log(`🎵 Waveform job already in progress for: ${audioPath}`);
@@ -774,15 +783,27 @@ class AudioWaveformGenerator {
     audioPath: string,
     startTime: number,
     endTime: number,
+    contentSignature?: string,
   ): string {
-    return `${audioPath}:${startTime}:${endTime}`;
+    const baseKey = contentSignature ? `sig_${contentSignature}` : audioPath;
+    return `${baseKey}:${startTime}:${endTime}`;
   }
 
   /**
    * Cancel an active waveform job
    */
-  cancelJob(audioPath: string, startTime = 0, endTime = Infinity): boolean {
-    const jobKey = this.getJobKey(audioPath, startTime, endTime);
+  cancelJob(
+    audioPath: string,
+    startTime = 0,
+    endTime = Infinity,
+    contentSignature?: string,
+  ): boolean {
+    const jobKey = this.getJobKey(
+      audioPath,
+      startTime,
+      endTime,
+      contentSignature,
+    );
     const job = this.activeJobs.get(jobKey);
     if (job) {
       if (job.timeoutId) {
@@ -798,8 +819,18 @@ class AudioWaveformGenerator {
   /**
    * Check if a waveform job is active
    */
-  isJobActive(audioPath: string, startTime = 0, endTime = Infinity): boolean {
-    const jobKey = this.getJobKey(audioPath, startTime, endTime);
+  isJobActive(
+    audioPath: string,
+    startTime = 0,
+    endTime = Infinity,
+    contentSignature?: string,
+  ): boolean {
+    const jobKey = this.getJobKey(
+      audioPath,
+      startTime,
+      endTime,
+      contentSignature,
+    );
     return this.activeJobs.has(jobKey);
   }
 
@@ -820,11 +851,18 @@ class AudioWaveformGenerator {
     peaksPerSecond: number,
     startTime = 0,
     endTime = duration,
+    contentSignature?: string,
   ): string {
-    const pathHash = this.simpleHash(audioPath);
+    const baseKey = contentSignature
+      ? `sig_${contentSignature}`
+      : this.simpleHash(audioPath);
     const segmentKey =
       startTime > 0 || endTime < duration ? `_seg_${startTime}_${endTime}` : '';
-    return `${this.CACHE_KEY_PREFIX}${pathHash}_${duration.toFixed(2)}_${sampleRate}_${peaksPerSecond}${segmentKey}`;
+    return `${this.CACHE_KEY_PREFIX}${baseKey}_${duration.toFixed(2)}_${sampleRate}_${peaksPerSecond}${segmentKey}`;
+  }
+
+  private isSignatureKey(cacheKey: string): boolean {
+    return cacheKey.startsWith(`${this.CACHE_KEY_PREFIX}sig_`);
   }
 
   /**
@@ -849,9 +887,11 @@ class AudioWaveformGenerator {
 
     // Check if cache entry has expired
     const now = Date.now();
-    if (now - cached.timestamp > this.CACHE_TTL) {
-      this.cache.delete(cacheKey);
-      return null;
+    if (!this.isSignatureKey(cacheKey)) {
+      if (now - cached.timestamp > this.CACHE_TTL) {
+        this.cache.delete(cacheKey);
+        return null;
+      }
     }
 
     // Update access statistics
@@ -938,7 +978,7 @@ class AudioWaveformGenerator {
 
     // Remove expired entries
     for (const [key, entry] of this.cache) {
-      if (now - entry.timestamp > this.CACHE_TTL) {
+      if (!this.isSignatureKey(key) && now - entry.timestamp > this.CACHE_TTL) {
         entriesToDelete.push(key);
       }
     }
@@ -988,6 +1028,7 @@ class AudioWaveformGenerator {
     endTime: number,
     sampleRate: number = this.DEFAULT_SAMPLE_RATE,
     peaksPerSecond: number = this.DEFAULT_PEAKS_PER_SECOND,
+    contentSignature?: string,
   ): Promise<WaveformGenerationResult> {
     return this.generateWaveform({
       audioPath,
@@ -996,6 +1037,7 @@ class AudioWaveformGenerator {
       peaksPerSecond,
       startTime,
       endTime,
+      contentSignature,
     });
   }
 
@@ -1007,12 +1049,16 @@ class AudioWaveformGenerator {
     duration: number,
     sampleRate: number = this.DEFAULT_SAMPLE_RATE,
     peaksPerSecond: number = this.DEFAULT_PEAKS_PER_SECOND,
+    contentSignature?: string,
   ): WaveformGenerationResult | null {
     const cacheKey = this.generateCacheKey(
       audioPath,
       duration,
       sampleRate,
       peaksPerSecond,
+      0,
+      duration,
+      contentSignature,
     );
     return this.getCachedResult(cacheKey);
   }
@@ -1027,6 +1073,7 @@ class AudioWaveformGenerator {
     endTime: number,
     sampleRate: number = this.DEFAULT_SAMPLE_RATE,
     peaksPerSecond: number = this.DEFAULT_PEAKS_PER_SECOND,
+    contentSignature?: string,
   ): WaveformGenerationResult | null {
     const cacheKey = this.generateCacheKey(
       audioPath,
@@ -1035,6 +1082,7 @@ class AudioWaveformGenerator {
       peaksPerSecond,
       startTime,
       endTime,
+      contentSignature,
     );
     return this.getCachedResult(cacheKey);
   }

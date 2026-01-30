@@ -824,6 +824,19 @@ const processImportedFile = async (
     // STEP 2: Generate waveform (depends on audio extraction)
     if (generateWaveformFn) {
       const generateWaveformWithRetry = async () => {
+        // Try cache-first waveform attach immediately (no FFmpeg), before waiting
+        try {
+          const immediateResult = await generateWaveformFn(mediaId);
+          if (immediateResult) {
+            return;
+          }
+        } catch (error) {
+          console.warn(
+            `⚠️ Immediate waveform cache check failed for ${fileInfo.name}:`,
+            error,
+          );
+        }
+
         // Wait for audio extraction to complete before starting waveform generation
         // This prevents the "Audio not yet extracted" retry loop
         if (audioExtractionPromise) {

@@ -2,6 +2,8 @@ import { VideoTrack } from '@/frontend/features/editor/stores/videoEditor/index'
 
 export interface SpriteSheetOptions {
   videoPath: string;
+  /** Optional content-based signature for stable caching across reimports */
+  contentSignature?: string;
   duration: number; // in seconds
   fps: number;
   thumbWidth?: number; // Width of each thumbnail (default: 120)
@@ -65,6 +67,9 @@ export class VideoSpriteSheetGenerator {
   private static readonly CACHE_STORAGE_KEY = 'dividr_sprite_cache';
   private static readonly MAX_CACHE_AGE_DAYS = 7; // Cache expires after 7 days
   private static cacheInitialized = false;
+  private static isSignatureKey(cacheKey: string): boolean {
+    return cacheKey.startsWith('sprite_png_v4_sig_');
+  }
 
   /**
    * Get precise video metadata using FFprobe
@@ -168,7 +173,7 @@ export class VideoSpriteSheetGenerator {
 
           // Filter out expired entries and validate URLs
           for (const [key, entry] of Object.entries(parsed)) {
-            if (now - entry.timestamp < maxAge) {
+            if (this.isSignatureKey(key) || now - entry.timestamp < maxAge) {
               // Validate that sprite sheet URLs are still accessible
               const isValid = await this.validateCacheEntry(entry.result);
               if (isValid) {
@@ -901,6 +906,7 @@ export class VideoSpriteSheetGenerator {
   private static createCacheKey(options: SpriteSheetOptions): string {
     const {
       videoPath,
+      contentSignature,
       duration,
       thumbWidth = 120,
       thumbHeight = 68,
@@ -908,8 +914,9 @@ export class VideoSpriteSheetGenerator {
       intervalSeconds,
     } = options;
 
-    // Use filename instead of full path for better cache sharing
     const filename = videoPath.split(/[\\/]/).pop() || videoPath;
+    const cacheId = contentSignature ? `sig_${contentSignature}` : filename;
+    const cachePrefix = contentSignature ? 'sprite_png_v4' : 'sprite_png_v3';
     const calculatedInterval =
       intervalSeconds || this.calculateOptimalInterval(duration);
 
@@ -918,7 +925,7 @@ export class VideoSpriteSheetGenerator {
     const roundedDuration = Math.round(duration * 10) / 10;
     const roundedStartTime = Math.round(sourceStartTime * 10) / 10;
 
-    return `sprite_png_v3_${filename}_${roundedStartTime}_${roundedDuration}_${roundedInterval}_${thumbWidth}x${thumbHeight}`;
+    return `${cachePrefix}_${cacheId}_${roundedStartTime}_${roundedDuration}_${roundedInterval}_${thumbWidth}x${thumbHeight}`;
   }
 
   /**
