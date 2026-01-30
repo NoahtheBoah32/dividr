@@ -883,10 +883,91 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
         // This matches professional editors that allow very large/small text
         newScale = Math.max(0.01, newScale);
 
-        // Only update scale - width/height will be recalculated by the ResizeObserver effect
-        onTransformUpdate(track.id, {
-          scale: newScale,
-        });
+        // Dynamic anchor mode - check modifier keys in real-time during drag
+        // Shift/Ctrl/Cmd = center anchor (symmetric scaling)
+        // No modifier = corner anchor (opposite corner stays fixed)
+        // This allows users to switch modes mid-drag for smooth UX
+        const useCenterAnchor = e.shiftKey || e.ctrlKey || e.metaKey;
+
+        // Anchor-based scaling: compensate position to keep anchor point fixed
+        // Center anchor (modifier held): no position change needed - element scales symmetrically
+        // Corner anchor (no modifier): opposite corner stays fixed, center moves
+        if (!useCenterAnchor && containerSize.width > 0) {
+          // Calculate the initial size and position in video space
+          const initialVideoX = initialTransform.x / effectiveRenderScale;
+          const initialVideoY = initialTransform.y / effectiveRenderScale;
+          const initialWidth =
+            (containerSize.width / effectiveRenderScale) *
+            initialTransform.scale;
+          const initialHeight =
+            (containerSize.height / effectiveRenderScale) *
+            initialTransform.scale;
+
+          // Calculate the new size
+          const newWidth =
+            (containerSize.width / effectiveRenderScale) * newScale;
+          const newHeight =
+            (containerSize.height / effectiveRenderScale) * newScale;
+
+          // Calculate position offset to keep the opposite corner/edge fixed
+          // The anchor point is opposite to the handle being dragged
+          let offsetX = 0;
+          let offsetY = 0;
+
+          // For corner handles, both axes need compensation
+          // For edge handles, only one axis needs compensation
+          switch (activeHandle) {
+            case 'tl': // Anchor: bottom-right corner
+              offsetX = (initialWidth - newWidth) / 2;
+              offsetY = (initialHeight - newHeight) / 2;
+              break;
+            case 'tr': // Anchor: bottom-left corner
+              offsetX = -(initialWidth - newWidth) / 2;
+              offsetY = (initialHeight - newHeight) / 2;
+              break;
+            case 'bl': // Anchor: top-right corner
+              offsetX = (initialWidth - newWidth) / 2;
+              offsetY = -(initialHeight - newHeight) / 2;
+              break;
+            case 'br': // Anchor: top-left corner
+              offsetX = -(initialWidth - newWidth) / 2;
+              offsetY = -(initialHeight - newHeight) / 2;
+              break;
+            case 't': // Anchor: bottom edge
+              offsetY = (initialHeight - newHeight) / 2;
+              break;
+            case 'b': // Anchor: top edge
+              offsetY = -(initialHeight - newHeight) / 2;
+              break;
+            case 'l': // Anchor: right edge
+              offsetX = (initialWidth - newWidth) / 2;
+              break;
+            case 'r': // Anchor: left edge
+              offsetX = -(initialWidth - newWidth) / 2;
+              break;
+          }
+
+          // Apply the position offset
+          const newPixelX = initialVideoX + offsetX;
+          const newPixelY = initialVideoY + offsetY;
+
+          // Convert to normalized coordinates
+          const normalizedPos = pixelsToNormalized({
+            x: newPixelX,
+            y: newPixelY,
+          });
+
+          onTransformUpdate(track.id, {
+            scale: newScale,
+            x: normalizedPos.x,
+            y: normalizedPos.y,
+          });
+        } else {
+          // Center anchor - just update scale, position stays the same
+          onTransformUpdate(track.id, {
+            scale: newScale,
+          });
+        }
       } else if (isResizingWidth && activeHandle) {
         // Width-only resize for left/right handles
         // This changes container width WITHOUT scaling font size
