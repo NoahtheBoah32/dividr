@@ -6,6 +6,10 @@
  */
 import { generateASSContent } from '@/backend/ffmpeg/subtitles/subtitleExporter';
 import {
+  SUBTITLE_PADDING_HORIZONTAL,
+  SUBTITLE_PADDING_VERTICAL,
+} from '../../editor/preview/core/constants';
+import {
   useVideoEditorStore,
   VideoTrack,
 } from '../../editor/stores/videoEditor/index';
@@ -161,6 +165,17 @@ export function generateSubtitleContent(
             fontStyle,
             letterSpacing,
             scale,
+            {
+              lineHeight: trackStyle?.lineHeight,
+              textTransform: trackStyle?.textTransform,
+              textAlign: trackStyle?.textAlign,
+              paddingX: SUBTITLE_PADDING_HORIZONTAL,
+              paddingY: SUBTITLE_PADDING_VERTICAL,
+              scaleLetterSpacing: true,
+              wordBreak: 'break-word',
+              overflowWrap: 'break-word',
+              whiteSpace: 'pre-wrap',
+            },
           );
 
           // Extract transform/position data from subtitleTransform or fall back to global position

@@ -6,6 +6,10 @@
  */
 import { TextSegment } from '@/backend/ffmpeg/subtitles/textLayers';
 import {
+  TEXT_CLIP_PADDING_HORIZONTAL,
+  TEXT_CLIP_PADDING_VERTICAL,
+} from '../../editor/preview/core/constants';
+import {
   useVideoEditorStore,
   VideoTrack,
 } from '../../editor/stores/videoEditor/index';
@@ -132,6 +136,16 @@ export function generateTextLayerSegments(
             fontStyle,
             letterSpacing,
             scale,
+            {
+              lineHeight: track.textStyle?.lineHeight,
+              textTransform: track.textStyle?.textTransform,
+              textAlign: track.textStyle?.textAlign,
+              paddingX: TEXT_CLIP_PADDING_HORIZONTAL,
+              paddingY: TEXT_CLIP_PADDING_VERTICAL,
+              wordBreak: 'break-word',
+              overflowWrap: 'break-word',
+              whiteSpace: 'pre-wrap',
+            },
           );
 
           // Use trackRowIndex to determine layer (higher row index = higher layer)
