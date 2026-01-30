@@ -87,3 +87,18 @@ export const DEFAULT_AUDIO_PROPERTIES = {
   volumeDb: 0, // 0 dB = unity gain
   noiseReductionEnabled: false,
 };
+
+// Auto-save configuration
+// Implements a smart debounced auto-save similar to Figma/Premiere Pro
+export const AUTO_SAVE_CONFIG = {
+  // Default debounce delay after the last edit before triggering auto-save
+  // This allows rapid edits to be batched without interruption
+  DEBOUNCE_DELAY_MS: 3000,
+
+  // Shorter delay used when a transform/drag operation ends
+  // Provides quicker feedback that changes are saved after user commits an action
+  COMMIT_DELAY_MS: 1000,
+
+  // Minimum time between consecutive saves to prevent overlapping save requests
+  MIN_SAVE_INTERVAL_MS: 2000,
+} as const;

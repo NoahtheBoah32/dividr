@@ -130,7 +130,7 @@ export const createPlaybackSlice: StateCreator<
       };
     }),
 
-  endDraggingTrack: (recordUndo = true) =>
+  endDraggingTrack: (recordUndo = true) => {
     set((state: any) => {
       const shouldResume = state.playback.wasPlayingBeforeDrag;
 
@@ -152,7 +152,12 @@ export const createPlaybackSlice: StateCreator<
           dragGhost: null, // Also clear drag ghost
         },
       };
-    }),
+    });
+
+    // Trigger auto-save now that the drag operation is complete
+    const state = get() as any;
+    state.triggerAutoSaveOnCommit?.();
+  },
 
   setMagneticSnapFrame: (frame) =>
     set((state: any) => ({
@@ -222,7 +227,7 @@ export const createPlaybackSlice: StateCreator<
       };
     }),
 
-  endDraggingPlayhead: () =>
+  endDraggingPlayhead: () => {
     set((state: any) => {
       const shouldResume = state.playback.wasPlayingBeforePlayheadDrag;
       return {
@@ -233,7 +238,12 @@ export const createPlaybackSlice: StateCreator<
           wasPlayingBeforePlayheadDrag: false,
         },
       };
-    }),
+    });
+
+    // Trigger auto-save now that the playhead drag is complete
+    const state = get() as any;
+    state.triggerAutoSaveOnCommit?.();
+  },
 
   startDraggingTransform: () => {
     const state = get() as any;
@@ -270,6 +280,9 @@ export const createPlaybackSlice: StateCreator<
     // End undo grouping for transform operations
     const state = get() as any;
     state.endGroup?.();
+
+    // Trigger auto-save now that the transform operation is complete
+    state.triggerAutoSaveOnCommit?.();
   },
 
   prepareForRender: () =>
