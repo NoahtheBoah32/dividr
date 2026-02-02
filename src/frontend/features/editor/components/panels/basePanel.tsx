@@ -27,10 +27,7 @@ export const BasePanel: React.FC<BasePanelProps> = React.memo(
   ({ title, children, className, headerActions }) => {
     return (
       <div
-        className={cn(
-          'w-80 flex flex-col border-l border-r border-accent',
-          className,
-        )}
+        className={cn('w-80 flex flex-col border-l border-accent', className)}
       >
         {/* Header */}
         <div className="px-4">

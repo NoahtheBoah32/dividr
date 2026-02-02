@@ -19,24 +19,24 @@ export const BulkActionsBar = ({
   if (selectedCount === 0) return null;
 
   return (
-    <div className="flex items-center gap-2 dark:bg-zinc-50 bg-zinc-900 backdrop-blur-sm border rounded-md px-3 animate-in fade-in duration-150 py-1">
+    <div className="flex items-center gap-2 bg-accent backdrop-blur-sm border rounded-md px-3 animate-in fade-in duration-150 py-0.5">
       <Button
         variant="ghost"
         size="sm"
-        className="size-4 !p-0 text-xs hover:!bg-accent/20 text-zinc-500 dark:text-zinc-900"
+        className="size-4 !p-0 text-xs hover:!bg-accent/20 text-zinc-900 dark:text-zinc-100"
         onClick={onClearSelection}
         title="Clear selection (Esc)"
       >
         <X className="size-3.5" />
       </Button>
-      <span className="text-xs text-zinc-500 dark:text-zinc-900 font-medium whitespace-nowrap">
+      <span className="text-xs text-zinc-900 dark:text-zinc-100 font-medium whitespace-nowrap">
         {selectedCount} selected
         {selectedCount === totalCount && totalCount > 1 && ' (all)'}
       </span>
-      <div className="w-px h-4 bg-border" />
+      <div className="w-px h-4 bg-zinc-500 dark:bg-zinc-500 ml-2" />
       <Button
         variant="ghost"
-        className="gap-1.5 !px-2 rounded py-0.5 h-fit w-fit text-xs text-zinc-500 dark:text-zinc-900 hover:!bg-accent/20"
+        className="gap-1.5 !px-2 rounded py-0.5 h-fit w-fit text-xs text-zinc-900 dark:text-zinc-100 hover:!bg-accent/20"
         onClick={onBulkExport}
         title="Export selected projects"
       >
@@ -45,7 +45,7 @@ export const BulkActionsBar = ({
       </Button>
       <Button
         variant="ghost"
-        className="gap-1.5 !px-2 rounded py-0.5 h-fit w-fit text-xs text-destructive hover:text-destructive hover:!bg-destructive/20"
+        className="gap-1.5 !px-2 rounded py-0.5 h-fit w-fit text-xs text-red-500 dark:text-red-600 hover:text-red-500 hover:!bg-transparent"
         onClick={onBulkDelete}
         title="Delete selected projects"
       >
