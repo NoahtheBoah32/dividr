@@ -52,6 +52,11 @@ interface SubtitleTransformBoundaryProps {
    */
   appliedStyle?: React.CSSProperties;
   /**
+   * Global max container width in video space pixels.
+   * Used when user has not explicitly resized the subtitle box.
+   */
+  maxContainerWidth?: number;
+  /**
    * Callback to check if another element should receive this interaction.
    * Used for proper spatial hit-testing when elements overlap.
    * Returns the trackId that should receive the click, or null if this element should handle it.
@@ -97,6 +102,7 @@ export const SubtitleTransformBoundary: React.FC<
   contentOnly = false,
   selectedTrack,
   appliedStyle,
+  maxContainerWidth,
   getTopElementAtPoint,
 }) => {
   // Use renderScale if provided (from coordinate system), otherwise fall back to previewScale
@@ -276,7 +282,6 @@ export const SubtitleTransformBoundary: React.FC<
 
   // Update dimensions in the store when content size changes
   // Skip updates when renderScale changes to prevent dimension recalculation on fullscreen toggle
-  // Skip WIDTH updates when user has explicitly set width via handles
   useEffect(() => {
     // Detect if renderScale changed (e.g., entering/exiting fullscreen)
     const renderScaleChanged =
@@ -289,39 +294,23 @@ export const SubtitleTransformBoundary: React.FC<
     }
 
     if (containerSize.width > 0 && containerSize.height > 0) {
-      const currentWidth = normalizedTransform.width || 0;
       const currentHeight = normalizedTransform.height || 0;
 
-      // For subtitle, store containerSize directly (not divided by renderScale)
-      // because subtitle font-size doesn't scale with zoom level
-      // This differs from TextTransformBoundary which uses CSS scale
-      const newWidth = containerSize.width;
-      const newHeight = containerSize.height;
+      // Store height in video space (independent of render scale)
+      const newHeight = containerSize.height / effectiveRenderScale;
 
       const threshold = 1; // 1px tolerance
-      const widthChanged = Math.abs(currentWidth - newWidth) > threshold;
       const heightChanged = Math.abs(currentHeight - newHeight) > threshold;
 
-      // If user has defined width via handles, don't auto-update width
-      if (hasUserDefinedWidthRef.current) {
-        if (heightChanged) {
-          onTransformUpdate(track.id, {
-            height: newHeight,
-          });
-        }
-      } else {
-        if (widthChanged || heightChanged) {
-          onTransformUpdate(track.id, {
-            width: newWidth,
-            height: newHeight,
-          });
-        }
+      if (heightChanged) {
+        onTransformUpdate(track.id, {
+          height: newHeight,
+        });
       }
     }
   }, [
     containerSize.width,
     containerSize.height,
-    normalizedTransform.width,
     normalizedTransform.height,
     track.id,
     onTransformUpdate,
@@ -986,17 +975,21 @@ export const SubtitleTransformBoundary: React.FC<
     }
     return undefined;
   })();
+  const maxContainerWidthPx =
+    maxContainerWidth && maxContainerWidth > 0
+      ? maxContainerWidth * effectiveRenderScale
+      : undefined;
+  const resolvedContainerWidth = userDefinedWidth ?? maxContainerWidthPx;
+  const shouldWrapText = userDefinedWidth !== undefined;
 
-  // Calculate boundary dimensions for subtitle
-  // Unlike TextTransformBoundary, subtitle uses font-size scaling (not CSS scale)
-  // So containerSize already reflects the visual size and doesn't need renderScale adjustment
-  // We use stored dimensions to maintain stability across zoom changes
-  const storedWidth = normalizedTransform.width || 0;
+  // Calculate boundary dimensions for subtitle (convert video space to screen space)
+  // Use resolved container width to keep layout stable across subtitle changes
   const storedHeight = normalizedTransform.height || 0;
-  // Use stored dimensions if available, otherwise fall back to containerSize
-  // Don't multiply by effectiveRenderScale since subtitle content size is independent of zoom
-  const boundaryWidth = storedWidth > 0 ? storedWidth : containerSize.width;
-  const boundaryHeight = storedHeight > 0 ? storedHeight : containerSize.height;
+  const boundaryWidth = resolvedContainerWidth ?? containerSize.width;
+  const boundaryHeight =
+    storedHeight > 0
+      ? storedHeight * effectiveRenderScale
+      : containerSize.height;
 
   // Content transform - NO CSS scale for subtitles
   // Unlike TextTransformBoundary, subtitle scaling is handled via font-size multiplication
@@ -1031,12 +1024,14 @@ export const SubtitleTransformBoundary: React.FC<
         data-subtitle-content="true"
         style={{
           pointerEvents: 'auto',
-          // Width constraint for text wrapping (same pattern as TextTransformBoundary)
-          ...(userDefinedWidth && {
-            width: `${userDefinedWidth}px`,
-            wordWrap: 'break-word',
-            overflowWrap: 'break-word',
-            whiteSpace: 'pre-wrap',
+          // Width constraint for subtitle container (global or user-defined)
+          ...(resolvedContainerWidth && {
+            width: `${resolvedContainerWidth}px`,
+            ...(shouldWrapText && {
+              wordWrap: 'break-word',
+              overflowWrap: 'break-word',
+              whiteSpace: 'pre-wrap',
+            }),
           }),
         }}
         onDoubleClick={handleDoubleClick}
@@ -1058,11 +1053,13 @@ export const SubtitleTransformBoundary: React.FC<
               cursor: 'text',
               userSelect: 'text',
               WebkitUserSelect: 'text',
-              ...(userDefinedWidth && {
-                width: `${userDefinedWidth}px`,
-                wordWrap: 'break-word',
-                overflowWrap: 'break-word',
-                whiteSpace: 'pre-wrap',
+              ...(resolvedContainerWidth && {
+                width: `${resolvedContainerWidth}px`,
+                ...(shouldWrapText && {
+                  wordWrap: 'break-word',
+                  overflowWrap: 'break-word',
+                  whiteSpace: 'pre-wrap',
+                }),
               }),
             }}
           >

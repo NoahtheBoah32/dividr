@@ -38,7 +38,13 @@ export interface SelectionHitTestLayerProps {
   renderScale: number;
   interactionMode: 'select' | 'pan' | 'text-edit';
   disabled?: boolean;
-  globalSubtitlePosition?: { x: number; y: number };
+  globalSubtitlePosition?: {
+    x: number;
+    y: number;
+    scale?: number;
+    width?: number;
+    height?: number;
+  };
 }
 
 export interface ElementBounds {
@@ -69,23 +75,33 @@ export const calculateElementBounds = (
   baseVideoHeight: number,
   renderScale: number,
   allTracks: VideoTrack[],
-  globalSubtitlePosition?: { x: number; y: number },
+  globalSubtitlePosition?: {
+    x: number;
+    y: number;
+    scale?: number;
+    width?: number;
+    height?: number;
+  },
 ): ElementBounds | null => {
   // Subtitles use global position instead of per-track transform
   if (track.type === 'subtitle') {
-    const position = globalSubtitlePosition || { x: 0, y: 0 };
+    const position = globalSubtitlePosition || { x: 0, y: 0, scale: 1 };
     const subtitleTransform = track.subtitleTransform || {
       scale: 1,
       width: 0,
       height: 0,
     };
-    const scale = subtitleTransform.scale ?? 1;
+    const scale = subtitleTransform.scale ?? position.scale ?? 1;
 
     // Use actual stored dimensions if available, otherwise estimate
     // Dimensions are stored in video space (pixels at base resolution)
     // Need to multiply by renderScale to convert to screen space
-    const storedWidth = subtitleTransform.width || 0;
-    const storedHeight = subtitleTransform.height || 0;
+    const storedWidth =
+      subtitleTransform.width ||
+      position.width ||
+      track.maxContainerWidth ||
+      0;
+    const storedHeight = subtitleTransform.height || position.height || 0;
 
     // If we have stored dimensions, use them; otherwise estimate
     // Note: Subtitle uses font-based scaling, so dimensions already include scale
@@ -220,7 +236,13 @@ export const getTopElementAtPoint = (
   baseVideoWidth: number,
   baseVideoHeight: number,
   renderScale: number,
-  globalSubtitlePosition?: { x: number; y: number },
+  globalSubtitlePosition?: {
+    x: number;
+    y: number;
+    scale?: number;
+    width?: number;
+    height?: number;
+  },
 ): string | null => {
   const visualTypes: VideoTrack['type'][] = [
     'video',

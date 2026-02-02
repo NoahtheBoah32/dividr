@@ -344,6 +344,7 @@ export interface TracksSlice {
    * Does not call recordAction - relies on the grouping mechanism.
    */
   updateTrackProperty: (trackId: string, updates: Partial<VideoTrack>) => void;
+  setSubtitleMaxContainerWidth: (width: number) => void;
 
   // State management helpers
   markUnsavedChanges?: () => void;
@@ -2365,6 +2366,30 @@ export const createTracksSlice: StateCreator<
     }));
 
     const state = get() as any;
+    state.markUnsavedChanges?.();
+  },
+
+  setSubtitleMaxContainerWidth: (width) => {
+    const state = get() as any;
+    const safeWidth = Number.isFinite(width) ? Math.max(0, width) : 0;
+    const hasChanges = state.tracks.some(
+      (track: VideoTrack) =>
+        track.type === 'subtitle' &&
+        (track.maxContainerWidth ?? 0) !== safeWidth,
+    );
+
+    if (!hasChanges) {
+      return;
+    }
+
+    set((state: any) => ({
+      tracks: state.tracks.map((track: VideoTrack) =>
+        track.type === 'subtitle'
+          ? { ...track, maxContainerWidth: safeWidth }
+          : track,
+      ),
+    }));
+
     state.markUnsavedChanges?.();
   },
 });

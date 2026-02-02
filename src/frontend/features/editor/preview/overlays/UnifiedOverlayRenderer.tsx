@@ -3,6 +3,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -239,6 +240,9 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
   const setPreviewInteractionMode = useVideoEditorStore(
     (state) => state.setPreviewInteractionMode,
   );
+  const setSubtitleMaxContainerWidth = useVideoEditorStore(
+    (state) => state.setSubtitleMaxContainerWidth,
+  );
 
   const handleEditModeChange = useCallback(
     (isEditing: boolean) => {
@@ -275,6 +279,52 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
     () =>
       sortedVisualTracks.filter((t) => t.type === 'subtitle' && t.subtitleText),
     [sortedVisualTracks],
+  );
+  const subtitleTracks = useMemo(
+    () => allTracks.filter((t) => t.type === 'subtitle' && t.subtitleText),
+    [allTracks],
+  );
+  const storedMaxContainerWidth = useMemo(() => {
+    if (subtitleTracks.length === 0) return 0;
+    return Math.max(
+      ...subtitleTracks.map((track) => track.maxContainerWidth ?? 0),
+    );
+  }, [subtitleTracks]);
+  const storedMaxContainerWidthRef = useRef(storedMaxContainerWidth);
+  useEffect(() => {
+    storedMaxContainerWidthRef.current = storedMaxContainerWidth;
+  }, [storedMaxContainerWidth]);
+  const subtitleScale = globalSubtitlePosition.scale ?? 1;
+  const subtitleMeasureKey = useMemo(() => {
+    if (subtitleTracks.length === 0) return 'no-subtitles';
+    const parts = subtitleTracks.map((track) => {
+      const style = getTextStyleForSubtitle(activeStyle, track.subtitleStyle);
+      return [
+        track.id,
+        track.subtitleText || '',
+        style.fontFamily,
+        style.fontWeight,
+        style.fontStyle,
+        style.fontSize,
+        style.letterSpacing,
+        style.textTransform,
+        style.textDecoration,
+        style.lineHeight,
+      ].join('|');
+    });
+    return `${parts.join('||')}|scale:${subtitleScale}`;
+  }, [subtitleTracks, activeStyle, getTextStyleForSubtitle, subtitleScale]);
+  const handleMaxContainerWidthMeasured = useCallback(
+    (widthVideoSpace: number) => {
+      if (!Number.isFinite(widthVideoSpace) || widthVideoSpace <= 0) return;
+      const roundedWidth = Math.round(widthVideoSpace * 100) / 100;
+      const currentWidth = storedMaxContainerWidthRef.current || 0;
+      if (Math.abs(roundedWidth - currentWidth) < 0.5) {
+        return;
+      }
+      setSubtitleMaxContainerWidth(roundedWidth);
+    },
+    [setSubtitleMaxContainerWidth],
   );
 
   const videoRenderInfos = useMemo(() => {
@@ -491,6 +541,8 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
       activeStyle,
       editableSubtitle?.subtitleStyle,
     );
+    const lockWidth =
+      storedMaxContainerWidth > 0 || (globalSubtitlePosition.width ?? 0) > 0;
     const effectiveScale = renderScale * (globalSubtitlePosition.scale ?? 1);
     const fontSize = (parseFloat(style.fontSize) || 40) * effectiveScale;
     const appliedEditStyle: React.CSSProperties = {
@@ -534,6 +586,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
         renderScale={renderScale}
         isTextEditMode={isTextEditMode}
         interactionMode={interactionMode}
+        maxContainerWidth={storedMaxContainerWidth}
         onTransformUpdate={(_, transform) => {
           onSubtitleTransformUpdate(
             selectedSub?.id || activeSubtitles[0].id,
@@ -566,6 +619,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
             renderScale,
             globalSubtitlePosition.scale ?? 1,
             onSubtitleSelect,
+            lockWidth,
           ),
         )}
       </SubtitleTransformBoundary>
@@ -574,6 +628,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
     activeSubtitles,
     selectedTrackIds,
     globalSubtitlePosition,
+    storedMaxContainerWidth,
     previewScale,
     baseVideoWidth,
     baseVideoHeight,
@@ -597,6 +652,15 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
 
   return (
     <>
+      <SubtitleWidthMeasurer
+        subtitles={subtitleTracks}
+        activeStyle={activeStyle}
+        getTextStyleForSubtitle={getTextStyleForSubtitle}
+        renderScale={renderScale}
+        subtitleScale={subtitleScale}
+        measurementKey={subtitleMeasureKey}
+        onMaxWidthMeasured={handleMaxContainerWidthMeasured}
+      />
       {/* VIDEO LAYERS */}
       {USE_FRAME_DRIVEN_PLAYBACK ? (
         <div
@@ -739,6 +803,7 @@ function renderSubtitleContent(
   renderScale: number,
   userScale: number,
   onSelect: (id: string) => void,
+  lockWidth: boolean,
 ) {
   const style = getStyle(activeStyle, track.subtitleStyle);
   // Font size includes both renderScale (preview zoom) and userScale (user's scale factor)
@@ -773,6 +838,13 @@ function renderSubtitleContent(
     padding: `${padV}px ${padH}px`,
   };
 
+  const wrapperStyle: React.CSSProperties | undefined = lockWidth
+    ? {
+        width: '100%',
+        textAlign: style.textAlign,
+      }
+    : undefined;
+
   // Check if glow is enabled for this subtitle
   // Glow uses a multi-layer approach to match FFmpeg export:
   // Layer 0: Glow layer (blurred, expanded text behind everything)
@@ -797,6 +869,7 @@ function renderSubtitleContent(
       return (
         <div
           key={`sub-${track.id}`}
+          style={wrapperStyle}
           onClick={(e) => {
             e.stopPropagation();
             onSelect(track.id);
@@ -854,6 +927,7 @@ function renderSubtitleContent(
     return (
       <div
         key={`sub-${track.id}`}
+        style={wrapperStyle}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(track.id);
@@ -898,6 +972,7 @@ function renderSubtitleContent(
   return (
     <div
       key={`sub-${track.id}`}
+      style={wrapperStyle}
       onClick={(e) => {
         e.stopPropagation();
         onSelect(track.id);
@@ -918,6 +993,137 @@ function renderSubtitleContent(
     </div>
   );
 }
+
+const SubtitleWidthMeasurer: React.FC<{
+  subtitles: VideoTrack[];
+  activeStyle: any;
+  getTextStyleForSubtitle: (style: any, seg?: any) => any;
+  renderScale: number;
+  subtitleScale: number;
+  measurementKey: string;
+  onMaxWidthMeasured: (widthVideoSpace: number) => void;
+}> = ({
+  subtitles,
+  activeStyle,
+  getTextStyleForSubtitle,
+  renderScale,
+  subtitleScale,
+  measurementKey,
+  onMaxWidthMeasured,
+}) => {
+  const itemRefs = useRef(new Map<string, HTMLDivElement>());
+
+  const setItemRef = useCallback(
+    (id: string) => (el: HTMLDivElement | null) => {
+      if (el) {
+        itemRefs.current.set(id, el);
+      } else {
+        itemRefs.current.delete(id);
+      }
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    if (!measurementKey || subtitles.length === 0) return;
+
+    let cancelled = false;
+
+    const measure = () => {
+      if (cancelled) return;
+      if (!renderScale || renderScale <= 0) return;
+
+      let maxWidthPx = 0;
+      for (const track of subtitles) {
+        const node = itemRefs.current.get(track.id);
+        if (!node) continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.width > maxWidthPx) {
+          maxWidthPx = rect.width;
+        }
+      }
+
+      if (maxWidthPx > 0) {
+        const widthVideoSpace = maxWidthPx / renderScale;
+        if (Number.isFinite(widthVideoSpace)) {
+          onMaxWidthMeasured(widthVideoSpace);
+        }
+      }
+    };
+
+    const scheduleMeasure = () => {
+      requestAnimationFrame(measure);
+    };
+
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        if (!cancelled) scheduleMeasure();
+      });
+    } else {
+      scheduleMeasure();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+    // NOTE: renderScale changes (zoom) intentionally do not trigger re-measure.
+  }, [measurementKey, onMaxWidthMeasured]);
+
+  if (subtitles.length === 0) {
+    return null;
+  }
+
+  const hiddenStyle: React.CSSProperties = {
+    position: 'absolute',
+    left: '-10000px',
+    top: '-10000px',
+    visibility: 'hidden',
+    pointerEvents: 'none',
+    zIndex: -1,
+    contain: 'layout style paint',
+  };
+
+  return (
+    <div aria-hidden="true" style={hiddenStyle}>
+      {subtitles.map((track) => {
+        const style = getTextStyleForSubtitle(activeStyle, track.subtitleStyle);
+        const effectiveScale = renderScale * subtitleScale;
+        const fontSize = (parseFloat(style.fontSize) || 40) * effectiveScale;
+        const padV = SUBTITLE_PADDING_VERTICAL * effectiveScale;
+        const padH = SUBTITLE_PADDING_HORIZONTAL * effectiveScale;
+        const letterSpacing = style.letterSpacing
+          ? `${parseFloat(String(style.letterSpacing)) * effectiveScale}px`
+          : undefined;
+
+        const measureStyle: React.CSSProperties = {
+          fontSize: `${fontSize}px`,
+          fontFamily: style.fontFamily,
+          fontWeight: style.fontWeight,
+          fontStyle: style.fontStyle,
+          textTransform: style.textTransform,
+          textDecoration: style.textDecoration,
+          textAlign: style.textAlign,
+          lineHeight: style.lineHeight,
+          letterSpacing,
+          display: 'inline-block',
+          whiteSpace: 'pre',
+          wordBreak: 'keep-all',
+          overflowWrap: 'normal',
+          padding: `${padV}px ${padH}px`,
+          boxSizing: 'border-box',
+        };
+
+        return (
+          <div key={`measure-${track.id}`} style={{ margin: 0, padding: 0 }}>
+            <div ref={setItemRef(track.id)} style={measureStyle}>
+              {track.subtitleText || ''}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 // Refactored ImageTrackLayer component to handle GIF freezing
 const ImageTrackLayer: React.FC<{

@@ -147,7 +147,11 @@ export function generateSubtitleContent(
           // Process text through textWrapUtils (single source of truth for line breaks)
           // - Normalizes CRLF/CR to LF
           // - Applies auto-wrapping if width constraint exists (user resized the subtitle box)
-          const subtitleWidth = track.subtitleTransform?.width || 0;
+          const subtitleWidth =
+            track.subtitleTransform?.width ||
+            textStyle.globalSubtitlePosition?.width ||
+            track.maxContainerWidth ||
+            0;
           const fontSize = trackStyle?.fontSize || 40; // Default 40px at 720p
           const fontFamily = trackStyle?.fontFamily || 'Inter';
           const fontWeight = trackStyle?.isBold ? '700' : '400';

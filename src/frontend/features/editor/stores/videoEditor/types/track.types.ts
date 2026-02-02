@@ -287,6 +287,11 @@ export interface VideoTrack {
   normalizedSubtitleStartTime?: number;
   normalizedSubtitleEndTime?: number;
   subtitleSafeGapSeconds?: number;
+  /**
+   * Cached global subtitle container width (video space pixels).
+   * Shared across all subtitle tracks to ensure stable layout.
+   */
+  maxContainerWidth?: number;
   // Global subtitle transform (applies to ALL subtitle tracks)
   subtitleTransform?: {
     x: number; // X position normalized (-1 to 1, relative to video center, 0 = center)
