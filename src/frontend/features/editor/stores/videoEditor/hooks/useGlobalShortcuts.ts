@@ -5,6 +5,10 @@ import { useVideoEditorStore } from '../index';
 import { createGlobalShortcuts } from '../shortcuts/globalShortcuts';
 import { useProjectShortcutDialog } from '../shortcuts/hooks/useProjectShortcutDialog';
 import { useProjectShortcutHandlers } from '../shortcuts/hooks/useProjectShortcutHandlers';
+import {
+  useShortcutCaptureState,
+  useShortcutKeys,
+} from '@/frontend/features/editor/shortcuts/shortcutHooks';
 
 /**
  * Hook for global keyboard shortcuts
@@ -13,6 +17,7 @@ import { useProjectShortcutHandlers } from '../shortcuts/hooks/useProjectShortcu
 export const useGlobalShortcuts = () => {
   const timeline = useVideoEditorStore((state) => state.timeline);
   const tracks = useVideoEditorStore((state) => state.tracks);
+  const isCapturing = useShortcutCaptureState();
 
   // Setup project shortcut dialog
   const { showConfirmation, ConfirmationDialog } = useProjectShortcutDialog();
@@ -40,113 +45,180 @@ export const useGlobalShortcuts = () => {
     [effectiveEndFrame, projectHandlers],
   );
 
-  // Register shortcuts individually to comply with React hooks rules
-  // Playback toggle (index 7, after 7 project shortcuts)
-  useHotkeys('space', globalShortcuts[7].handler, globalShortcuts[7].options, [
-    effectiveEndFrame,
-    timeline.currentFrame,
-  ]);
+  const playbackKeys = useShortcutKeys(
+    'playback-toggle',
+    globalShortcuts[7].keys,
+  );
+  const prevFrameKeys = useShortcutKeys(
+    'navigate-frame-prev',
+    globalShortcuts[8].keys,
+  );
+  const nextFrameKeys = useShortcutKeys(
+    'navigate-frame-next',
+    globalShortcuts[9].keys,
+  );
+  const prevFrameFastKeys = useShortcutKeys(
+    'navigate-frame-prev-fast',
+    globalShortcuts[10].keys,
+  );
+  const nextFrameFastKeys = useShortcutKeys(
+    'navigate-frame-next-fast',
+    globalShortcuts[11].keys,
+  );
+  const nextEditPointKeys = useShortcutKeys(
+    'navigate-next-edit-point',
+    globalShortcuts[12].keys,
+  );
+  const prevEditPointKeys = useShortcutKeys(
+    'navigate-prev-edit-point',
+    globalShortcuts[13].keys,
+  );
+  const fullscreenKeys = useShortcutKeys(
+    'preview-toggle-fullscreen',
+    globalShortcuts[14].keys,
+  );
+
+  const projectNewKeys = useShortcutKeys(
+    'project-new',
+    globalShortcuts[0].keys,
+  );
+  const projectOpenKeys = useShortcutKeys(
+    'project-open',
+    globalShortcuts[1].keys,
+  );
+  const projectSaveKeys = useShortcutKeys(
+    'project-save',
+    globalShortcuts[2].keys,
+  );
+  const projectSaveAsKeys = useShortcutKeys(
+    'project-save-as',
+    globalShortcuts[3].keys,
+  );
+  const projectImportKeys = useShortcutKeys(
+    'project-import',
+    globalShortcuts[4].keys,
+  );
+  const projectExportKeys = useShortcutKeys(
+    'project-export',
+    globalShortcuts[5].keys,
+  );
+  const projectCloseKeys = useShortcutKeys(
+    'project-close',
+    globalShortcuts[6].keys,
+  );
+
+  // Playback toggle
+  useHotkeys(
+    playbackKeys,
+    globalShortcuts[7].handler,
+    { ...globalShortcuts[7].options, enabled: !isCapturing },
+    [effectiveEndFrame, timeline.currentFrame, isCapturing],
+  );
 
   // Navigate frame prev
-  useHotkeys('left', globalShortcuts[8].handler, globalShortcuts[8].options, [
-    effectiveEndFrame,
-    timeline.currentFrame,
-  ]);
+  useHotkeys(
+    prevFrameKeys,
+    globalShortcuts[8].handler,
+    { ...globalShortcuts[8].options, enabled: !isCapturing },
+    [effectiveEndFrame, timeline.currentFrame, isCapturing],
+  );
 
   // Navigate frame next
-  useHotkeys('right', globalShortcuts[9].handler, globalShortcuts[9].options, [
-    effectiveEndFrame,
-    timeline.currentFrame,
-  ]);
+  useHotkeys(
+    nextFrameKeys,
+    globalShortcuts[9].handler,
+    { ...globalShortcuts[9].options, enabled: !isCapturing },
+    [effectiveEndFrame, timeline.currentFrame, isCapturing],
+  );
 
   // Navigate frame prev fast (Shift+Left)
   useHotkeys(
-    'shift+left',
+    prevFrameFastKeys,
     globalShortcuts[10].handler,
-    globalShortcuts[10].options,
-    [effectiveEndFrame, timeline.currentFrame, timeline.fps],
+    { ...globalShortcuts[10].options, enabled: !isCapturing },
+    [effectiveEndFrame, timeline.currentFrame, timeline.fps, isCapturing],
   );
 
   // Navigate frame next fast (Shift+Right)
   useHotkeys(
-    'shift+right',
+    nextFrameFastKeys,
     globalShortcuts[11].handler,
-    globalShortcuts[11].options,
-    [effectiveEndFrame, timeline.currentFrame, timeline.fps],
+    { ...globalShortcuts[11].options, enabled: !isCapturing },
+    [effectiveEndFrame, timeline.currentFrame, timeline.fps, isCapturing],
   );
 
   // Navigate to next edit point (Down)
-  useHotkeys('down', globalShortcuts[12].handler, globalShortcuts[12].options, [
-    effectiveEndFrame,
-    timeline.currentFrame,
-    tracks,
-  ]);
+  useHotkeys(
+    nextEditPointKeys,
+    globalShortcuts[12].handler,
+    { ...globalShortcuts[12].options, enabled: !isCapturing },
+    [effectiveEndFrame, timeline.currentFrame, tracks, isCapturing],
+  );
 
   // Navigate to previous edit point (Up)
-  useHotkeys('up', globalShortcuts[13].handler, globalShortcuts[13].options, [
-    effectiveEndFrame,
-    timeline.currentFrame,
-    tracks,
-  ]);
+  useHotkeys(
+    prevEditPointKeys,
+    globalShortcuts[13].handler,
+    { ...globalShortcuts[13].options, enabled: !isCapturing },
+    [effectiveEndFrame, timeline.currentFrame, tracks, isCapturing],
+  );
 
   // Toggle Fullscreen (F)
-  useHotkeys('f', globalShortcuts[14].handler, globalShortcuts[14].options, []);
-
-  // Project shortcuts (indices 0-6 are project shortcuts)
-  // New Project (Ctrl+N / Cmd+N)
   useHotkeys(
-    ['ctrl+n', 'meta+n'],
+    fullscreenKeys,
+    globalShortcuts[14].handler,
+    { ...globalShortcuts[14].options, enabled: !isCapturing },
+    [isCapturing],
+  );
+
+  // Project shortcuts
+  useHotkeys(
+    projectNewKeys,
     globalShortcuts[0].handler,
-    { preventDefault: true, enableOnFormTags: false },
-    [],
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
   );
 
-  // Open Project (Ctrl+O / Cmd+O)
   useHotkeys(
-    ['ctrl+o', 'meta+o'],
+    projectOpenKeys,
     globalShortcuts[1].handler,
-    { preventDefault: true, enableOnFormTags: false },
-    [],
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
   );
 
-  // Save Project (Ctrl+S / Cmd+S)
   useHotkeys(
-    ['ctrl+s', 'meta+s'],
+    projectSaveKeys,
     globalShortcuts[2].handler,
-    { preventDefault: true, enableOnFormTags: false },
-    [],
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
   );
 
-  // Save Project As (Ctrl+Shift+S / Cmd+Shift+S)
   useHotkeys(
-    ['ctrl+shift+s', 'meta+shift+s'],
+    projectSaveAsKeys,
     globalShortcuts[3].handler,
-    { preventDefault: true, enableOnFormTags: false },
-    [],
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
   );
 
-  // Import Media (Ctrl+I / Cmd+I)
   useHotkeys(
-    ['ctrl+i', 'meta+i'],
+    projectImportKeys,
     globalShortcuts[4].handler,
-    { preventDefault: true, enableOnFormTags: false },
-    [],
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
   );
 
-  // Export Video (Ctrl+E / Cmd+E)
   useHotkeys(
-    ['ctrl+e', 'meta+e'],
+    projectExportKeys,
     globalShortcuts[5].handler,
-    { preventDefault: true, enableOnFormTags: false },
-    [],
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
   );
 
-  // Close Project (Ctrl+W / Cmd+W)
   useHotkeys(
-    ['ctrl+w', 'meta+w'],
+    projectCloseKeys,
     globalShortcuts[6].handler,
-    { preventDefault: true, enableOnFormTags: false },
-    [],
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
   );
 
   return {

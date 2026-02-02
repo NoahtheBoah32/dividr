@@ -3,6 +3,10 @@ import { useMemo } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useVideoEditorStore } from '../index';
 import { createTrackShortcuts } from '../shortcuts/trackShortcuts';
+import {
+  useShortcutCaptureState,
+  useShortcutKeys,
+} from '@/frontend/features/editor/shortcuts/shortcutHooks';
 
 /**
  * Hook for track-level keyboard shortcuts
@@ -10,6 +14,7 @@ import { createTrackShortcuts } from '../shortcuts/trackShortcuts';
  */
 export const useTrackShortcuts = () => {
   const timeline = useVideoEditorStore((state) => state.timeline);
+  const isCapturing = useShortcutCaptureState();
 
   // Get the store instance for creating shortcuts
   const store = useVideoEditorStore.getState();
@@ -17,177 +22,134 @@ export const useTrackShortcuts = () => {
   // Create track shortcuts
   const trackShortcuts = useMemo(() => createTrackShortcuts(store), []);
 
-  // Register shortcuts individually to comply with React hooks rules
+  const sliceKeys = useShortcutKeys(
+    'track-slice-playhead',
+    trackShortcuts[0].keys,
+  );
+  const duplicateKeys = useShortcutKeys(
+    'track-duplicate',
+    trackShortcuts[1].keys,
+  );
+  const copyKeys = useShortcutKeys('track-copy', trackShortcuts[2].keys);
+  const cutKeys = useShortcutKeys('track-cut', trackShortcuts[3].keys);
+  const pasteKeys = useShortcutKeys('track-paste', trackShortcuts[4].keys);
+  const selectionToolKeys = useShortcutKeys(
+    'track-selection-tool',
+    trackShortcuts[5].keys,
+  );
+  const toggleSplitKeys = useShortcutKeys(
+    'track-toggle-split-mode',
+    trackShortcuts[6].keys,
+  );
+  const muteKeys = useShortcutKeys(
+    'track-toggle-mute',
+    trackShortcuts[7].keys,
+  );
+  const deleteKeys = useShortcutKeys('track-delete', trackShortcuts[8].keys);
+  const deselectKeys = useShortcutKeys(
+    'track-deselect',
+    trackShortcuts[9].keys,
+  );
+  const linkKeys = useShortcutKeys('track-link', trackShortcuts[10].keys);
+  const unlinkKeys = useShortcutKeys('track-unlink', trackShortcuts[11].keys);
 
-  // Slice at playhead (Ctrl+B)
-  useHotkeys('ctrl+b', trackShortcuts[0].handler, trackShortcuts[0].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Slice at playhead (Cmd+B)
-  useHotkeys('cmd+b', trackShortcuts[1].handler, trackShortcuts[1].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Slice at playhead (K)
+  // Slice at playhead
   useHotkeys(
-    'k',
+    sliceKeys,
+    trackShortcuts[0].handler,
+    {
+      ...trackShortcuts[0].options,
+      enabled: !isCapturing,
+    },
+    [timeline.selectedTrackIds, isCapturing],
+  );
+
+  // Duplicate track
+  useHotkeys(
+    duplicateKeys,
+    trackShortcuts[1].handler,
+    { ...trackShortcuts[1].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
+  );
+
+  // Copy track
+  useHotkeys(
+    copyKeys,
     trackShortcuts[2].handler,
-    {
-      preventDefault: true,
-      enableOnFormTags: false,
-      ...trackShortcuts[2].options,
-    },
-    [timeline.selectedTrackIds],
+    { ...trackShortcuts[2].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
   );
 
-  // Slice at playhead (Ctrl+K)
+  // Cut track
   useHotkeys(
-    'ctrl+k',
+    cutKeys,
     trackShortcuts[3].handler,
-    {
-      preventDefault: true,
-      enableOnFormTags: false,
-      ...trackShortcuts[3].options,
-    },
-    [timeline.selectedTrackIds],
+    { ...trackShortcuts[3].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
   );
 
-  // Slice at playhead (Cmd+K)
+  // Paste track
   useHotkeys(
-    'cmd+k',
+    pasteKeys,
     trackShortcuts[4].handler,
-    {
-      preventDefault: true,
-      enableOnFormTags: false,
-      ...trackShortcuts[4].options,
-    },
-    [timeline.selectedTrackIds],
+    { ...trackShortcuts[4].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
   );
 
-  // Duplicate track (Ctrl+D)
-  useHotkeys('ctrl+d', trackShortcuts[5].handler, trackShortcuts[5].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Duplicate track (Cmd+D)
-  useHotkeys('cmd+d', trackShortcuts[6].handler, trackShortcuts[6].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Copy track (Ctrl+C)
-  useHotkeys('ctrl+c', trackShortcuts[7].handler, trackShortcuts[7].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Copy track (Cmd+C)
-  useHotkeys('cmd+c', trackShortcuts[8].handler, trackShortcuts[8].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Cut track (Ctrl+X)
-  useHotkeys('ctrl+x', trackShortcuts[9].handler, trackShortcuts[9].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Cut track (Cmd+X)
-  useHotkeys('cmd+x', trackShortcuts[10].handler, trackShortcuts[10].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Paste track (Ctrl+V)
-  useHotkeys('ctrl+v', trackShortcuts[11].handler, trackShortcuts[11].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Paste track (Cmd+V)
-  useHotkeys('cmd+v', trackShortcuts[12].handler, trackShortcuts[12].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Selection tool (V key)
+  // Selection tool
   useHotkeys(
-    'v',
-    trackShortcuts[13].handler,
-    {
-      preventDefault: true,
-      enableOnFormTags: false,
-      ...trackShortcuts[13].options,
-    },
-    [timeline.isSplitModeActive],
+    selectionToolKeys,
+    trackShortcuts[5].handler,
+    { ...trackShortcuts[5].options, enabled: !isCapturing },
+    [timeline.isSplitModeActive, isCapturing],
   );
 
-  // Toggle split mode (B key)
+  // Toggle split mode
   useHotkeys(
-    'b',
-    trackShortcuts[14].handler,
-    {
-      preventDefault: true,
-      enableOnFormTags: false,
-      ...trackShortcuts[14].options,
-    },
-    [timeline.isSplitModeActive],
-  );
-
-  // Toggle split mode (C key)
-  useHotkeys(
-    'c',
-    trackShortcuts[15].handler,
-    {
-      preventDefault: true,
-      enableOnFormTags: false,
-      ...trackShortcuts[15].options,
-    },
-    [timeline.isSplitModeActive],
+    toggleSplitKeys,
+    trackShortcuts[6].handler,
+    { ...trackShortcuts[6].options, enabled: !isCapturing },
+    [timeline.isSplitModeActive, isCapturing],
   );
 
   // Toggle mute
-  useHotkeys('m', trackShortcuts[16].handler, trackShortcuts[16].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Delete track (Del)
-  useHotkeys('del', trackShortcuts[17].handler, trackShortcuts[17].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Delete track (Backspace)
   useHotkeys(
-    'backspace',
-    trackShortcuts[18].handler,
-    trackShortcuts[18].options,
-    [timeline.selectedTrackIds],
+    muteKeys,
+    trackShortcuts[7].handler,
+    { ...trackShortcuts[7].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
+  );
+
+  // Delete tracks
+  useHotkeys(
+    deleteKeys,
+    trackShortcuts[8].handler,
+    { ...trackShortcuts[8].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
   );
 
   // Deselect all
-  useHotkeys('escape', trackShortcuts[19].handler, trackShortcuts[19].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Link clips (Ctrl+G)
-  useHotkeys('ctrl+g', trackShortcuts[20].handler, trackShortcuts[20].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Link clips (Cmd+G)
-  useHotkeys('cmd+g', trackShortcuts[21].handler, trackShortcuts[21].options, [
-    timeline.selectedTrackIds,
-  ]);
-
-  // Unlink clips (Ctrl+Shift+G)
   useHotkeys(
-    'ctrl+shift+g',
-    trackShortcuts[22].handler,
-    trackShortcuts[22].options,
-    [timeline.selectedTrackIds],
+    deselectKeys,
+    trackShortcuts[9].handler,
+    { ...trackShortcuts[9].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
   );
 
-  // Unlink clips (Cmd+Shift+G)
+  // Link clips
   useHotkeys(
-    'cmd+shift+g',
-    trackShortcuts[23].handler,
-    trackShortcuts[23].options,
-    [timeline.selectedTrackIds],
+    linkKeys,
+    trackShortcuts[10].handler,
+    { ...trackShortcuts[10].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
+  );
+
+  // Unlink clips
+  useHotkeys(
+    unlinkKeys,
+    trackShortcuts[11].handler,
+    { ...trackShortcuts[11].options, enabled: !isCapturing },
+    [timeline.selectedTrackIds, isCapturing],
   );
 
   return {

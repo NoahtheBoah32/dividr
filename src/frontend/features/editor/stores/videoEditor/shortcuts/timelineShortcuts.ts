@@ -108,27 +108,8 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     },
   },
   {
-    id: 'timeline-select-all-ctrl',
-    keys: 'ctrl+a',
-    description: 'Select All Tracks',
-    category: 'Timeline Selection',
-    scope: 'timeline',
-    handler: (e) => {
-      e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
-      if (freshState.render?.isRendering) return;
-      const allTrackIds = freshState.tracks.map((track: any) => track.id);
-      freshState.setSelectedTracks(allTrackIds);
-    },
-    options: {
-      preventDefault: true,
-      enableOnFormTags: false,
-    },
-  },
-  {
-    id: 'timeline-select-all-cmd',
-    keys: 'cmd+a',
+    id: 'timeline-select-all',
+    keys: ['ctrl+a', 'cmd+a'],
     description: 'Select All Tracks',
     category: 'Timeline Selection',
     scope: 'timeline',
