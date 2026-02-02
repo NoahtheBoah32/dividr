@@ -157,7 +157,10 @@ export function generateSubtitleContent(
           const fontWeight = trackStyle?.isBold ? '700' : '400';
           const fontStyle = trackStyle?.isItalic ? 'italic' : 'normal';
           const letterSpacing = trackStyle?.letterSpacing || 0;
-          const scale = track.subtitleTransform?.scale || 1;
+          const scale =
+            track.subtitleTransform?.scale ||
+            textStyle.globalSubtitlePosition?.scale ||
+            1;
 
           // applyTextWrapping handles both normalization and width-based wrapping
           const cleanText = applyTextWrapping(
