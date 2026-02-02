@@ -32,23 +32,18 @@ export function buildArnnDenCommand(
   outputFile: string,
   modelPath?: string,
 ): string[] {
-  // Use provided model path or default to std.rnnn in ffmpeg-model folder
   const modelFilePath = modelPath || getDefaultModelPath();
 
-  // Fix path for FFmpeg filter on Windows
-  // 1. Replace backslashes with forward slashes
-  // 2. Escape colon in drive letter (e.g. C:/ -> C\:/)
+  // Escape path for FFmpeg filter on Windows (backslashes -> forward slashes, escape drive colon)
   const escapedModelPath = modelFilePath
     .replace(/\\/g, '/')
     .replace(/^([a-zA-Z]):/, '$1\\:');
-
-  // Also enable single-quote escaping if path contains spaces (though spawn usually handles args,
-  // the filter string is parsed internally by ffmpeg)
-  // For simplicity, we just rely on standard path sanitization above which usually works.
-  // Using single quotes inside the filter string is safer: arnndn=m='PATH'
   const finalModelPath = `'${escapedModelPath}'`;
 
-  return ['-i', inputFile, '-af', `arnndn=m=${finalModelPath}`, outputFile];
+  // RNNoise requires: 48kHz, float planar (fltp), mono input
+  const audioFilter = `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono,arnndn=m=${finalModelPath},aresample=resampler=soxr`;
+
+  return ['-i', inputFile, '-af', audioFilter, '-ac', '2', outputFile];
 }
 
 export function ffmpegDenoise(
