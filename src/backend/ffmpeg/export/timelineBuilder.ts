@@ -15,9 +15,9 @@ const VIDEO_DEFAULTS = {
 const GAP_MARKER = '__GAP__' as const;
 
 const FILE_EXTENSIONS = {
-  VIDEO: /\.(mp4|mov|mkv|avi|webm)$/i,
+  VIDEO: /\.(mp4|mov|mkv|avi|webm|gif)$/i,
   AUDIO: /\.(mp3|wav|aac|flac)$/i,
-  IMAGE: /\.(png|jpg|jpeg|gif|bmp|tiff|webp)$/i,
+  IMAGE: /\.(png|jpg|jpeg|bmp|tiff|webp)$/i,
 } as const;
 
 /**

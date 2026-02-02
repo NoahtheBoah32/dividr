@@ -11,7 +11,7 @@ import {
   VideoProcessingContext,
 } from '../schema/ffmpegConfig';
 import { getFontDirectoriesForFamilies } from '../subtitles/fontMapper';
-import { generateDrawtextFilter } from '../subtitles/textLayers';
+import { generateDrawtextFilters } from '../subtitles/textLayers';
 import { findFileIndexForSegment, processAudioTimeline } from './audioHandling';
 import type { HardwareAcceleration } from './hardwareAccelerationDetector';
 import {
@@ -37,9 +37,9 @@ const VIDEO_DEFAULTS = {
 const GAP_MARKER = '__GAP__' as const;
 
 const FILE_EXTENSIONS = {
-  VIDEO: /\.(mp4|mov|mkv|avi|webm)$/i,
+  VIDEO: /\.(mp4|mov|mkv|avi|webm|gif)$/i,
   AUDIO: /\.(mp3|wav|aac|flac)$/i,
-  IMAGE: /\.(png|jpg|jpeg|gif|bmp|tiff|webp)$/i,
+  IMAGE: /\.(png|jpg|jpeg|bmp|tiff|webp)$/i,
 } as const;
 
 /**
@@ -538,6 +538,26 @@ export function processLayerSegments(
 
         const isVideoFile = FILE_EXTENSIONS.VIDEO.test(trackInfo.path);
         const isImageFile = FILE_EXTENSIONS.IMAGE.test(trackInfo.path);
+        const isGifFile = /\.gif$/i.test(trackInfo.path);
+
+        // Loop GIFs to fill the entire timeline segment duration
+        // GIFs need to loop continuously for the duration they're present on the timeline
+        // Preserve original GIF frame rate/timing - don't force FPS conversion
+        if (isGifFile && segment.duration) {
+          const timelineDuration = segment.duration;
+          // Loop the GIF to fill the timeline duration
+          // loop=loop=-1 creates infinite loop, then trim to exact duration needed
+          // size=32767 allows looping up to 32767 frames (effectively infinite for most GIFs)
+          // Don't use setpts - preserve original GIF timing/frame rate
+          const loopedRef = `[${uniqueIndex}_gif_looped]`;
+          videoFilters.push(
+            `${videoStreamRef}loop=loop=-1:size=32767:start=0,trim=duration=${timelineDuration}${loopedRef}`,
+          );
+          videoStreamRef = loopedRef;
+          console.log(
+            `🔄 Looping GIF for timeline duration: ${timelineDuration.toFixed(3)}s (preserving original frame rate)`,
+          );
+        }
 
         // Check if this video has a non-zero transform position
         const hasTransform = isVideoFile && hasNonZeroTransform(trackInfo);
@@ -546,97 +566,178 @@ export function processLayerSegments(
           // Video has non-zero transform
           if (isBottomLayer) {
             // Bottom layer - always use overlay on black background
-            const duration = trackInfo.duration || segment.duration || 1;
-            videoStreamRef = createBlackBackgroundWithOverlay(
-              videoStreamRef,
-              trackInfo,
-              targetDimensions,
-              uniqueIndex,
-              videoFilters,
-              duration,
-              targetFps,
-              hwAccel,
-              createGapVideoFilters,
-            );
-            console.log(
-              `📐 Layer ${layerIndex}: Created black background overlay for video with transform (base layer)`,
-            );
+            if (isGifFile) {
+              console.log(
+                `📐 Layer ${layerIndex}: GIF file with transform detected - preserving original size (no scaling applied)`,
+              );
+            } else {
+              const duration = trackInfo.duration || segment.duration || 1;
+              videoStreamRef = createBlackBackgroundWithOverlay(
+                videoStreamRef,
+                trackInfo,
+                targetDimensions,
+                uniqueIndex,
+                videoFilters,
+                duration,
+                targetFps,
+                hwAccel,
+                createGapVideoFilters,
+              );
+              console.log(
+                `📐 Layer ${layerIndex}: Created black background overlay for video with transform (base layer)`,
+              );
+            }
           } else {
             // Upper layer - don't create black background, just scale/position the video
             // The video will be transparent where there's no content, overlaying on the bottom layer
 
-            // Step 1: Normalize to target dimensions if needed
-            const sourceWidth = trackInfo.width || targetDimensions.width;
-            const sourceHeight = trackInfo.height || targetDimensions.height;
-            const needsNormalization =
-              sourceWidth !== targetDimensions.width ||
-              sourceHeight !== targetDimensions.height;
-
-            let normalizedVideoRef = videoStreamRef;
-            if (needsNormalization) {
-              normalizedVideoRef = `[${uniqueIndex}_normalized]`;
-              const scaleFilter = buildScaleFilter(
-                videoStreamRef,
-                normalizedVideoRef,
-                targetDimensions.width,
-                targetDimensions.height,
-                hwAccel,
-                { forceOriginalAspectRatio: 'decrease', pad: false }, // No padding for upper layers
-              );
-              videoFilters.push(scaleFilter);
+            // Skip scaling for GIF files - preserve original size
+            if (isGifFile) {
               console.log(
-                `📐 Layer ${layerIndex}: Normalized video from ${sourceWidth}x${sourceHeight} to fit ${targetDimensions.width}x${targetDimensions.height}`,
+                `📐 Layer ${layerIndex}: GIF file detected - preserving original size (no scaling applied)`,
               );
-            }
-
-            // Step 2: Apply transform scale factor
-            const transformScale = trackInfo.videoTransform?.scale ?? 1.0;
-            const scaledWidth = Math.round(
-              targetDimensions.width * transformScale,
-            );
-            const scaledHeight = Math.round(
-              targetDimensions.height * transformScale,
-            );
-
-            if (transformScale !== 1.0) {
-              const scaleRef = `[${uniqueIndex}_transform_scaled]`;
-              const scaleFilter = buildScaleFilter(
-                normalizedVideoRef,
-                scaleRef,
-                scaledWidth,
-                scaledHeight,
-                hwAccel,
-                { forceOriginalAspectRatio: 'decrease', pad: false }, // No padding for upper layers
-              );
-              videoFilters.push(scaleFilter);
-              videoStreamRef = scaleRef;
-              console.log(
-                `📐 Layer ${layerIndex}: Applied transform scale ${transformScale.toFixed(2)} (${targetDimensions.width}x${targetDimensions.height} → ${scaledWidth}x${scaledHeight})`,
-              );
+              // Transform positioning will be applied when overlaying this layer on the base layer
             } else {
-              videoStreamRef = normalizedVideoRef;
-              console.log(
-                `📐 Layer ${layerIndex}: No transform scale needed (scale = 1.0)`,
+              // Step 1: Normalize to target dimensions if needed
+              const sourceWidth = trackInfo.width || targetDimensions.width;
+              const sourceHeight = trackInfo.height || targetDimensions.height;
+              const needsNormalization =
+                sourceWidth !== targetDimensions.width ||
+                sourceHeight !== targetDimensions.height;
+
+              let normalizedVideoRef = videoStreamRef;
+              if (needsNormalization) {
+                normalizedVideoRef = `[${uniqueIndex}_normalized]`;
+                const scaleFilter = buildScaleFilter(
+                  videoStreamRef,
+                  normalizedVideoRef,
+                  targetDimensions.width,
+                  targetDimensions.height,
+                  hwAccel,
+                  { forceOriginalAspectRatio: 'decrease', pad: false }, // No padding for upper layers
+                );
+                videoFilters.push(scaleFilter);
+                console.log(
+                  `📐 Layer ${layerIndex}: Normalized video from ${sourceWidth}x${sourceHeight} to fit ${targetDimensions.width}x${targetDimensions.height}`,
+                );
+              }
+
+              // Step 2: Apply transform scale factor
+              const transformScale = trackInfo.videoTransform?.scale ?? 1.0;
+              const scaledWidth = Math.round(
+                targetDimensions.width * transformScale,
               );
+              const scaledHeight = Math.round(
+                targetDimensions.height * transformScale,
+              );
+
+              if (transformScale !== 1.0) {
+                const scaleRef = `[${uniqueIndex}_transform_scaled]`;
+                const scaleFilter = buildScaleFilter(
+                  normalizedVideoRef,
+                  scaleRef,
+                  scaledWidth,
+                  scaledHeight,
+                  hwAccel,
+                  { forceOriginalAspectRatio: 'decrease', pad: false }, // No padding for upper layers
+                );
+                videoFilters.push(scaleFilter);
+                videoStreamRef = scaleRef;
+                console.log(
+                  `📐 Layer ${layerIndex}: Applied transform scale ${transformScale.toFixed(2)} (${targetDimensions.width}x${targetDimensions.height} → ${scaledWidth}x${scaledHeight})`,
+                );
+              } else {
+                videoStreamRef = normalizedVideoRef;
+                console.log(
+                  `📐 Layer ${layerIndex}: No transform scale needed (scale = 1.0)`,
+                );
+              }
             }
             // Transform positioning will be applied when overlaying this layer on the base layer
           }
         } else {
           // No transform - use standard scaling logic
-          // This scales video segments to match target dimensions (e.g., 608x1080 → 1080x1920)
-          // before any additional processing
-          const needsScaling =
-            (isVideoFile || isImageFile) &&
-            trackInfo.width &&
-            trackInfo.height &&
-            (trackInfo.width !== targetDimensions.width ||
-              trackInfo.height !== targetDimensions.height);
+          // Base layer: scale to match target dimensions (e.g., 608x1080 → 1080x1920)
+          // Upper layers (overlays): preserve original size unless larger than target dimensions
+          // GIF files: preserve original size and overlay on black background (for bottom layer)
+          if (isGifFile) {
+            if (isBottomLayer) {
+              // GIF on bottom layer - create black background and overlay GIF centered on top
+              // This preserves the GIF's original size while ensuring correct dimensions for concat
+              const gifDuration = trackInfo.duration || segment.duration || 5;
+              const blackBgRef = `[${uniqueIndex}_gif_bg]`;
+              const gifOverlayRef = `[${uniqueIndex}_gif_overlay]`;
 
-          if (needsScaling) {
-            const scaleRef = `[${uniqueIndex}_scaled]`;
-            if (isImageFile) {
-              // For images, scale without padding to preserve transparency
-              // Images will be overlaid at their natural size, centered on the video
+              // Create black background at target dimensions
+              videoFilters.push(
+                `color=black:size=${targetDimensions.width}x${targetDimensions.height}:duration=${gifDuration}:rate=${targetFps},setpts=PTS-STARTPTS${blackBgRef}`,
+              );
+
+              // Overlay GIF centered on black background
+              videoFilters.push(
+                `${blackBgRef}${videoStreamRef}overlay=(W-w)/2:(H-h)/2:shortest=1${gifOverlayRef}`,
+              );
+
+              videoStreamRef = gifOverlayRef;
+            }
+          } else if (isBottomLayer) {
+            // Bottom layer - scale to match target dimensions
+            const needsScaling =
+              (isVideoFile || isImageFile) &&
+              trackInfo.width &&
+              trackInfo.height &&
+              (trackInfo.width !== targetDimensions.width ||
+                trackInfo.height !== targetDimensions.height);
+
+            if (needsScaling) {
+              const scaleRef = `[${uniqueIndex}_scaled]`;
+              if (isImageFile) {
+                // For images, scale without padding to preserve transparency
+                const scaleFilter = buildScaleFilter(
+                  videoStreamRef,
+                  scaleRef,
+                  targetDimensions.width,
+                  targetDimensions.height,
+                  hwAccel,
+                  { forceOriginalAspectRatio: 'decrease', pad: false },
+                );
+                videoFilters.push(scaleFilter);
+                console.log(
+                  `📐 Layer ${layerIndex}: Scaled image from ${trackInfo.width}x${trackInfo.height} to fit ${targetDimensions.width}x${targetDimensions.height} (preserving transparency)`,
+                );
+              } else {
+                // For videos: bottom layer gets black padding
+                const scaleFilter = buildScaleFilter(
+                  videoStreamRef,
+                  scaleRef,
+                  targetDimensions.width,
+                  targetDimensions.height,
+                  hwAccel,
+                  {
+                    forceOriginalAspectRatio: 'decrease' as const,
+                    pad: true,
+                    padColor: 'black',
+                  },
+                );
+                videoFilters.push(scaleFilter);
+                console.log(
+                  `📐 Layer ${layerIndex}: Scaled video segment from ${trackInfo.width}x${trackInfo.height} to ${targetDimensions.width}x${targetDimensions.height} with black padding`,
+                );
+              }
+              videoStreamRef = scaleRef;
+            }
+          } else {
+            // Upper layer (overlay) - preserve original size unless it exceeds target dimensions
+            // This allows small overlays to maintain their natural size
+            const sourceWidth = trackInfo.width || targetDimensions.width;
+            const sourceHeight = trackInfo.height || targetDimensions.height;
+            const exceedsTarget =
+              sourceWidth > targetDimensions.width ||
+              sourceHeight > targetDimensions.height;
+
+            if (exceedsTarget) {
+              // Only scale down if overlay is larger than target dimensions
+              const scaleRef = `[${uniqueIndex}_scaled]`;
               const scaleFilter = buildScaleFilter(
                 videoStreamRef,
                 scaleRef,
@@ -647,36 +748,15 @@ export function processLayerSegments(
               );
               videoFilters.push(scaleFilter);
               console.log(
-                `📐 Layer ${layerIndex}: Scaled image from ${trackInfo.width}x${trackInfo.height} to fit ${targetDimensions.width}x${targetDimensions.height} (preserving transparency)`,
+                `📐 Layer ${layerIndex}: Scaled overlay down from ${sourceWidth}x${sourceHeight} to fit within ${targetDimensions.width}x${targetDimensions.height} (preserving original size if smaller)`,
               );
+              videoStreamRef = scaleRef;
             } else {
-              // For videos: bottom layer gets black padding, upper layers get no padding (transparent)
-              const padOption: {
-                forceOriginalAspectRatio: 'decrease' | 'increase';
-                pad: boolean;
-                padColor?: string;
-              } = isBottomLayer
-                ? {
-                    forceOriginalAspectRatio: 'decrease' as const,
-                    pad: true,
-                    padColor: 'black',
-                  }
-                : { forceOriginalAspectRatio: 'decrease' as const, pad: false };
-
-              const scaleFilter = buildScaleFilter(
-                videoStreamRef,
-                scaleRef,
-                targetDimensions.width,
-                targetDimensions.height,
-                hwAccel,
-                padOption,
-              );
-              videoFilters.push(scaleFilter);
+              // Preserve original size for overlays smaller than target dimensions
               console.log(
-                `📐 Layer ${layerIndex}: Scaled video segment from ${trackInfo.width}x${trackInfo.height} to ${targetDimensions.width}x${targetDimensions.height} ${isBottomLayer ? 'with black padding' : 'without padding (upper layer)'}`,
+                `📐 Layer ${layerIndex}: Preserving original overlay size ${sourceWidth}x${sourceHeight} (smaller than target ${targetDimensions.width}x${targetDimensions.height})`,
               );
             }
-            videoStreamRef = scaleRef;
           }
         }
 
@@ -1125,11 +1205,14 @@ export function buildSeparateTimelineFilterComplex(
   const bottomMostVideoImageLayer = findBottomMostVideoImageLayer(sortedLayers);
 
   // ============================================
-  // PHASE 1: Prepare all video layers first
+  // PHASE 1: Prepare all video/image layers first
   // ============================================
-  console.log('\n📋 PHASE 1: Preparing all video layers...\n');
+  console.log('\n📋 PHASE 1: Preparing all video/image layers...\n');
   const layerLabels = new Map<number, string>(); // Maps layer number to prepared layer label
+  const hasVideoLayers = videoLayers.size > 0;
+  const hasImageLayers = imageLayers.size > 0;
 
+  // Prepare video layers
   for (const [layerNum, track] of sortedLayers) {
     if (track.videoTimeline) {
       console.log(`   📹 Preparing video layer ${layerNum}`);
@@ -1192,6 +1275,79 @@ export function buildSeparateTimelineFilterComplex(
     }
   }
 
+  // Prepare image layers as base layers when no video inputs exist
+  if (!hasVideoLayers && hasImageLayers) {
+    for (const [layerNum, track] of sortedLayers) {
+      if (track.imageSegments && track.imageSegments.length > 0) {
+        console.log(`   🖼️ Preparing image layer ${layerNum} as base layer`);
+
+        const isBottomLayer = layerNum === bottomMostVideoImageLayer;
+        const imageTimeline: ProcessedTimeline = {
+          segments: track.imageSegments,
+          totalDuration: Math.max(
+            ...track.imageSegments.map((s) => s.endTime),
+            0,
+          ),
+          timelineType: 'video',
+        };
+
+        const concatInputs = processLayerSegments(
+          imageTimeline,
+          layerNum,
+          'image',
+          categorizedInputs,
+          job,
+          targetDimensions,
+          targetFps,
+          videoFilters,
+          hwAccel,
+          createGapVideoFilters,
+          createVideoTrimFilters,
+          createFpsNormalizationFilters,
+          createSarNormalizationFilters,
+          isBottomLayer,
+        );
+
+        // Build concatenation filter for this image layer
+        if (concatInputs.length > 0) {
+          let layerLabel = `layer_${layerNum}`;
+          let layerLabelBeforePostProcessing = `layer_${layerNum}_raw`;
+
+          if (concatInputs.length === 1) {
+            const inputRef = concatInputs[0].replace('[', '').replace(']', '');
+            layerLabelBeforePostProcessing = inputRef;
+          } else {
+            videoFilters.push(
+              `${concatInputs.join('')}concat=n=${concatInputs.length}:v=1:a=0[${layerLabelBeforePostProcessing}]`,
+            );
+          }
+
+          let postProcessedLabel = layerLabelBeforePostProcessing;
+
+          // Apply FPS normalization if needed
+          if (job.operations.normalizeFrameRate) {
+            const fpsLabel = `layer_${layerNum}_fps`;
+            videoFilters.push(
+              `[${postProcessedLabel}]fps=${targetFps}:start_time=0[${fpsLabel}]`,
+            );
+            postProcessedLabel = fpsLabel;
+          }
+
+          if (postProcessedLabel !== layerLabel) {
+            videoFilters.push(`[${postProcessedLabel}]copy[${layerLabel}]`);
+          } else {
+            layerLabel = postProcessedLabel;
+          }
+
+          layerLabels.set(layerNum, layerLabel);
+          console.log(
+            `   ✅ Prepared image layer ${layerNum} -> [${layerLabel}]`,
+          );
+        }
+      }
+    }
+  }
+
   // Pad overlay video layers with black frames ONLY at the start (not at the end)
   // This ensures videos don't start playing before their overlay is activated
   // The overlay enable expression will handle stopping the overlay when it should end
@@ -1230,7 +1386,7 @@ export function buildSeparateTimelineFilterComplex(
     }
   }
 
-  // Ensure Layer 0 (base layer) extends to total video duration by padding with black clips
+  // Ensure base layer extends to total video duration by padding with black clips
   // This ensures the base layer continues showing after overlays end
   if (
     bottomMostVideoImageLayer !== null &&
@@ -1244,9 +1400,12 @@ export function buildSeparateTimelineFilterComplex(
       ([num]) => num === bottomMostVideoImageLayer,
     );
     const baseLayerTimeline = baseLayerEntry?.[1]?.videoTimeline;
+    const baseLayerImageSegments = baseLayerEntry?.[1]?.imageSegments;
 
+    // Get base layer duration from video timeline or image segments
+    let baseLayerDuration = 0;
     if (baseLayerTimeline) {
-      const baseLayerDuration =
+      baseLayerDuration =
         baseLayerTimeline.segments.length > 0
           ? Math.max(
               ...baseLayerTimeline.segments.map(
@@ -1254,34 +1413,39 @@ export function buildSeparateTimelineFilterComplex(
               ),
             )
           : 0;
+    } else if (baseLayerImageSegments) {
+      baseLayerDuration =
+        baseLayerImageSegments.length > 0
+          ? Math.max(...baseLayerImageSegments.map((s) => s.endTime))
+          : 0;
+    }
 
-      if (baseLayerDuration < totalVideoDuration) {
-        const gapDuration = totalVideoDuration - baseLayerDuration;
-        console.log(
-          `\n   🕳️ Padding Layer ${bottomMostVideoImageLayer} (base layer) with black clip: ${baseLayerDuration.toFixed(3)}s -> ${totalVideoDuration.toFixed(3)}s (gap: ${gapDuration.toFixed(3)}s)`,
-        );
+    if (baseLayerDuration < totalVideoDuration) {
+      const gapDuration = totalVideoDuration - baseLayerDuration;
+      console.log(
+        `\n   🕳️ Padding Layer ${bottomMostVideoImageLayer} (base layer) with black clip: ${baseLayerDuration.toFixed(3)}s -> ${totalVideoDuration.toFixed(3)}s (gap: ${gapDuration.toFixed(3)}s)`,
+      );
 
-        // Create a black gap clip to extend the base layer
-        const gapResult = createGapVideoFilters(
-          99999, // High index to avoid conflicts
-          gapDuration,
-          targetFps,
-          targetDimensions,
-        );
-        videoFilters.push(...gapResult.filters);
+      // Create a black gap clip to extend the base layer
+      const gapResult = createGapVideoFilters(
+        99999, // High index to avoid conflicts
+        gapDuration,
+        targetFps,
+        targetDimensions,
+      );
+      videoFilters.push(...gapResult.filters);
 
-        // Concatenate the existing base layer with the gap clip
-        const paddedBaseLabel = `layer_${bottomMostVideoImageLayer}_padded`;
-        videoFilters.push(
-          `[${baseLayerLabel}][${gapResult.filterRef.replace('[', '').replace(']', '')}]concat=n=2:v=1:a=0[${paddedBaseLabel}]`,
-        );
+      // Concatenate the existing base layer with the gap clip
+      const paddedBaseLabel = `layer_${bottomMostVideoImageLayer}_padded`;
+      videoFilters.push(
+        `[${baseLayerLabel}][${gapResult.filterRef.replace('[', '').replace(']', '')}]concat=n=2:v=1:a=0[${paddedBaseLabel}]`,
+      );
 
-        // Update the layer label to use the padded version
-        layerLabels.set(bottomMostVideoImageLayer, paddedBaseLabel);
-        console.log(
-          `   ✅ Padded base layer ${bottomMostVideoImageLayer} -> [${paddedBaseLabel}] (extends to ${totalVideoDuration.toFixed(3)}s)`,
-        );
-      }
+      // Update the layer label to use the padded version
+      layerLabels.set(bottomMostVideoImageLayer, paddedBaseLabel);
+      console.log(
+        `   ✅ Padded base layer ${bottomMostVideoImageLayer} -> [${paddedBaseLabel}] (extends to ${totalVideoDuration.toFixed(3)}s)`,
+      );
     }
   }
 
@@ -1295,6 +1459,9 @@ export function buildSeparateTimelineFilterComplex(
   overlayOrder.forEach((overlay) => {
     if (overlay.type === 'video' && overlay.videoTimeline) {
       overlay.layerLabel = layerLabels.get(overlay.layer);
+    } else if (overlay.type === 'image' && !hasVideoLayers && hasImageLayers) {
+      // Image layers prepared as base layers when no video inputs exist
+      overlay.layerLabel = layerLabels.get(overlay.layer);
     }
   });
 
@@ -1303,9 +1470,11 @@ export function buildSeparateTimelineFilterComplex(
     const info =
       overlay.type === 'video'
         ? `video layer [${overlay.layerLabel}]`
-        : overlay.type === 'image'
-          ? `image segment`
-          : `text segment`;
+        : overlay.type === 'image' && overlay.layerLabel
+          ? `image layer [${overlay.layerLabel}]`
+          : overlay.type === 'image'
+            ? `image segment`
+            : `text segment`;
     console.log(
       `   ${idx + 1}. Layer ${overlay.layer} (${overlay.type}): ${info}`,
     );
@@ -1318,9 +1487,13 @@ export function buildSeparateTimelineFilterComplex(
   let currentCompositeLabel = '';
 
   // Check if we need a base layer (black background) before processing overlays
-  // This is needed if the first overlay is not a video layer
+  // This is needed if the first overlay is not a video/image layer prepared as base
   const firstOverlay = overlayOrder[0];
-  if (firstOverlay && firstOverlay.type !== 'video') {
+  if (
+    firstOverlay &&
+    firstOverlay.type !== 'video' &&
+    !(firstOverlay.type === 'image' && firstOverlay.layerLabel)
+  ) {
     // Create a black base layer first
     videoFilters.push(
       `color=black:size=${targetDimensions.width}x${targetDimensions.height}:duration=${totalVideoDuration}:rate=${targetFps},setsar=1[video_base]`,
@@ -1339,29 +1512,30 @@ export function buildSeparateTimelineFilterComplex(
       `\n🎬 Processing overlay ${i + 1}/${overlayOrder.length}: Layer ${overlay.layer} (${overlay.type})`,
     );
 
-    if (overlay.type === 'video') {
-      // Video overlay
+    if (
+      overlay.type === 'video' ||
+      (overlay.type === 'image' && overlay.layerLabel)
+    ) {
+      // Video overlay or image layer prepared as base layer
       if (!overlay.layerLabel) {
         console.warn(
-          `⚠️ No layer label for video layer ${overlay.layer}, skipping`,
+          `⚠️ No layer label for ${overlay.type} layer ${overlay.layer}, skipping`,
         );
         continue;
       }
 
-      const videoTimeline = overlay.videoTimeline;
-      if (!videoTimeline) {
-        continue;
-      }
       const layerLabel = overlay.layerLabel;
+      const videoTimeline =
+        overlay.type === 'video' ? overlay.videoTimeline : undefined;
 
-      // Determine if this is the base layer (first video layer)
+      // Determine if this is the base layer (first video/image layer)
       if (!currentCompositeLabel) {
-        // This is the first video layer - it becomes the base
+        // This is the first video/image layer - it becomes the base
         currentCompositeLabel = layerLabel;
         console.log(
-          `   ✅ Layer ${overlay.layer} is base layer -> [${currentCompositeLabel}]`,
+          `   ✅ Layer ${overlay.layer} (${overlay.type}) is base layer -> [${currentCompositeLabel}]`,
         );
-      } else {
+      } else if (overlay.type === 'video' && videoTimeline) {
         // Overlay this video layer on top of current composite
         const overlayStartTime =
           videoTimeline.segments.length > 0
@@ -1448,8 +1622,8 @@ export function buildSeparateTimelineFilterComplex(
           `   ✅ Overlaid video layer ${overlay.layer} on [${currentCompositeLabel}] (enabled from ${startTime.toFixed(2)}s to ${endTime.toFixed(2)}s)`,
         );
       }
-    } else if (overlay.type === 'image') {
-      // Image overlay
+    } else if (overlay.type === 'image' && !overlay.layerLabel) {
+      // Image overlay (not prepared as base layer - processed as individual overlay)
       const imageSegment = overlay.segment as ProcessedTimelineSegment;
       const { input: trackInfo, originalIndex, duration } = imageSegment;
       const startTime = Math.round(imageSegment.startTime * 1000) / 1000;
@@ -1485,20 +1659,46 @@ export function buildSeparateTimelineFilterComplex(
         ? 'video_composite'
         : `composite_${overlay.layer}_img_${originalIndex}`;
 
-      // Prepare image
+      // Prepare image: loop to generate frames for duration, pad at start to align with timeline
+      // Static images need to be looped to generate multiple frames - trim alone only gives one frame
+      // The overlay enable expression controls when it's visible, but the stream
+      // must have content available at those times
+      const imageDuration = duration;
+
+      // Loop the image to generate frames at target FPS for the image duration
+      // loop=loop=-1:size=1:start=0 creates infinite loop from single frame
+      // setpts=N/(targetFps*TB) generates frames at target FPS
+      // trim=duration=X cuts to exact image duration needed
+      const loopFilter = `loop=loop=-1:size=1:start=0,setpts=N/(${targetFps}*TB),trim=duration=${imageDuration}`;
       const tpadFilter =
         startTime > 0
           ? `,tpad=start_duration=${startTime}:start_mode=add:color=black@0.0`
           : '';
       videoFilters.push(
-        `${imageInputRef}trim=duration=${duration},setsar=1${tpadFilter}${imagePreparedRef}`,
+        `${imageInputRef}${loopFilter},setsar=1${tpadFilter}${imagePreparedRef}`,
+      );
+
+      console.log(
+        `📐 Image: duration=${imageDuration.toFixed(3)}s, enabled ${startTime.toFixed(3)}s-${endTime.toFixed(3)}s`,
       );
 
       // Apply scaling if needed
       let currentImageRef = imagePreparedRef;
-      if (transform.scale !== 1.0) {
-        const scaledWidth = Math.round(transform.width * transform.scale);
-        const scaledHeight = Math.round(transform.height * transform.scale);
+      const sourceWidth =
+        trackInfo.width || transform.width || targetDimensions.width;
+      const sourceHeight =
+        trackInfo.height || transform.height || targetDimensions.height;
+      const targetWidth = transform.width || sourceWidth;
+      const targetHeight = transform.height || sourceHeight;
+      const scaledWidth = Math.round(targetWidth * (transform.scale || 1.0));
+      const scaledHeight = Math.round(targetHeight * (transform.scale || 1.0));
+
+      const needsScaling =
+        transform.scale !== 1.0 ||
+        sourceWidth !== scaledWidth ||
+        sourceHeight !== scaledHeight;
+
+      if (needsScaling) {
         const scaleFilter = buildScaleFilter(
           imagePreparedRef,
           imageScaledRef,
@@ -1509,6 +1709,9 @@ export function buildSeparateTimelineFilterComplex(
         );
         videoFilters.push(scaleFilter);
         currentImageRef = imageScaledRef;
+        console.log(
+          `📐 Image scaling: ${sourceWidth}x${sourceHeight} → ${scaledWidth}x${scaledHeight} (scale: ${transform.scale || 1.0})`,
+        );
       }
 
       // Apply rotation if needed
@@ -1531,16 +1734,17 @@ export function buildSeparateTimelineFilterComplex(
       }
 
       // Calculate overlay position
+      // Use proper addition/subtraction to ensure FFmpeg can parse the expression correctly
       const overlayX =
         transform.x >= 0
           ? `(W-w)/2+${transform.x}*W/2`
-          : `(W-w)/2${transform.x}*W/2`;
+          : `(W-w)/2-${Math.abs(transform.x)}*W/2`; // Use Math.abs to ensure proper subtraction
       const overlayY =
         transform.y >= 0
           ? `(H-h)/2+${transform.y}*H/2`
-          : `(H-h)/2${transform.y}*H/2`;
+          : `(H-h)/2-${Math.abs(transform.y)}*H/2`; // Use Math.abs to ensure proper subtraction
 
-      // Overlay the image
+      // Overlay image: enable expression controls visibility based on timeline
       const overlayFilter = buildOverlayFilter(
         `[${currentCompositeLabel}]`,
         currentImageRef,
@@ -1559,30 +1763,43 @@ export function buildSeparateTimelineFilterComplex(
         `   ✅ Overlaid image at layer ${overlay.layer} -> [${compositeLabel}]`,
       );
     } else if (overlay.type === 'text') {
-      // Text overlay
+      // Text overlay - handle multi-line text by chaining multiple drawtext filters
       const textSegment = overlay.segment;
-      const drawtextFilter = generateDrawtextFilter(
+      const drawtextFilters = generateDrawtextFilters(
         textSegment,
         job.operations.textStyle,
         job.videoDimensions,
       );
 
-      const compositeLabel = isLast
-        ? 'video_composite'
-        : `composite_${overlay.layer}_text`;
-      videoFilters.push(
-        `[${currentCompositeLabel}]${drawtextFilter}[${compositeLabel}]`,
-      );
-      currentCompositeLabel = compositeLabel;
+      // Chain multiple filters for multi-line text
+      let currentInput = currentCompositeLabel;
+      drawtextFilters.forEach((filter, filterIndex) => {
+        const isLastFilter = filterIndex === drawtextFilters.length - 1;
+        const compositeLabel =
+          isLast && isLastFilter
+            ? 'video_composite'
+            : `composite_${overlay.layer}_text_${filterIndex}`;
+
+        videoFilters.push(`[${currentInput}]${filter}[${compositeLabel}]`);
+        currentInput = compositeLabel;
+
+        if (isLastFilter) {
+          currentCompositeLabel = compositeLabel;
+        }
+      });
+
       console.log(
-        `   ✅ Applied text overlay at layer ${overlay.layer} -> [${compositeLabel}]`,
+        `   ✅ Applied ${drawtextFilters.length} text overlay filter(s) at layer ${overlay.layer} -> [${currentCompositeLabel}]`,
       );
     }
   }
 
   // Process audio timeline segments with support for overlapping
   // Include audio if there are video inputs OR image inputs (both produce video output)
+  // OR if there are audio-only tracks (for audio-only exports)
   const hasVideoInputs = videoLayers.size > 0 || imageLayers.size > 0;
+  const hasAudioInputs = audioTimeline.segments.length > 0;
+  const isAudioOnlyExport = !hasVideoInputs && hasAudioInputs;
 
   const hasVideoContentForBase =
     sortedLayers.length > 0 || videoLayers.size > 0;
@@ -1596,13 +1813,13 @@ export function buildSeparateTimelineFilterComplex(
   }
 
   // Set final base label for further processing (aspect ratio crop, downscale, etc.)
-  const finalBaseLabel = currentCompositeLabel || 'video_base';
+  const finalBaseLabel = currentCompositeLabel;
 
   // Process audio timeline using the extracted audio handling function
   const audioProcessingResult = processAudioTimeline(
     audioTimeline,
     categorizedInputs,
-    hasVideoInputs,
+    hasVideoInputs || isAudioOnlyExport, // Process audio for video exports OR audio-only exports
     totalVideoDuration,
     createAudioTrimFilters,
   );
@@ -1610,17 +1827,47 @@ export function buildSeparateTimelineFilterComplex(
   audioConcatInputs.push(...audioProcessingResult.audioConcatInputs);
 
   // Set the base video label for further processing
-  let currentVideoLabel = finalBaseLabel || currentCompositeLabel;
-  const hasVideoContent = sortedLayers.length > 0 || videoLayers.size > 0;
+  let currentVideoLabel = finalBaseLabel;
+  // Include audio-only exports as having video content (we create a black frame video)
+  const hasVideoContent =
+    sortedLayers.length > 0 || videoLayers.size > 0 || isAudioOnlyExport;
 
+  // For audio-only exports or when no video label exists, create video_base
   if (!currentVideoLabel || currentVideoLabel === '') {
-    // No video layers - create a black base if needed
-    console.log('⚠️ No video layers found, creating black base');
-    const totalDuration = audioTimeline.totalDuration || 1;
-    videoFilters.push(
-      `color=black:size=${targetDimensions.width}x${targetDimensions.height}:duration=${totalDuration}:rate=${targetFps},setsar=1[video_base]`,
-    );
-    currentVideoLabel = 'video_base';
+    if (isAudioOnlyExport) {
+      // Audio-only export - create a minimal 2x2 black frame video that matches audio duration
+      // FFmpeg requires at least 2x2 pixels (1x1 is invalid)
+      console.log(
+        '🎵 Audio-only export detected, creating minimal 2x2 black frame video',
+      );
+      const totalDuration = audioTimeline.totalDuration || 1;
+      // Create a single black frame (1 frame at target FPS), then loop it to match audio duration
+      // Using 2x2 size (minimum valid size) to minimize file size for audio-only exports
+      // Using loop filter to make a single frame last for the entire duration
+      const frameDuration = 1 / targetFps; // Duration of a single frame
+      videoFilters.push(
+        `color=black:size=2x2:duration=${frameDuration.toFixed(
+          6,
+        )}:rate=${targetFps},setsar=1,loop=loop=-1:size=1:start=0[video_base_looped]`,
+      );
+      // Trim the looped video to match exact audio duration
+      videoFilters.push(
+        `[video_base_looped]trim=duration=${totalDuration.toFixed(6)},setpts=PTS-STARTPTS[video_base]`,
+      );
+      currentVideoLabel = 'video_base';
+      console.log(
+        `✅ Created minimal 2x2 black frame video matching audio duration: ${totalDuration.toFixed(3)}s`,
+      );
+    } else {
+      // Fallback for other cases (shouldn't normally happen)
+      console.log('⚠️ No video layers found, creating black base');
+      const totalDuration =
+        audioTimeline.totalDuration || totalVideoDuration || 1;
+      videoFilters.push(
+        `color=black:size=${targetDimensions.width}x${targetDimensions.height}:duration=${totalDuration}:rate=${targetFps},setsar=1[video_base]`,
+      );
+      currentVideoLabel = 'video_base';
+    }
   }
 
   // Build final audio filter (already mixed if multiple streams)
@@ -2114,7 +2361,11 @@ export function handleFilterComplex(
     // So we always map [video] as the final output
 
     // Check if we have video inputs OR image inputs (both produce video output) to determine if we should map audio
+    // Also check for audio-only exports (audio inputs but no video/image inputs)
     const hasVideoInputs = videoLayers.size > 0 || imageLayers.size > 0;
+    const hasAudioInputs = audioTimeline.segments.length > 0;
+    const isAudioOnlyExport = !hasVideoInputs && hasAudioInputs;
+    const shouldMapAudio = hasVideoInputs || isAudioOnlyExport;
 
     // Add hardware upload filter for VAAPI if needed
     if (hwAccel?.type === 'vaapi') {
@@ -2122,19 +2373,29 @@ export function handleFilterComplex(
       filterComplex +=
         ';[video]format=nv12,hwupload=extra_hw_frames=64:derive_device=vaapi[video_hw]';
       cmd.args.push('-filter_complex', filterComplex);
-      if (hasVideoInputs) {
+      if (shouldMapAudio) {
         cmd.args.push('-map', '[video_hw]', '-map', '[audio]');
+        if (isAudioOnlyExport) {
+          console.log('🎵 Mapping audio for audio-only export');
+        }
       } else {
         cmd.args.push('-map', '[video_hw]');
-        console.log('ℹ️ Not mapping audio - no video or image inputs detected');
+        console.log(
+          'ℹ️ Not mapping audio - no video, image, or audio inputs detected',
+        );
       }
     } else {
       cmd.args.push('-filter_complex', filterComplex);
-      if (hasVideoInputs) {
+      if (shouldMapAudio) {
         cmd.args.push('-map', '[video]', '-map', '[audio]');
+        if (isAudioOnlyExport) {
+          console.log('🎵 Mapping audio for audio-only export');
+        }
       } else {
         cmd.args.push('-map', '[video]');
-        console.log('ℹ️ Not mapping audio - no video or image inputs detected');
+        console.log(
+          'ℹ️ Not mapping audio - no video, image, or audio inputs detected',
+        );
       }
     }
   }
