@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSpriteSheetProgress } from '../../editor/hooks/useMediaReadiness';
 import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
 import { getDisplayFps } from '../stores/videoEditor/types/timeline.types';
+import { SPRITE_SHEET_SKIP_DURATION_SECONDS } from './utils/timelineConstants';
 
 interface VideoSpriteSheetStripProps {
   track: VideoTrack;
@@ -152,6 +153,9 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         ],
       );
 
+      const shouldRenderSprites =
+        trackMetrics.durationSeconds <= SPRITE_SHEET_SKIP_DURATION_SECONDS;
+
       // Progressive loading: Track sprite sheet generation progress
       const { completedSheets, totalSheets, isComplete } =
         useSpriteSheetProgress(track.mediaId);
@@ -179,6 +183,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
       // - Zoom-out: Frame-skipping (fewer tiles, each at proper aspect ratio)
       // - Zoom-in: Frame-repeating (same thumbnail repeated to fill space)
       const hybridTiles = useMemo(() => {
+        if (!shouldRenderSprites) return [];
         const { spriteSheets } = state;
         if (spriteSheets.length === 0) return [];
 
@@ -250,7 +255,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         }
 
         return tiles;
-      }, [state.spriteSheets, trackMetrics, height]);
+      }, [shouldRenderSprites, state.spriteSheets, trackMetrics, height]);
 
       // High-performance viewport culling with buffer zone
       const visibleTiles = useMemo(() => {
@@ -410,11 +415,14 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         >
           {/* Status indicators - progressive loading */}
           {/* Show progress indicator during sprite generation */}
-          {!isComplete && state.isLoading && totalSheets > 0 && (
-            <div className="absolute top-0 left-0 px-2 py-0.5 bg-black/60 rounded-br text-xs text-gray-300 z-10 pointer-events-none">
-              {completedSheets}/{totalSheets} sheets
-            </div>
-          )}
+          {shouldRenderSprites &&
+            !isComplete &&
+            state.isLoading &&
+            totalSheets > 0 && (
+              <div className="absolute top-0 left-0 px-2 py-0.5 bg-black/60 rounded-br text-xs text-gray-300 z-10 pointer-events-none">
+                {completedSheets}/{totalSheets} sheets
+              </div>
+            )}
 
           {isTranscoding && !state.isLoading && !track.proxyBlocked && (
             <div className="absolute top-0 left-0 flex items-center space-x-2 px-2 py-1 bg-purple-900/90 backdrop-blur-sm rounded-r border border-purple-700/50 z-10 pointer-events-none">

@@ -6,6 +6,11 @@ import { VideoTrack } from '../../stores/videoEditor/types';
  */
 
 /**
+ * Skip sprite sheet/thumbnail rendering for long videos to avoid stretched images.
+ */
+export const SPRITE_SHEET_SKIP_DURATION_SECONDS = 30 * 60;
+
+/**
  * Timeline header height (ruler + add track button area)
  * This must match across TimelineRuler, TimelineTrackControllers, and AddTrackButton
  */

@@ -36,6 +36,7 @@ import {
   getRowHeightClasses,
   getTrackItemHeight,
   getTrackItemHeightClasses,
+  SPRITE_SHEET_SKIP_DURATION_SECONDS,
 } from './utils/timelineConstants';
 import { VideoSpriteSheetStrip } from './videoSpriteSheetStrip';
 
@@ -276,6 +277,11 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
       if (track.type !== 'video') return false;
       return !!mediaItem?.spriteSheetDisabled;
     }, [mediaItem, track.type]);
+    const isLongVideo = useMemo(() => {
+      if (track.type !== 'video') return false;
+      if (mediaItem?.duration == null) return false;
+      return mediaItem.duration >= SPRITE_SHEET_SKIP_DURATION_SECONDS;
+    }, [mediaItem?.duration, track.type]);
 
     // Tool mode subscriptions for resetting text-edit mode on track interaction
     const previewInteractionMode = useVideoEditorStore(
@@ -801,22 +807,26 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
 
       if (track.type === 'video') {
         if (spriteSheetDisabled) {
+          const shouldShowPlaceholder = !isLongVideo;
           return (
             <div className="relative w-full h-full">
               <div className="absolute inset-0 bg-gray-800" />
-              {mediaItem?.thumbnail ? (
-                <img
-                  src={mediaItem.thumbnail}
-                  alt={track.name}
-                  className="absolute inset-0 h-full w-full object-cover opacity-80"
-                  loading="lazy"
-                />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-                  <Film className="h-4 w-4" />
-                </div>
+              {shouldShowPlaceholder &&
+                (mediaItem?.thumbnail ? (
+                  <img
+                    src={mediaItem.thumbnail}
+                    alt={track.name}
+                    className="absolute inset-0 h-full w-full object-cover opacity-80"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                    <Film className="h-4 w-4" />
+                  </div>
+                ))}
+              {shouldShowPlaceholder && (
+                <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-black/30" />
               )}
-              <div className="absolute inset-0 bg-gradient-to-r from-black/30 via-transparent to-black/30" />
             </div>
           );
         }
@@ -876,6 +886,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
       width,
       zoomLevel,
       spriteSheetDisabled,
+      isLongVideo,
       mediaItem?.thumbnail,
     ]);
 
