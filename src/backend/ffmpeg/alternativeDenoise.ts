@@ -7,7 +7,7 @@ import * as path from 'path';
  * In development: src/backend/ffmpeg/ffmpeg-model
  */
 function getModelDirectory(): string {
-  if (process.env.NODE_ENV === 'production') {
+  if (app.isPackaged) {
     return path.join(process.resourcesPath, 'ffmpeg-model');
   } else {
     return path.join(
