@@ -261,7 +261,6 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
 
   // State for engine selection modal
   const [showEngineModal, setShowEngineModal] = useState(false);
-  const engineChoiceLockedRef = useRef(false);
 
   // Get source URL for the selected track
   const sourceUrl = useMemo(() => {
@@ -483,32 +482,8 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
         }
 
         // 2. Show modal immediately so the user can choose without delay
-        engineChoiceLockedRef.current = false;
         setShowEngineModal(true);
-
-        // 3. Run hardware detection in background; auto-pick ffmpeg on low hardware
-        try {
-          const hwResult = await window.electronAPI.getHardwareCapabilities();
-          const isLowHardware =
-            hwResult.success && hwResult.capabilities
-              ? hwResult.capabilities.isLowHardware ||
-                hwResult.capabilities.totalRamGB <= 8
-              : true; // Default to ffmpeg if detection fails
-
-          if (isLowHardware && !engineChoiceLockedRef.current) {
-            setShowEngineModal(false);
-            proceedWithNoiseReduction('ffmpeg');
-          }
-        } catch (e) {
-          console.error(
-            'Failed to get hardware capabilities, defaulting to ffmpeg',
-            e,
-          );
-          if (!engineChoiceLockedRef.current) {
-            setShowEngineModal(false);
-            proceedWithNoiseReduction('ffmpeg');
-          }
-        }
+        return;
       } else {
         // Disable noise reduction - clear both the flag and engine
         beginAudioUpdate();
@@ -533,7 +508,6 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
       if (remember) {
         localStorage.setItem('dividr-noise-reduction-engine', engine);
       }
-      engineChoiceLockedRef.current = true;
       proceedWithNoiseReduction(engine);
     },
     [proceedWithNoiseReduction],

@@ -41,6 +41,26 @@ const getContentSignatureKey = (
   return `${signature.partialHash}_${signature.fileSize}`;
 };
 
+const persistentMediaUpdateKeys = new Set<string>([
+  'name',
+  'source',
+  'tempFilePath',
+  'duration',
+  'size',
+  'mimeType',
+  'type',
+  'spriteSheetDisabled',
+  'hasGeneratedKaraoke',
+  'cachedKaraokeSubtitles',
+]);
+
+const shouldMarkUnsavedChangesForMediaUpdate = (
+  updates: Partial<MediaLibraryItem>,
+): boolean => {
+  if (!updates || Object.keys(updates).length === 0) return false;
+  return Object.keys(updates).some((key) => persistentMediaUpdateKeys.has(key));
+};
+
 /** Duplicate detection user choice: 'use-existing' (skip) | 'import-copy' (keep both) */
 export type DuplicateChoice = 'use-existing' | 'import-copy';
 
@@ -415,7 +435,9 @@ export const createMediaLibrarySlice: StateCreator<
     }
 
     const state = get() as any;
-    state.markUnsavedChanges?.();
+    if (shouldMarkUnsavedChangesForMediaUpdate(updates)) {
+      state.markUnsavedChanges?.();
+    }
   },
 
   getMediaLibraryItem: (mediaId) => {
@@ -557,8 +579,6 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-
-        state.markUnsavedChanges?.();
         console.log(`✅ Waveform cache HIT (signature) for: ${mediaItem.name}`);
         return true;
       }
@@ -699,10 +719,6 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-
-        // Mark as having unsaved changes
-        state.markUnsavedChanges?.();
-
         console.log(`✅ Waveform generated and cached for: ${mediaItem.name}`);
         console.log(
           `📈 Generated ${result.peaks.length} peaks with ${result.lodTiers?.length || 0} LOD tiers`,
@@ -848,8 +864,6 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-
-        state.markUnsavedChanges?.();
         console.log(
           `✅ Sprite sheet cache HIT (signature) for: ${mediaItem.name}`,
         );
@@ -1193,10 +1207,6 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-
-        // Mark as having unsaved changes
-        state.markUnsavedChanges?.();
-
         console.log(
           `✅ Sprite sheets generated and cached for: ${mediaItem.name}`,
         );
@@ -1440,8 +1450,6 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-
-        state.markUnsavedChanges?.();
         console.log(
           `✅ Thumbnail cache HIT (signature) for: ${mediaItem.name}`,
         );
@@ -1536,10 +1544,6 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-
-        // Mark as having unsaved changes
-        state.markUnsavedChanges?.();
-
         console.log(`✅ Thumbnail generated and cached for: ${mediaItem.name}`);
         return true;
       } else {
