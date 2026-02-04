@@ -261,6 +261,7 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
 
   // State for engine selection modal
   const [showEngineModal, setShowEngineModal] = useState(false);
+  const engineChoiceLockedRef = useRef(false);
 
   // Get source URL for the selected track
   const sourceUrl = useMemo(() => {
@@ -306,6 +307,7 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   // Temporary state for error modal (for debugging)
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorDetails, setErrorDetails] = useState<string>('');
+  const [errorSummary, setErrorSummary] = useState<string>('');
 
   // Subscribe to noise reduction cache state changes
   // CRITICAL: Use effectiveEngine to ensure we always track the correct cache entry
@@ -348,6 +350,18 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
       effectiveEngine,
     );
   }, [sourceUrl, effectiveEngine]);
+
+  useEffect(() => {
+    if (nrError) {
+      const summaryLine = nrError.split('\n').find((line) => line.trim());
+      setErrorSummary(
+        summaryLine?.trim() || 'Noise reduction failed unexpectedly.',
+      );
+
+      setErrorDetails(nrError);
+      setShowErrorModal(true);
+    }
+  }, [nrError]);
 
   // Derived state for UI
   const isProcessing = nrCacheState === 'processing';
@@ -461,8 +475,18 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   const handleNoiseReductionToggle = useCallback(
     async (enabled: boolean) => {
       if (enabled) {
-        // 1. Determine Engine Strategy using centralized hardware detection
-        let engine: NoiseReductionEngine = 'ffmpeg';
+        // 1. Check persistent storage first for instant choice
+        const stored = localStorage.getItem('dividr-noise-reduction-engine');
+        if (stored && (stored === 'ffmpeg' || stored === 'deepfilter')) {
+          proceedWithNoiseReduction(stored as NoiseReductionEngine);
+          return;
+        }
+
+        // 2. Show modal immediately so the user can choose without delay
+        engineChoiceLockedRef.current = false;
+        setShowEngineModal(true);
+
+        // 3. Run hardware detection in background; auto-pick ffmpeg on low hardware
         try {
           const hwResult = await window.electronAPI.getHardwareCapabilities();
           const isLowHardware =
@@ -471,31 +495,20 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
                 hwResult.capabilities.totalRamGB <= 8
               : true; // Default to ffmpeg if detection fails
 
-          if (isLowHardware) {
-            engine = 'ffmpeg';
-          } else {
-            // Check persistent storage
-            const stored = localStorage.getItem(
-              'dividr-noise-reduction-engine',
-            );
-            if (stored && (stored === 'ffmpeg' || stored === 'deepfilter')) {
-              engine = stored as NoiseReductionEngine;
-            } else {
-              // Ask user
-              setShowEngineModal(true);
-              return;
-            }
+          if (isLowHardware && !engineChoiceLockedRef.current) {
+            setShowEngineModal(false);
+            proceedWithNoiseReduction('ffmpeg');
           }
         } catch (e) {
           console.error(
             'Failed to get hardware capabilities, defaulting to ffmpeg',
             e,
           );
-          engine = 'ffmpeg';
+          if (!engineChoiceLockedRef.current) {
+            setShowEngineModal(false);
+            proceedWithNoiseReduction('ffmpeg');
+          }
         }
-
-        // Proceed
-        proceedWithNoiseReduction(engine);
       } else {
         // Disable noise reduction - clear both the flag and engine
         beginAudioUpdate();
@@ -520,6 +533,7 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
       if (remember) {
         localStorage.setItem('dividr-noise-reduction-engine', engine);
       }
+      engineChoiceLockedRef.current = true;
       proceedWithNoiseReduction(engine);
     },
     [proceedWithNoiseReduction],
@@ -751,18 +765,28 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
         onConfirm={handleEngineConfirm}
       />
 
-      {/* TEMPORARY: Error Debug Modal */}
+      {/* Error Details Modal */}
       <AlertDialog open={showErrorModal} onOpenChange={setShowErrorModal}>
         <AlertDialogContent className="min-w-[60vw] max-h-[80vh] overflow-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>Noise Reduction Error Details</AlertDialogTitle>
+            <AlertDialogTitle>Noise Reduction Failed</AlertDialogTitle>
             <AlertDialogDescription className="text-left">
+              <p className="text-sm text-destructive mb-3">{errorSummary}</p>
               <pre className="mt-4 p-4 bg-muted rounded-md text-xs overflow-auto whitespace-pre-wrap break-words">
                 {errorDetails || 'No error details available'}
               </pre>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!errorDetails) return;
+                void navigator.clipboard.writeText(errorDetails);
+              }}
+            >
+              Copy Error
+            </Button>
             <AlertDialogAction onClick={() => setShowErrorModal(false)}>
               Close
             </AlertDialogAction>

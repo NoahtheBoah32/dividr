@@ -20,6 +20,7 @@ const config: ForgeConfig = {
     extraResource: [
       './src/frontend/assets/logo',
       './src/backend/python/scripts',
+      './src/backend/ffmpeg/ffmpeg-model',
       // dividr-tools is now downloaded on-demand from GitHub Releases
       // to reduce installer size from ~1.3GB to ~200MB
     ],

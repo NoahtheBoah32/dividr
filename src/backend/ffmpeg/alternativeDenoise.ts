@@ -23,7 +23,7 @@ function getModelDirectory(): string {
 /**
  * Get the absolute path to the std.rnnn model file
  */
-function getDefaultModelPath(): string {
+export function getDefaultModelPath(): string {
   return path.join(getModelDirectory(), 'std.rnnn');
 }
 
@@ -40,9 +40,19 @@ export function buildArnnDenCommand(
     .replace(/^([a-zA-Z]):/, '$1\\:');
   const finalModelPath = `'${escapedModelPath}'`;
 
-  // RNNoise requires: 48kHz, float planar (fltp), mono input
-  const audioFilter = `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono,arnndn=m=${finalModelPath},aresample=resampler=soxr`;
+  // RNNoise requires: 48kHz, float planar (fltp), mono input.
+  // Use aresample before arnndn to guarantee the expected format, and avoid
+  // forcing soxr (not always available in bundled FFmpeg builds).
+  const audioFilter = `aresample=48000,aformat=sample_fmts=fltp:channel_layouts=mono,arnndn=m=${finalModelPath}`;
 
+  return ['-i', inputFile, '-af', audioFilter, '-ac', '2', outputFile];
+}
+
+export function buildFftDenoiseCommand(
+  inputFile: string,
+  outputFile: string,
+): string[] {
+  const audioFilter = 'afftdn';
   return ['-i', inputFile, '-af', audioFilter, '-ac', '2', outputFile];
 }
 

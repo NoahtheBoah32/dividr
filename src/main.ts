@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-var-requires */
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import started from 'electron-squirrel-startup';
 import crypto from 'node:crypto';
@@ -45,7 +45,10 @@ import {
 import { fileIOManager } from './backend/io/FileIOManager';
 
 // Import hardware capabilities service for hybrid proxy encoding
-import { buildArnnDenCommand } from './backend/ffmpeg/alternativeDenoise';
+import {
+  buildArnnDenCommand,
+  getDefaultModelPath,
+} from './backend/ffmpeg/alternativeDenoise';
 import { buildFfmpegCommand } from './backend/ffmpeg/export/commandBuilder';
 import {
   buildProxyFFmpegArgs,
@@ -71,6 +74,41 @@ let isWindowFocused = true;
 // Dynamic import of ffmpeg binaries to avoid module resolution issues
 let ffmpegPath: string | null = null;
 let ffprobePath: { path: string } | null = null;
+let ffmpegAudioDenoiseFilter: 'arnndn' | 'afftdn' | null | undefined =
+  undefined;
+
+function getFfmpegAudioDenoiseFilter(): 'arnndn' | 'afftdn' | null {
+  if (!ffmpegPath) {
+    ffmpegAudioDenoiseFilter = null;
+    return null;
+  }
+  if (ffmpegAudioDenoiseFilter !== undefined) {
+    return ffmpegAudioDenoiseFilter;
+  }
+
+  try {
+    const result = spawnSync(ffmpegPath, ['-hide_banner', '-filters'], {
+      encoding: 'utf8',
+    });
+    const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+    const hasArnndn = /\barnndn\b/.test(output);
+    const hasAfftdn = /\bafftdn\b/.test(output);
+
+    if (hasArnndn) {
+      ffmpegAudioDenoiseFilter = 'arnndn';
+    } else if (hasAfftdn) {
+      ffmpegAudioDenoiseFilter = 'afftdn';
+    } else {
+      ffmpegAudioDenoiseFilter = null;
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to detect FFmpeg filters:', error);
+    ffmpegAudioDenoiseFilter = null;
+  }
+
+  console.log('🔎 FFmpeg denoise filter support:', ffmpegAudioDenoiseFilter);
+  return ffmpegAudioDenoiseFilter;
+}
 
 // File path to open when app starts (from double-click on .dividr file)
 let pendingFilePath: string | null = null;
@@ -1178,13 +1216,18 @@ ipcMain.handle(
     }
 
     // Ensure output directory exists using fileIOManager for EMFILE protection
-    const absoluteOutputDir = path.isAbsolute(outputDir)
-      ? outputDir
-      : path.resolve(outputDir);
+    const hasOutputDir = !!outputDir && outputDir.trim().length > 0;
+    const absoluteOutputDir = hasOutputDir
+      ? path.isAbsolute(outputDir)
+        ? outputDir
+        : path.resolve(outputDir)
+      : '';
 
     try {
-      await fileIOManager.mkdir(absoluteOutputDir, 'high');
-      console.log('📁 Output directory ready:', absoluteOutputDir);
+      if (hasOutputDir) {
+        await fileIOManager.mkdir(absoluteOutputDir, 'high');
+        console.log('📁 Output directory ready:', absoluteOutputDir);
+      }
     } catch (dirError) {
       const errorMessage =
         dirError instanceof Error ? dirError.message : 'Unknown error';
@@ -1204,12 +1247,14 @@ ipcMain.handle(
     }
 
     // Update output path in args to use absolute path
-    const finalArgs = args.map((arg) => {
-      if (arg.includes(outputDir) && !path.isAbsolute(arg)) {
-        return arg.replace(outputDir, absoluteOutputDir);
-      }
-      return arg;
-    });
+    const finalArgs = hasOutputDir
+      ? args.map((arg) => {
+          if (arg.includes(outputDir) && !path.isAbsolute(arg)) {
+            return arg.replace(outputDir, absoluteOutputDir);
+          }
+          return arg;
+        })
+      : args;
 
     console.log('🎬 COMPLETE CUSTOM FFMPEG COMMAND:');
     console.log(['ffmpeg', ...finalArgs].join(' '));
@@ -2984,6 +3029,20 @@ ipcMain.handle(
           throw new Error('FFmpeg binary not available');
         }
 
+        const filter = getFfmpegAudioDenoiseFilter();
+        if (filter !== 'arnndn') {
+          throw new Error(
+            'FFmpeg build does not include arnndn filter required for RNNoise.',
+          );
+        }
+
+        const modelPath = getDefaultModelPath();
+        if (!fs.existsSync(modelPath)) {
+          throw new Error(`RNNoise model not found: ${modelPath}`);
+        }
+
+        console.log('   Denoise filter:', filter);
+
         // Build command
         // Note: buildArnnDenCommand returns args for "ffmpeg -i input -af arnndn..."
         const args = buildArnnDenCommand(inputPath, outputPath);
@@ -2992,105 +3051,111 @@ ipcMain.handle(
 
         console.log('   Command:', `ffmpeg ${args.join(' ')}`);
 
-        return new Promise((resolve) => {
-          const ffmpeg = spawn(ffmpegPath!, args);
-          let durationSec = 0;
-          let stderrLog = '';
+        const runFfmpegDenoise = (runArgs: string[]) =>
+          new Promise<{ success: boolean; stderrLog: string }>((resolve) => {
+            const ffmpeg = spawn(ffmpegPath!, runArgs);
+            let durationSec = 0;
+            let stderrLog = '';
 
-          // Send initial loading state
-          event.sender.send('media-tools:progress', {
-            stage: 'loading',
-            progress: 0,
-            message: 'Initializing FFmpeg...',
-          });
+            // Send initial loading state
+            event.sender.send('media-tools:progress', {
+              stage: 'loading',
+              progress: 0,
+              message: 'Initializing FFmpeg...',
+            });
 
-          ffmpeg.stderr.on('data', (data) => {
-            const text = data.toString();
-            stderrLog += text;
+            ffmpeg.stderr.on('data', (data) => {
+              const text = data.toString();
+              stderrLog += text;
 
-            // 1. Parse Duration: Duration: 00:00:10.50,
-            if (durationSec === 0) {
-              const durationMatch = text.match(
-                /Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/,
-              );
-              if (durationMatch) {
-                const h = parseFloat(durationMatch[1]);
-                const m = parseFloat(durationMatch[2]);
-                const s = parseFloat(durationMatch[3]);
-                durationSec = h * 3600 + m * 60 + s;
-              }
-            }
-
-            // 2. Parse Time: time=00:00:05.20
-            if (durationSec > 0) {
-              const timeMatch = text.match(
-                /time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/,
-              );
-              if (timeMatch) {
-                const h = parseFloat(timeMatch[1]);
-                const m = parseFloat(timeMatch[2]);
-                const s = parseFloat(timeMatch[3]);
-                const timeSec = h * 3600 + m * 60 + s;
-                const percent = Math.min(
-                  99,
-                  Math.round((timeSec / durationSec) * 100),
+              // 1. Parse Duration: Duration: 00:00:10.50,
+              if (durationSec === 0) {
+                const durationMatch = text.match(
+                  /Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/,
                 );
-
-                event.sender.send('media-tools:progress', {
-                  stage: 'processing',
-                  progress: percent,
-                  message: `Filtering... ${percent}%`,
-                });
-              }
-            }
-          });
-
-          ffmpeg.on('close', (code) => {
-            if (code === 0) {
-              console.log('✅ FFmpeg noise reduction successful');
-              event.sender.send('media-tools:progress', {
-                stage: 'complete',
-                progress: 100,
-                message: 'Noise reduction complete!',
-              });
-              resolve({
-                success: true,
-                result: {
-                  success: true,
-                  outputPath,
-                  message: 'FFmpeg denoising complete',
-                },
-              });
-            } else {
-              console.error('❌ FFmpeg noise reduction failed. Code:', code);
-              // Check for common errors in stderr
-              let errorMsg = `FFmpeg exited with code ${code}`;
-              if (stderrLog.includes('Permission denied'))
-                errorMsg = 'Permission denied';
-              if (stderrLog.includes('No such file'))
-                errorMsg = 'File not found';
-
-              // Include the last 5 lines of stderr for context
-              const stderrTail = stderrLog.split('\n').slice(-5).join('\n');
-              if (stderrTail.trim()) {
-                errorMsg += `\nStderr: ${stderrTail}`;
+                if (durationMatch) {
+                  const h = parseFloat(durationMatch[1]);
+                  const m = parseFloat(durationMatch[2]);
+                  const s = parseFloat(durationMatch[3]);
+                  durationSec = h * 3600 + m * 60 + s;
+                }
               }
 
+              // 2. Parse Time: time=00:00:05.20
+              if (durationSec > 0) {
+                const timeMatch = text.match(
+                  /time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/,
+                );
+                if (timeMatch) {
+                  const h = parseFloat(timeMatch[1]);
+                  const m = parseFloat(timeMatch[2]);
+                  const s = parseFloat(timeMatch[3]);
+                  const timeSec = h * 3600 + m * 60 + s;
+                  const percent = Math.min(
+                    99,
+                    Math.round((timeSec / durationSec) * 100),
+                  );
+
+                  event.sender.send('media-tools:progress', {
+                    stage: 'processing',
+                    progress: percent,
+                    message: `Filtering... ${percent}%`,
+                  });
+                }
+              }
+            });
+
+            ffmpeg.on('close', (code) => {
+              if (code === 0) {
+                resolve({ success: true, stderrLog });
+              } else {
+                console.error('❌ FFmpeg noise reduction failed. Code:', code);
+                resolve({ success: false, stderrLog });
+              }
+            });
+
+            ffmpeg.on('error', (err) => {
+              console.error('❌ FFmpeg spawn error:', err);
               resolve({
                 success: false,
-                error: errorMsg,
+                stderrLog: err.message,
               });
-            }
-          });
-
-          ffmpeg.on('error', (err) => {
-            console.error('❌ FFmpeg spawn error:', err);
-            resolve({
-              success: false,
-              error: err.message,
             });
           });
-        });
+
+        const firstAttempt = await runFfmpegDenoise(args);
+        if (firstAttempt.success) {
+          console.log('✅ FFmpeg noise reduction successful');
+          event.sender.send('media-tools:progress', {
+            stage: 'complete',
+            progress: 100,
+            message: 'Noise reduction complete!',
+          });
+          return {
+            success: true,
+            result: {
+              success: true,
+              outputPath,
+              message: 'FFmpeg denoising complete',
+            },
+          };
+        }
+
+        const stderrText = firstAttempt.stderrLog || '';
+        // Check for common errors in stderr
+        let errorMsg = 'FFmpeg exited with code 1';
+        if (stderrText.includes('Permission denied'))
+          errorMsg = 'Permission denied';
+        if (stderrText.includes('No such file')) errorMsg = 'File not found';
+
+        if (stderrText.trim()) {
+          errorMsg += `\nStderr:\n${stderrText.trim()}`;
+        }
+
+        return {
+          success: false,
+          error: errorMsg,
+        };
       }
     } catch (error) {
       console.error('❌ Noise reduction failed:', error);
@@ -3986,6 +4051,10 @@ const createWindow = () => {
       }
     });
 
+    const allowDevTools =
+      process.env.NODE_ENV === 'development' ||
+      process.env.ALLOW_DEVTOOLS === 'true';
+
     if (
       process.env.NODE_ENV === 'development' &&
       MAIN_WINDOW_VITE_DEV_SERVER_URL
@@ -3997,32 +4066,34 @@ const createWindow = () => {
         path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
       );
 
-      // 🚫 Remove all default menus so "View → Toggle Developer Tools" disappears
-      // Menu.setApplicationMenu(null);
+      if (!allowDevTools) {
+        // 🚫 Remove all default menus so "View → Toggle Developer Tools" disappears
+        // Menu.setApplicationMenu(null);
 
-      // 🚫 Block keyboard shortcuts
-      mainWindow.webContents.on('before-input-event', (event, input) => {
-        if (
-          (input.control && input.shift && input.key.toLowerCase() === 'i') || // Ctrl+Shift+I
-          input.key === 'F12' || // F12
-          (process.platform === 'darwin' &&
-            input.meta &&
-            input.alt &&
-            input.key.toLowerCase() === 'i') // Cmd+Opt+I
-        ) {
-          event.preventDefault();
-        }
-      });
+        // 🚫 Block keyboard shortcuts
+        mainWindow.webContents.on('before-input-event', (event, input) => {
+          if (
+            (input.control && input.shift && input.key.toLowerCase() === 'i') || // Ctrl+Shift+I
+            input.key === 'F12' || // F12
+            (process.platform === 'darwin' &&
+              input.meta &&
+              input.alt &&
+              input.key.toLowerCase() === 'i') // Cmd+Opt+I
+          ) {
+            event.preventDefault();
+          }
+        });
 
-      // 🚫 If DevTools somehow open, force-close them
-      mainWindow.webContents.on('devtools-opened', () => {
-        mainWindow?.webContents.closeDevTools();
-      });
+        // 🚫 If DevTools somehow open, force-close them
+        mainWindow.webContents.on('devtools-opened', () => {
+          mainWindow?.webContents.closeDevTools();
+        });
 
-      // 🚫 Disable right-click → Inspect Element
-      mainWindow.webContents.on('context-menu', (e) => {
-        e.preventDefault();
-      });
+        // 🚫 Disable right-click → Inspect Element
+        mainWindow.webContents.on('context-menu', (e) => {
+          e.preventDefault();
+        });
+      }
     }
 
     // Handle window close events - hide instead of close
