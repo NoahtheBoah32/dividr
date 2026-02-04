@@ -795,7 +795,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
           : 'rgba(161, 94, 253, 0.85)';
 
         if (!isProgress) {
-          ctx.fillStyle = 'rgba(156, 163, 175, 0.1)';
+          ctx.fillStyle = 'rgba(30, 215, 96, 0.1)';
           ctx.fillRect(0, 0, tile.width, canvasHeight);
         }
 

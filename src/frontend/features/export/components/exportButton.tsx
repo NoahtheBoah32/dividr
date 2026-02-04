@@ -144,10 +144,7 @@ const ExportButton: React.FC<ExportButtonProps> = ({
         variant={variant}
         onClick={handleOpenModal}
         disabled={isButtonDisabled}
-        className={cn(
-          className,
-          'rounded-sm text-base font-bold w-[140px] h-9',
-        )}
+        className={cn(className, 'rounded text-base font-bold w-[140px] h-9')}
         size="sm"
         data-export-button
       >

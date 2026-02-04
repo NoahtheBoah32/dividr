@@ -440,11 +440,15 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
         className="flex-1 flex flex-col overflow-hidden"
       >
         <div className="px-4">
-          <TabsList className="w-full">
+          <TabsList className="w-full rounded px-1.5">
             {hasAudio ? (
               <>
-                <TabsTrigger value="video">Video</TabsTrigger>
-                <TabsTrigger value="audio">Audio</TabsTrigger>
+                <TabsTrigger value="video" className="rounded">
+                  Video
+                </TabsTrigger>
+                <TabsTrigger value="audio" className="rounded">
+                  Audio
+                </TabsTrigger>
               </>
             ) : (
               <>

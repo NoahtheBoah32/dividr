@@ -170,7 +170,7 @@ const TrackItemWrapper: React.FC<{
         case 'video':
           return 'transparent';
         case 'audio':
-          return 'hsl(var(--secondary) / 0.3)';
+          return 'hsl(var(--secondary) / 0.01)';
         case 'image':
           return 'transparent';
         default:

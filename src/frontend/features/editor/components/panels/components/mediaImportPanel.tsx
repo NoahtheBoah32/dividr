@@ -1233,7 +1233,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
                 { addToTimeline: false, showToasts: true },
               );
             }}
-            className="w-full bg-accent text-accent-foreground hover:bg-accent/80 font-normal text-sm rounded-sm"
+            className="w-full bg-accent text-accent-foreground hover:bg-accent/80 font-normal text-sm rounded"
             variant="ghost"
           >
             Import

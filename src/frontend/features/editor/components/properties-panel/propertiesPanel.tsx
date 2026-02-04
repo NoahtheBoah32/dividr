@@ -71,7 +71,7 @@ const PropertiesPanelComponent: React.FC<PropertiesPanelProps> = ({
   return (
     <div
       className={cn(
-        'w-80 flex flex-col border-accent bg-transparent',
+        'w-[300px] flex flex-col border-accent bg-transparent',
         className,
       )}
     >

@@ -876,8 +876,8 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
       data-preview-canvas="true"
       className={cn(
         className,
-        'relative overflow-hidden rounded-lg preview-background video-preview-container preview-canvas-area',
-        'bg-zinc-100 dark:bg-zinc-900',
+        'relative overflow-hidden rounded-lg',
+        'bg-transparent',
         containerCursor,
       )}
       style={

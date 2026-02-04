@@ -45,7 +45,7 @@ const ToolbarButton = ({
           title={title}
           size="icon"
           variant="ghost"
-          className={cn(isActive && 'bg-accent', 'rounded-sm')}
+          className={cn(isActive && 'bg-accent', 'rounded')}
           disabled={disabled}
         >
           {icon}

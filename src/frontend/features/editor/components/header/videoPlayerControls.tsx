@@ -97,7 +97,7 @@ export const VideoPlayerControls = React.memo(
     }, [redo, hasRedoHistory]);
 
     return (
-      <div className={cn('flex items-center h-full gap-6', className)}>
+      <div className={cn('flex items-center h-full gap-3', className)}>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -105,8 +105,8 @@ export const VideoPlayerControls = React.memo(
               size="icon"
               onClick={handleSelectMode}
               className={cn(
-                'transition-colors',
-                isSelectActive && 'text-secondary hover:text-secondary/90',
+                'transition-colors !p-1.5',
+                isSelectActive && 'bg-accent',
               )}
             >
               <MousePointer2 />
@@ -122,10 +122,8 @@ export const VideoPlayerControls = React.memo(
               onClick={handlePanMode}
               disabled={isPanDisabled}
               className={cn(
-                'transition-colors',
-                isPanActive &&
-                  !isPanDisabled &&
-                  'text-secondary hover:text-secondary/90',
+                'transition-colors !p-1.5',
+                isPanActive && !isPanDisabled && 'bg-accent',
                 isPanDisabled && 'opacity-40 cursor-not-allowed',
               )}
             >
@@ -147,8 +145,8 @@ export const VideoPlayerControls = React.memo(
               size="icon"
               onClick={handleTextEditMode}
               className={cn(
-                'transition-colors',
-                isTextEditActive && 'text-secondary hover:text-secondary/90',
+                'transition-colors !p-1.5',
+                isTextEditActive && 'bg-accent',
               )}
             >
               <Type />
@@ -171,7 +169,7 @@ export const VideoPlayerControls = React.memo(
               onClick={handleUndo}
               disabled={!hasUndoHistory}
               className={cn(
-                'transition-colors',
+                'transition-colors !p-1.5',
                 !hasUndoHistory && 'opacity-40',
               )}
             >
@@ -188,7 +186,7 @@ export const VideoPlayerControls = React.memo(
               onClick={handleRedo}
               disabled={!hasRedoHistory}
               className={cn(
-                'transition-colors',
+                'transition-colors !p-1.5',
                 !hasRedoHistory && 'opacity-40',
               )}
             >

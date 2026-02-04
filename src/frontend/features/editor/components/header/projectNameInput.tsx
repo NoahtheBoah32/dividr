@@ -99,7 +99,7 @@ const ProjectNameInput: React.FC<ProjectNameInputProps> = ({
       <div className="relative">
         <Input
           className={cn(
-            'border-none text-sm !pl-0 h-6 pe-9 focus-visible:ring-0 min-w-[114px] max-w-[135px] focus-visible:ring-offset-0 focus-visible:outline-none ring-0 rounded-md',
+            'border-none text-sm !pl-0 h-6 pe-9 !bg-transparent focus-visible:ring-0 min-w-[114px] max-w-[135px] focus-visible:ring-offset-0 focus-visible:outline-none ring-0 rounded-md',
             isSaving && 'text-secondary',
             className,
           )}

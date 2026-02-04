@@ -49,7 +49,7 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
     <>
       <div className="flex flex-1">
         <div
-          className={cn('flex flex-col flex-1 p-4 bg-accent/20', className)}
+          className={cn('flex flex-col flex-1 bg-accent', className)}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
