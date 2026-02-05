@@ -1,4 +1,3 @@
-import { Kbd, KbdGroup } from '@/frontend/components/ui/kbd';
 import {
   Menubar,
   MenubarCheckboxItem,
@@ -14,6 +13,9 @@ import {
   MenubarSubTrigger,
   MenubarTrigger,
 } from '@/frontend/components/ui/menubar';
+import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
+import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
+import { normalizeKeyList } from '@/frontend/features/editor/shortcuts/shortcutUtils';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor/index';
 import {
   closeProjectAction,
@@ -91,6 +93,45 @@ const AppMenuBarComponent = () => {
   const handleOpenHotkeys = useCallback(() => {
     setShowHotkeys(true);
   }, []);
+
+  const newProjectKeys = useShortcutKeys('project-new', ['ctrl+n', 'cmd+n']);
+  const openProjectKeys = useShortcutKeys('project-open', ['ctrl+o', 'cmd+o']);
+  const saveProjectKeys = useShortcutKeys('project-save', ['ctrl+s', 'cmd+s']);
+  const saveProjectAsKeys = useShortcutKeys('project-save-as', [
+    'ctrl+shift+s',
+    'cmd+shift+s',
+  ]);
+  const importMediaKeys = useShortcutKeys('project-import', [
+    'ctrl+i',
+    'cmd+i',
+  ]);
+  const exportVideoKeys = useShortcutKeys('project-export', [
+    'ctrl+e',
+    'cmd+e',
+  ]);
+  const closeProjectKeys = useShortcutKeys('project-close', [
+    'ctrl+w',
+    'cmd+w',
+  ]);
+  const undoKeys = useShortcutKeys('undo', ['ctrl+z', 'cmd+z']);
+  const redoShiftKeys = useShortcutKeys('redo-shift', [
+    'ctrl+shift+z',
+    'cmd+shift+z',
+  ]);
+  const redoAltKeys = useShortcutKeys('redo-y', ['ctrl+y', 'cmd+y']);
+  const redoKeys = useMemo(
+    () => normalizeKeyList([...redoShiftKeys, ...redoAltKeys]),
+    [redoShiftKeys, redoAltKeys],
+  );
+  const cutKeys = useShortcutKeys('track-cut', ['ctrl+x', 'cmd+x']);
+  const copyKeys = useShortcutKeys('track-copy', ['ctrl+c', 'cmd+c']);
+  const pasteKeys = useShortcutKeys('track-paste', ['ctrl+v', 'cmd+v']);
+  const duplicateKeys = useShortcutKeys('track-duplicate', ['ctrl+d', 'cmd+d']);
+  const deleteKeys = useShortcutKeys('track-delete', ['del', 'backspace']);
+  const selectAllKeys = useShortcutKeys('timeline-select-all', [
+    'ctrl+a',
+    'cmd+a',
+  ]);
 
   const handleCloseHotkeys = useCallback((open: boolean) => {
     setShowHotkeys(open);
@@ -183,19 +224,13 @@ const AppMenuBarComponent = () => {
             <MenubarItem onClick={handleNewProject}>
               New Project{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>N</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={newProjectKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem onClick={handleOpenProject}>
               Open Project{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>O</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={openProjectKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem
@@ -214,49 +249,33 @@ const AppMenuBarComponent = () => {
                 )}
               </span>
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>S</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={saveProjectKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem onClick={handleSaveProjectAs}>
               Save As...{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Shift</Kbd>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>S</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={saveProjectAsKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarSeparator />
             <MenubarItem onClick={handleImportMedia}>
               Import Media{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>I</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={importMediaKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem onClick={handleExportVideo}>
               Export Video{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>E</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={exportVideoKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarSeparator />
             <MenubarItem onClick={handleCloseProject}>
               Close Project{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>W</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={closeProjectKeys} />
               </MenubarShortcut>
             </MenubarItem>
           </MenubarContent>
@@ -267,20 +286,13 @@ const AppMenuBarComponent = () => {
             <MenubarItem onClick={handleUndo} disabled={!canUndo()}>
               Undo{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>Z</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={undoKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem onClick={handleRedo} disabled={!canRedo()}>
               Redo{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Shift</Kbd>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>Z</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={redoKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarSeparator />
@@ -290,10 +302,7 @@ const AppMenuBarComponent = () => {
             >
               Cut{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>X</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={cutKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem
@@ -302,19 +311,13 @@ const AppMenuBarComponent = () => {
             >
               Copy{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>C</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={copyKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem onClick={handlePaste} disabled={!hasClipboardData()}>
               Paste{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>V</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={pasteKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem
@@ -323,10 +326,7 @@ const AppMenuBarComponent = () => {
             >
               Duplicate{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>D</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={duplicateKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarSeparator />
@@ -336,9 +336,7 @@ const AppMenuBarComponent = () => {
             >
               Delete{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Delete</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={deleteKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarSeparator />
@@ -348,10 +346,7 @@ const AppMenuBarComponent = () => {
             >
               Select All{' '}
               <MenubarShortcut>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd>
-                  <Kbd>A</Kbd>
-                </KbdGroup>
+                <ShortcutKbdStack combos={selectAllKeys} />
               </MenubarShortcut>
             </MenubarItem>
             <MenubarItem

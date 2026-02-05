@@ -5,6 +5,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/frontend/components/ui/tooltip';
+import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
+import {
+  formatShortcutCombos,
+  normalizeKeyList,
+} from '@/frontend/features/editor/shortcuts/shortcutUtils';
 import { cn } from '@/frontend/utils/utils';
 import { Hand, MousePointer2, Redo2, Type, Undo2 } from 'lucide-react';
 import React, { useCallback } from 'react';
@@ -48,6 +53,21 @@ export const VideoPlayerControls = React.memo(
     );
     const undo = useVideoEditorStore((state) => state.undo);
     const redo = useVideoEditorStore((state) => state.redo);
+    const selectionKeys = useShortcutKeys('preview-select-tool', ['v']);
+    const handKeys = useShortcutKeys('preview-hand-tool', ['h']);
+    const textEditKeys = useShortcutKeys('preview-text-edit-tool', ['t']);
+    const undoKeys = useShortcutKeys('undo', ['ctrl+z', 'cmd+z']);
+    const redoShiftKeys = useShortcutKeys('redo-shift', [
+      'ctrl+shift+z',
+      'cmd+shift+z',
+    ]);
+    const redoAltKeys = useShortcutKeys('redo-y', ['ctrl+y', 'cmd+y']);
+    const redoKeys = normalizeKeyList([...redoShiftKeys, ...redoAltKeys]);
+    const selectionShortcutText = formatShortcutCombos(selectionKeys);
+    const handShortcutText = formatShortcutCombos(handKeys);
+    const textEditShortcutText = formatShortcutCombos(textEditKeys);
+    const undoShortcutText = formatShortcutCombos(undoKeys);
+    const redoShortcutText = formatShortcutCombos(redoKeys);
 
     // Memoize handlers to prevent unnecessary re-renders of child components
     const handleZoomChange = useCallback(
@@ -112,7 +132,11 @@ export const VideoPlayerControls = React.memo(
               <MousePointer2 />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Selection Tool (V)</TooltipContent>
+          <TooltipContent>
+            {selectionShortcutText
+              ? `Selection Tool (${selectionShortcutText})`
+              : 'Selection Tool'}
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -131,11 +155,13 @@ export const VideoPlayerControls = React.memo(
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            {isPanDisabled ? (
-              'Hand Tool (Zoom in to enable)'
-            ) : (
-              <>Hand Tool (H) - Pan around zoomed preview</>
-            )}
+            {isPanDisabled
+              ? `Hand Tool (Zoom in to enable)${
+                  handShortcutText ? ` (${handShortcutText})` : ''
+                }`
+              : `Hand Tool - Pan around zoomed preview${
+                  handShortcutText ? ` (${handShortcutText})` : ''
+                }`}
           </TooltipContent>
         </Tooltip>
         <Tooltip>
@@ -153,7 +179,8 @@ export const VideoPlayerControls = React.memo(
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            Text Edit Mode (T) - Click text to edit inline
+            Text Edit Mode - Click text to edit inline
+            {textEditShortcutText ? ` (${textEditShortcutText})` : ''}
           </TooltipContent>
         </Tooltip>
         <ZoomControls
@@ -176,7 +203,9 @@ export const VideoPlayerControls = React.memo(
               <Undo2 />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Undo ( Ctrl+Z )</TooltipContent>
+          <TooltipContent>
+            {undoShortcutText ? `Undo (${undoShortcutText})` : 'Undo'}
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -193,7 +222,9 @@ export const VideoPlayerControls = React.memo(
               <Redo2 />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Redo ( Ctrl+Y or Ctrl+Shift+Z )</TooltipContent>
+          <TooltipContent>
+            {redoShortcutText ? `Redo (${redoShortcutText})` : 'Redo'}
+          </TooltipContent>
         </Tooltip>
       </div>
     );

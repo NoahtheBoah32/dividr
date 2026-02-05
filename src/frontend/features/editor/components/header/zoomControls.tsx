@@ -18,13 +18,18 @@ import {
   DropdownMenuTrigger,
 } from '@/frontend/components/ui/dropdown-menu';
 import { Input } from '@/frontend/components/ui/input';
-import { Kbd, KbdGroup } from '@/frontend/components/ui/kbd';
 import { Slider } from '@/frontend/components/ui/slider';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/frontend/components/ui/tooltip';
+import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
+import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
+import {
+  formatShortcutCombos,
+  normalizeKeyList,
+} from '@/frontend/features/editor/shortcuts/shortcutUtils';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
 import { cn } from '@/frontend/utils/utils';
 import { ChevronDown } from 'lucide-react';
@@ -114,6 +119,17 @@ const ZoomControls: React.FC<ZoomControlsProps> = React.memo(
       handleZoomChange(newZoom);
     }, [zoom, handleZoomChange]);
 
+    const zoom25Keys = useShortcutKeys('preview-zoom-25', ['shift+0']);
+    const zoom50Keys = useShortcutKeys('preview-zoom-50', ['shift+1']);
+    const zoomFitKeys = useShortcutKeys('preview-zoom-fit', ['shift+f']);
+    const zoom200Keys = useShortcutKeys('preview-zoom-200', ['shift+2']);
+    const zoom400Keys = useShortcutKeys('preview-zoom-400', ['shift+3']);
+    const zoomInKeys = useShortcutKeys('preview-zoom-in', ['ctrl+equal']);
+    const zoomOutKeys = useShortcutKeys('preview-zoom-out', ['ctrl+minus']);
+    const zoomShortcutText = formatShortcutCombos(
+      normalizeKeyList([...zoomInKeys, ...zoomOutKeys]),
+    );
+
     return (
       <DropdownMenu>
         <Tooltip>
@@ -128,7 +144,11 @@ const ZoomControls: React.FC<ZoomControlsProps> = React.memo(
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>Preview Zoom ( Ctrl+Scroll )</TooltipContent>
+          <TooltipContent>
+            {zoomShortcutText
+              ? `Preview Zoom (${zoomShortcutText})`
+              : 'Preview Zoom'}
+          </TooltipContent>
         </Tooltip>
         <DropdownMenuContent className="w-72" align="start">
           {/* Header */}
@@ -204,50 +224,35 @@ const ZoomControls: React.FC<ZoomControlsProps> = React.memo(
           <DropdownMenuItem onClick={() => handlePresetZoom(25)}>
             <span>Zoom to 25%</span>
             <DropdownMenuShortcut>
-              <KbdGroup>
-                <Kbd>Shift</Kbd>
-                <Kbd>0</Kbd>
-              </KbdGroup>
+              <ShortcutKbdStack combos={zoom25Keys} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuItem onClick={() => handlePresetZoom(50)}>
             <span>Zoom to 50%</span>
             <DropdownMenuShortcut>
-              <KbdGroup>
-                <Kbd>Shift</Kbd>
-                <Kbd>1</Kbd>
-              </KbdGroup>
+              <ShortcutKbdStack combos={zoom50Keys} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuItem onClick={handleZoomToFit} className="font-medium">
             <span>Zoom to Fit</span>
             <DropdownMenuShortcut>
-              <KbdGroup>
-                <Kbd>Shift</Kbd>
-                <Kbd>F</Kbd>
-              </KbdGroup>
+              <ShortcutKbdStack combos={zoomFitKeys} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuItem onClick={() => handlePresetZoom(200)}>
             <span>Zoom to 200%</span>
             <DropdownMenuShortcut>
-              <KbdGroup>
-                <Kbd>Shift</Kbd>
-                <Kbd>2</Kbd>
-              </KbdGroup>
+              <ShortcutKbdStack combos={zoom200Keys} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
           <DropdownMenuItem onClick={() => handlePresetZoom(400)}>
             <span>Zoom to 400%</span>
             <DropdownMenuShortcut>
-              <KbdGroup>
-                <Kbd>Shift</Kbd>
-                <Kbd>3</Kbd>
-              </KbdGroup>
+              <ShortcutKbdStack combos={zoom400Keys} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         </DropdownMenuContent>

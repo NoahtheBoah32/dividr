@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export type ShortcutPlatform = 'mac' | 'win';
 
 export interface BaselineShortcut {
@@ -168,6 +169,14 @@ export const getDisplayTokens = (combo: string) =>
 
 export const getDisplayKeyGroups = (combos: string[]) =>
   combos.map((combo) => getDisplayTokens(combo));
+
+export const formatShortcutCombos = (
+  combos: string[],
+  comboSeparator = ' / ',
+) =>
+  getDisplayKeyGroups(combos)
+    .map((group) => group.join('+'))
+    .join(comboSeparator);
 
 export const normalizeActionName = (name: string) => name.trim().toLowerCase();
 

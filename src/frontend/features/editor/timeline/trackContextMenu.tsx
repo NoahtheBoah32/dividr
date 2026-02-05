@@ -6,6 +6,8 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from '@/frontend/components/ui/context-menu';
+import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
+import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
 import {
   Copy,
   Eye,
@@ -34,6 +36,13 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
     const selectedCount = useVideoEditorStore(
       (state) => state.timeline.selectedTrackIds.length,
     );
+    const duplicateKeys = useShortcutKeys('track-duplicate', [
+      'ctrl+d',
+      'cmd+d',
+    ]);
+    const splitKeys = useShortcutKeys('track-slice-playhead', ['k']);
+    const muteKeys = useShortcutKeys('track-toggle-mute', ['m']);
+    const deleteKeys = useShortcutKeys('track-delete', ['del', 'backspace']);
 
     const storeActions = useMemo(() => {
       const state = useVideoEditorStore.getState();
@@ -152,7 +161,9 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
           >
             <Copy className="mr-2" />
             Duplicate Track
-            <ContextMenuShortcut>Ctrl+D</ContextMenuShortcut>
+            <ContextMenuShortcut>
+              <ShortcutKbdStack combos={duplicateKeys} />
+            </ContextMenuShortcut>
           </ContextMenuItem>
 
           <ContextMenuItem
@@ -161,7 +172,9 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
           >
             <Scissors className="mr-2" />
             Split at Playhead
-            <ContextMenuShortcut>S</ContextMenuShortcut>
+            <ContextMenuShortcut>
+              <ShortcutKbdStack combos={splitKeys} />
+            </ContextMenuShortcut>
           </ContextMenuItem>
 
           {(hasVisibility || hasAudio) && <ContextMenuSeparator />}
@@ -174,7 +187,6 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
                 <Eye className="mr-2" />
               )}
               {track.visible ? 'Hide Track' : 'Show Track'}
-              <ContextMenuShortcut>V</ContextMenuShortcut>
             </ContextMenuItem>
           )}
 
@@ -186,7 +198,9 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
                 <VolumeX className="mr-2" />
               )}
               {track.muted ? 'Unmute Track' : 'Mute Track'}
-              <ContextMenuShortcut>M</ContextMenuShortcut>
+              <ContextMenuShortcut>
+                <ShortcutKbdStack combos={muteKeys} />
+              </ContextMenuShortcut>
             </ContextMenuItem>
           )}
 
@@ -201,7 +215,9 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
             {hasMultipleSelected
               ? `Delete ${selectedCount} Tracks`
               : 'Delete Track'}
-            <ContextMenuShortcut>Del</ContextMenuShortcut>
+            <ContextMenuShortcut>
+              <ShortcutKbdStack combos={deleteKeys} />
+            </ContextMenuShortcut>
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>

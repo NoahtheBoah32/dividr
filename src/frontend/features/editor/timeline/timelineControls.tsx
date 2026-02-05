@@ -9,7 +9,6 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/frontend/components/ui/dropdown-menu';
-import { Kbd } from '@/frontend/components/ui/kbd';
 import { Separator } from '@/frontend/components/ui/separator';
 import { Slider } from '@/frontend/components/ui/slider';
 import {
@@ -17,6 +16,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/frontend/components/ui/tooltip';
+import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
+import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
+import { formatShortcutCombos } from '@/frontend/features/editor/shortcuts/shortcutUtils';
 import {
   ChevronDown,
   CopyPlus,
@@ -130,6 +132,8 @@ const PlayPauseButton: React.FC<{
 }> = React.memo(({ onPlayToggle }) => {
   const isPlaying = useVideoEditorStore((state) => state.playback.isPlaying);
   const isRendering = useVideoEditorStore((state) => state.render.isRendering);
+  const playbackKeys = useShortcutKeys('playback-toggle', ['space']);
+  const playbackShortcutText = formatShortcutCombos(playbackKeys);
 
   return (
     <Tooltip>
@@ -148,7 +152,11 @@ const PlayPauseButton: React.FC<{
         </Button>
       </TooltipTrigger>
       <TooltipContent>
-        {isRendering ? 'Exporting...' : isPlaying ? 'Pause' : 'Play'} (Space)
+        {isRendering
+          ? 'Exporting...'
+          : `${isPlaying ? 'Pause' : 'Play'}${
+              playbackShortcutText ? ` (${playbackShortcutText})` : ''
+            }`}
       </TooltipContent>
     </Tooltip>
   );
@@ -192,6 +200,8 @@ const DeleteButton: React.FC = React.memo(() => {
   const removeSelectedTracks = useVideoEditorStore(
     (state) => state.removeSelectedTracks,
   );
+  const deleteKeys = useShortcutKeys('track-delete', ['del', 'backspace']);
+  const deleteShortcutText = formatShortcutCombos(deleteKeys);
 
   const handleDelete = useCallback(() => {
     removeSelectedTracks();
@@ -199,8 +209,8 @@ const DeleteButton: React.FC = React.memo(() => {
 
   const tooltipText =
     selectedTrackIds.length > 0
-      ? `Delete ${selectedTrackIds.length} selected track${selectedTrackIds.length > 1 ? 's' : ''} (Delete)`
-      : 'Delete selected tracks (Delete)';
+      ? `Delete ${selectedTrackIds.length} selected track${selectedTrackIds.length > 1 ? 's' : ''}${deleteShortcutText ? ` (${deleteShortcutText})` : ''}`
+      : `Delete selected tracks${deleteShortcutText ? ` (${deleteShortcutText})` : ''}`;
 
   return (
     <Tooltip>
@@ -231,6 +241,8 @@ const DuplicateButton: React.FC = React.memo(() => {
 
   const beginGroup = useVideoEditorStore((state) => state.beginGroup);
   const endGroup = useVideoEditorStore((state) => state.endGroup);
+  const duplicateKeys = useShortcutKeys('track-duplicate', ['ctrl+d', 'cmd+d']);
+  const duplicateShortcutText = formatShortcutCombos(duplicateKeys);
 
   const handleDuplicate = useCallback(() => {
     if (selectedTrackIds.length === 0) return;
@@ -306,8 +318,8 @@ const DuplicateButton: React.FC = React.memo(() => {
 
   const tooltipText =
     selectedTrackIds.length > 0
-      ? `Duplicate ${selectedTrackIds.length} selected track${selectedTrackIds.length > 1 ? 's' : ''} (Ctrl+D)`
-      : 'Duplicate selected tracks (Ctrl+D)';
+      ? `Duplicate ${selectedTrackIds.length} selected track${selectedTrackIds.length > 1 ? 's' : ''}${duplicateShortcutText ? ` (${duplicateShortcutText})` : ''}`
+      : `Duplicate selected tracks${duplicateShortcutText ? ` (${duplicateShortcutText})` : ''}`;
 
   return (
     <Tooltip>
@@ -764,6 +776,8 @@ const ModeSelector: React.FC = React.memo(() => {
     (state) => state.timeline.isSplitModeActive,
   );
   const setSplitMode = useVideoEditorStore((state) => state.setSplitMode);
+  const selectionToolKeys = useShortcutKeys('track-selection-tool', ['v']);
+  const splitToolKeys = useShortcutKeys('track-toggle-split-mode', ['b', 'c']);
 
   const currentMode = isSplitModeActive ? 'slice' : 'selection';
 
@@ -799,7 +813,7 @@ const ModeSelector: React.FC = React.memo(() => {
           <MousePointer2 className="size-4" />
           <span>Selection Tool</span>
           <DropdownMenuShortcut>
-            <Kbd>V</Kbd>
+            <ShortcutKbdStack combos={selectionToolKeys} />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -809,9 +823,7 @@ const ModeSelector: React.FC = React.memo(() => {
           <Slice className="size-4" />
           <span>Slice Tool</span>
           <DropdownMenuShortcut>
-            <Kbd>B</Kbd>
-            <span className="text-muted-foreground mx-1">/</span>
-            <Kbd>C</Kbd>
+            <ShortcutKbdStack combos={splitToolKeys} />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -906,6 +918,16 @@ const FullscreenButton: React.FC = React.memo(() => {
   const toggleFullscreen = useVideoEditorStore(
     (state) => state.toggleFullscreen,
   );
+  const enterFullscreenKeys = useShortcutKeys('preview-toggle-fullscreen', [
+    'f',
+  ]);
+  const exitFullscreenKeys = useShortcutKeys(
+    'hardcoded-preview-exit-fullscreen',
+    ['escape'],
+  );
+  const fullscreenShortcutText = formatShortcutCombos(
+    isFullscreen ? exitFullscreenKeys : enterFullscreenKeys,
+  );
 
   return (
     <Tooltip>
@@ -915,7 +937,13 @@ const FullscreenButton: React.FC = React.memo(() => {
         </Button>
       </TooltipTrigger>
       <TooltipContent>
-        {isFullscreen ? 'Exit Fullscreen (Esc)' : 'Enter Fullscreen (F)'}
+        {isFullscreen
+          ? `Exit Fullscreen${
+              fullscreenShortcutText ? ` (${fullscreenShortcutText})` : ''
+            }`
+          : `Enter Fullscreen${
+              fullscreenShortcutText ? ` (${fullscreenShortcutText})` : ''
+            }`}
       </TooltipContent>
     </Tooltip>
   );
@@ -931,6 +959,16 @@ export const TimelineControls: React.FC = React.memo(
     const isRendering = useVideoEditorStore(
       (state) => state.render.isRendering,
     );
+    const splitPlayheadKeys = useShortcutKeys('timeline-split-playhead-k', [
+      'k',
+    ]);
+    const snapKeys = useShortcutKeys('timeline-toggle-snap', ['s']);
+    const prevFrameKeys = useShortcutKeys('navigate-frame-prev', ['left']);
+    const nextFrameKeys = useShortcutKeys('navigate-frame-next', ['right']);
+    const splitShortcutText = formatShortcutCombos(splitPlayheadKeys);
+    const snapShortcutText = formatShortcutCombos(snapKeys);
+    const prevFrameShortcutText = formatShortcutCombos(prevFrameKeys);
+    const nextFrameShortcutText = formatShortcutCombos(nextFrameKeys);
 
     // Get current frame non-reactively
     const getCurrentFrame = useCallback(() => {
@@ -972,7 +1010,11 @@ export const TimelineControls: React.FC = React.memo(
                   <SplitSquareHorizontal />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Split at Playhead Ctrl+K</TooltipContent>
+              <TooltipContent>
+                {splitShortcutText
+                  ? `Split at Playhead (${splitShortcutText})`
+                  : 'Split at Playhead'}
+              </TooltipContent>
             </Tooltip>
             <DuplicateButton />
             <DeleteButton />
@@ -987,7 +1029,8 @@ export const TimelineControls: React.FC = React.memo(
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {snapEnabled ? 'Snap Enabled' : 'Snap Disabled'} (S)
+                {snapEnabled ? 'Snap Enabled' : 'Snap Disabled'}
+                {snapShortcutText ? ` (${snapShortcutText})` : ''}
               </TooltipContent>
             </Tooltip>
             <LinkUnlinkButton />
@@ -1016,7 +1059,11 @@ export const TimelineControls: React.FC = React.memo(
                   <SkipBack />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Previous Frame (←)</TooltipContent>
+              <TooltipContent>
+                {prevFrameShortcutText
+                  ? `Previous Frame (${prevFrameShortcutText})`
+                  : 'Previous Frame'}
+              </TooltipContent>
             </Tooltip>
 
             <PlayPauseButton onPlayToggle={handlePlayToggle} />
@@ -1041,7 +1088,11 @@ export const TimelineControls: React.FC = React.memo(
                   <SkipForward />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Next Frame (→)</TooltipContent>
+              <TooltipContent>
+                {nextFrameShortcutText
+                  ? `Next Frame (${nextFrameShortcutText})`
+                  : 'Next Frame'}
+              </TooltipContent>
             </Tooltip>
             <TimeDisplay />
           </div>
