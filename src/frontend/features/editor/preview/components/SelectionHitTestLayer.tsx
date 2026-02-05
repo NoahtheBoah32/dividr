@@ -97,10 +97,7 @@ export const calculateElementBounds = (
     // Dimensions are stored in video space (pixels at base resolution)
     // Need to multiply by renderScale to convert to screen space
     const storedWidth =
-      subtitleTransform.width ||
-      position.width ||
-      track.maxContainerWidth ||
-      0;
+      subtitleTransform.width || position.width || track.maxContainerWidth || 0;
     const storedHeight = subtitleTransform.height || position.height || 0;
 
     // If we have stored dimensions, use them; otherwise estimate

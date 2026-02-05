@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { create } from 'zustand';
 import { ShortcutPreset } from './shortcutPresets';
 import {
@@ -81,7 +82,7 @@ const saveStoredState = (
 const platform = getShortcutPlatform();
 const initialState = loadStoredState(platform);
 
-export const useShortcutStore = create<ShortcutStoreState>((set, get) => ({
+export const useShortcutStore = create<ShortcutStoreState>((set) => ({
   platform,
   activePreset: initialState.preset,
   userOverrides: initialState.overrides,

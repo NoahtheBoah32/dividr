@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { projectService } from '@/backend/services/projectService';
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';

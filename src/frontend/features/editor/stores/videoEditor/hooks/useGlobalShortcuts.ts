@@ -1,14 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import {
+  useShortcutCaptureState,
+  useShortcutKeys,
+} from '@/frontend/features/editor/shortcuts/shortcutHooks';
 import { useMemo } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { useVideoEditorStore } from '../index';
 import { createGlobalShortcuts } from '../shortcuts/globalShortcuts';
 import { useProjectShortcutDialog } from '../shortcuts/hooks/useProjectShortcutDialog';
 import { useProjectShortcutHandlers } from '../shortcuts/hooks/useProjectShortcutHandlers';
-import {
-  useShortcutCaptureState,
-  useShortcutKeys,
-} from '@/frontend/features/editor/shortcuts/shortcutHooks';
 
 /**
  * Hook for global keyboard shortcuts

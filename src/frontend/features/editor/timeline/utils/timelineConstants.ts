@@ -203,8 +203,6 @@ export const getTrackItemHeightClasses = (trackTypeOrId: string): string => {
         return 'h-9'; // 36px
       case 38:
         return 'h-[38px]'; // 38px
-      case 46:
-        return 'h-[46px]'; // 46px
       case 44:
         return 'h-11'; // 44px
       case 46:

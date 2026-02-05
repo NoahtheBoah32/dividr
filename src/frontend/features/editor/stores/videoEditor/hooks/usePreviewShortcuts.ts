@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useMemo } from 'react';
-import { useHotkeys } from 'react-hotkeys-hook';
-import { useVideoEditorStore } from '../index';
-import { createPreviewShortcuts } from '../shortcuts/previewShortcuts';
 import {
   useShortcutCaptureState,
   useShortcutKeys,
 } from '@/frontend/features/editor/shortcuts/shortcutHooks';
+import { useMemo } from 'react';
+import { useHotkeys } from 'react-hotkeys-hook';
+import { useVideoEditorStore } from '../index';
+import { createPreviewShortcuts } from '../shortcuts/previewShortcuts';
 
 /**
  * Hook for preview keyboard shortcuts

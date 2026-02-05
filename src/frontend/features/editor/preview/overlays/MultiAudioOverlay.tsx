@@ -368,7 +368,10 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
         // CRITICAL: Use the track's stored engine to retrieve the correct cached audio
         // Without this, DeepFilterNet2 processed audio would be retrieved from the wrong cache key
         const engine = request.track.noiseReductionEngine || 'ffmpeg';
-        const processedUrl = NoiseReductionCache.getProcessedUrl(sourceId, engine);
+        const processedUrl = NoiseReductionCache.getProcessedUrl(
+          sourceId,
+          engine,
+        );
         if (processedUrl) {
           resolvedSourceUrl = processedUrl;
         }

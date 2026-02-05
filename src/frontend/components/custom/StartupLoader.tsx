@@ -22,8 +22,7 @@ const StartupLoader = ({
   isVisible = true,
 }: StartupLoaderProps) => {
   const { theme, resolvedTheme } = useTheme();
-  const isDarkTheme =
-    (theme === 'system' ? resolvedTheme : theme) !== 'light';
+  const isDarkTheme = (theme === 'system' ? resolvedTheme : theme) !== 'light';
   const [dots, setDots] = useState('');
 
   // Animated dots effect

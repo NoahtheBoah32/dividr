@@ -1,12 +1,13 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { HotkeysDialog } from '@/frontend/components/custom/HotkeysDialog';
 import { NavigationBlockerDialog } from '@/frontend/components/custom/NavigationAlertDialog';
 import { Button } from '@/frontend/components/ui/button';
 import { BatchDuplicateMediaDialog } from '@/frontend/features/editor/components/dialogs/batchDuplicateMediaDialog';
 import { FpsWarningDialog } from '@/frontend/features/editor/components/dialogs/fpsWarningDialog';
 import { KaraokeConfirmationDialog } from '@/frontend/features/editor/components/dialogs/karaokeConfirmationDialog';
-import ProxyWarningDialog from '@/frontend/features/editor/components/dialogs/proxyWarningDialog';
+import { ProxyWarningDialog } from '@/frontend/features/editor/components/dialogs/proxyWarningDialog';
 import { NoiseReductionEngineModal } from '@/frontend/features/editor/components/properties-panel/audio/NoiseReductionEngineModal';
-import ThumbnailChangerDialog from '@/frontend/features/editor/components/thumbnailChangerDialog';
+import { ThumbnailChangerDialog } from '@/frontend/features/editor/components/thumbnailChangerDialog';
 import { DuplicateChoice } from '@/frontend/features/editor/stores/videoEditor/slices/mediaLibrarySlice';
 import {
   RenderProcessDialog,
@@ -300,7 +301,7 @@ export const DialogsTest = () => {
         mediaName="subtitle_file.srt"
         existingSubtitleCount={0}
         mode="import"
-        onConfirm={(val) => {
+        onConfirm={() => {
           toast.success('Import confirmed');
         }}
       />

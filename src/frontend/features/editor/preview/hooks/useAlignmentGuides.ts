@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useState } from 'react';
 import { CENTER_ALIGNMENT_TOLERANCE } from '../core/constants';
 import { AlignmentGuide } from '../core/types';

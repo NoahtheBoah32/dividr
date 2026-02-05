@@ -216,7 +216,9 @@ class BackgroundTaskQueue {
       this.stats.completed++;
 
       console.log(
-        `✅ Task ${task.id} completed in ${task.completedAt - task.startedAt!}ms`,
+        `✅ Task ${task.id} completed in ${
+          (task.completedAt ?? 0) - (task.startedAt ?? 0)
+        }ms`,
       );
 
       task.onComplete?.(result);

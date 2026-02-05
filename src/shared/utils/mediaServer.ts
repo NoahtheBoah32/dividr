@@ -22,4 +22,3 @@ export const toMediaServerUrl = (
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   return `http://${MEDIA_SERVER_HOST}:${port}/${encodeURIComponent(pathOrUrl)}`;
 };
-

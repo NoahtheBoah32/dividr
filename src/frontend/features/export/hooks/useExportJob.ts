@@ -510,7 +510,10 @@ function convertTracksToFFmpegInputs(
     if (track.type === 'audio' && track.noiseReductionEnabled) {
       // CRITICAL: Use the track's stored engine to retrieve the correct cached audio
       const engine = track.noiseReductionEngine || 'ffmpeg';
-      const processedPath = NoiseReductionCache.getProcessedPath(track.source, engine);
+      const processedPath = NoiseReductionCache.getProcessedPath(
+        track.source,
+        engine,
+      );
       if (processedPath) {
         resolvedPath = processedPath;
         console.log(

@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useMemo } from 'react';
-import { useHotkeys } from 'react-hotkeys-hook';
-import { useVideoEditorStore } from '../index';
-import { createTrackShortcuts } from '../shortcuts/trackShortcuts';
 import {
   useShortcutCaptureState,
   useShortcutKeys,
 } from '@/frontend/features/editor/shortcuts/shortcutHooks';
+import { useMemo } from 'react';
+import { useHotkeys } from 'react-hotkeys-hook';
+import { useVideoEditorStore } from '../index';
+import { createTrackShortcuts } from '../shortcuts/trackShortcuts';
 
 /**
  * Hook for track-level keyboard shortcuts
@@ -41,10 +41,7 @@ export const useTrackShortcuts = () => {
     'track-toggle-split-mode',
     trackShortcuts[6].keys,
   );
-  const muteKeys = useShortcutKeys(
-    'track-toggle-mute',
-    trackShortcuts[7].keys,
-  );
+  const muteKeys = useShortcutKeys('track-toggle-mute', trackShortcuts[7].keys);
   const deleteKeys = useShortcutKeys('track-delete', trackShortcuts[8].keys);
   const deselectKeys = useShortcutKeys(
     'track-deselect',

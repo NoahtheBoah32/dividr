@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { generateContentSignatureFromPath } from '@/frontend/utils/contentSignature';
 import { FileIntegrityValidator } from '@/frontend/utils/fileValidator';

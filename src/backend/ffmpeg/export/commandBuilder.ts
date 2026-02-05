@@ -477,9 +477,7 @@ function handleFileInputs(job: VideoEditJob, cmd: CommandParts): void {
 
     // Verify file exists before adding as input
     if (!fs.existsSync(path)) {
-      console.error(
-        `❌ File does not exist, skipping input ${index}: ${path}`,
-      );
+      console.error(`❌ File does not exist, skipping input ${index}: ${path}`);
       throw new Error(`Input file does not exist: ${path}`);
     }
 

@@ -36,8 +36,7 @@ import { useLayout } from './hooks/useLayout';
  */
 const Projects = () => {
   const { theme, resolvedTheme } = useTheme();
-  const isDarkTheme =
-    (theme === 'system' ? resolvedTheme : theme) !== 'light';
+  const isDarkTheme = (theme === 'system' ? resolvedTheme : theme) !== 'light';
   const navigate = useNavigate();
 
   const {
