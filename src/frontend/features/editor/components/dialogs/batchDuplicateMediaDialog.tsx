@@ -9,10 +9,9 @@ import {
   AlertDialogTitle,
 } from '@/frontend/components/ui/alert-dialog';
 import { buttonVariants } from '@/frontend/components/ui/button';
-import { Checkbox } from '@/frontend/components/ui/checkbox';
 import { ScrollArea } from '@/frontend/components/ui/scroll-area';
 import { cn } from '@/frontend/utils/utils';
-import { FileCheck } from 'lucide-react';
+import { AlertTriangle, FileCheck } from 'lucide-react';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   DuplicateChoice,
@@ -117,8 +116,9 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
               : `${duplicates.length} Duplicates Detected`}
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
-            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
-              <p className="text-amber-600 dark:text-amber-400 font-medium text-sm">
+            <div className="rounded-md bg-amber-600/10 p-3 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <p className="text-foreground">
                 {isSingleDuplicate
                   ? 'This file already exists in your media library.'
                   : 'These files already exist in your media library.'}
@@ -141,7 +141,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
                   className={cn(
                     'text-xs px-2 py-1 rounded transition-colors',
                     allSelected
-                      ? 'text-muted-foreground'
+                      ? 'text-secondary bg-secondary/10'
                       : 'text-primary hover:bg-primary/10',
                   )}
                   disabled={allSelected}
@@ -157,7 +157,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
                   className={cn(
                     'text-xs px-2 py-1 rounded transition-colors',
                     noneSelected
-                      ? 'text-muted-foreground'
+                      ? 'text-amber-600 dark:text-amber-400 bg-amber-600/10'
                       : 'text-primary hover:bg-primary/10',
                   )}
                   disabled={noneSelected}
@@ -184,21 +184,13 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
                     key={dup.id}
                     htmlFor={`dup-${dup.id}`}
                     className={cn(
-                      'flex items-center gap-3 p-3 min-w-0 flex-1 rounded-md border transition-colors cursor-pointer',
+                      'flex items-center gap-3 p-3 min-w-0 flex-1 rounded-md transition-colors cursor-pointer',
                       isChecked
-                        ? 'bg-blue-500/5 border-blue-500/30'
-                        : 'bg-muted/30 border-muted-foreground/20 hover:bg-muted/50',
+                        ? 'bg-secondary/5'
+                        : 'bg-muted/30 hover:bg-muted/50',
                     )}
+                    onClick={() => handleToggleItem(dup.id)}
                   >
-                    {/* Checkbox */}
-                    <Checkbox
-                      id={`dup-${dup.id}`}
-                      checked={isChecked}
-                      onCheckedChange={() => handleToggleItem(dup.id)}
-                      className="flex-shrink-0"
-                      aria-label={`Keep both versions of ${dup.pendingFileName}`}
-                    />
-
                     {/* Thumbnail */}
                     {dup.existingMedia.thumbnail ? (
                       <img
@@ -227,11 +219,11 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
                       className={cn(
                         'text-xs px-2 py-0.5 rounded-full flex-shrink-0',
                         isChecked
-                          ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
-                          : 'bg-muted text-muted-foreground',
+                          ? 'bg-secondary/20 text-secondary'
+                          : 'bg-amber-600/10 text-amber-600 dark:text-amber-400',
                       )}
                     >
-                      {isChecked ? 'Keep Both' : 'Skip'}
+                      {isChecked ? 'Keep' : 'Skip'}
                     </span>
                   </label>
                 );
@@ -242,15 +234,16 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
 
         {/* Summary for multiple items */}
         {duplicates.length > 1 && (
-          <div className="flex items-center gap-4 pt-2 border-t text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 pt-2 border-t text-xs text-muted-foreground">
             <span>
-              <span className="text-blue-600 dark:text-blue-400 font-medium">
+              <span className="text-secondary font-medium">
                 {keepItems.size}
               </span>{' '}
-              to keep both
+              to keep
             </span>
+            <span className="text-border">|</span>
             <span>
-              <span className="text-muted-foreground font-medium">
+              <span className="text-amber-600 dark:text-amber-400 font-medium">
                 {duplicates.length - keepItems.size}
               </span>{' '}
               to skip

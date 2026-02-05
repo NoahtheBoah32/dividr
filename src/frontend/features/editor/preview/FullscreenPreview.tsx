@@ -55,8 +55,8 @@ export const FullscreenPreview: React.FC = () => {
 
     if (isWindows && window.appControl?.setTitlebarOverlay) {
       window.appControl.setTitlebarOverlay({
-        color: '#000000',
-        symbolColor: '#000000',
+        color: '#171717',
+        symbolColor: '#171717',
         height: 0,
       });
     }

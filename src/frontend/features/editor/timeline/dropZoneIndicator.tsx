@@ -104,7 +104,10 @@ export const DropZoneIndicator: React.FC<DropZoneIndicatorProps> = React.memo(
     }
 
     // Calculate visible portion (clip to viewport)
-    let clippedTop = viewportTop;
+    let clippedTop =
+      !targetRow.includes('subtitle') && !targetRow.includes('text')
+        ? viewportTop - 4
+        : viewportTop;
     let clippedHeight = position.height;
 
     if (viewportHeight !== undefined) {

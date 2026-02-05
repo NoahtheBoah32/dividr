@@ -75,8 +75,8 @@ const titlebarOverlayState: {
   symbolColor: string;
   height?: number;
 } = {
-  color: '#09090b',
-  symbolColor: '#09090b',
+  color: '#171717',
+  symbolColor: '#171717',
 };
 // Dynamic import of ffmpeg binaries to avoid module resolution issues
 let ffmpegPath: string | null = null;
@@ -4341,7 +4341,7 @@ const createWindow = () => {
     minWidth: 1280,
     minHeight: 520,
     show: false, // Don't show immediately - wait for ready-to-show
-    backgroundColor: '#09090b', // Match loader background to prevent flash
+    backgroundColor: '#171717', // Match loader background to prevent flash
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),

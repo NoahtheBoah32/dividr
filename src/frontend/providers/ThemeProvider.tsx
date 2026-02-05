@@ -100,13 +100,13 @@ export function ThemeProvider({
       const foreground = styles.getPropertyValue('--foreground').trim();
 
       const color = isPreviewFullscreen
-        ? '#000000'
-        : resolveCssColor(background, isDarkTheme ? '#09090b' : '#ffffff');
+        ? '#171717'
+        : resolveCssColor(background, isDarkTheme ? '#171717' : '#ffffff');
       const symbolColor = isPreviewFullscreen
-        ? '#000000'
-        : resolveCssColor(foreground, isDarkTheme ? '#ffffff' : '#111111');
+        ? '#171717'
+        : resolveCssColor(foreground, isDarkTheme ? '#ffffff' : '#171717');
       const effectiveSymbolColor = isPreviewFullscreen
-        ? '#000000'
+        ? '#171717'
         : isTitlebarReady()
           ? symbolColor
           : color;

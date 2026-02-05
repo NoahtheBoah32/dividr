@@ -112,11 +112,11 @@ module.exports = {
         // Legacy colors for backwards compatibility
         titleBar: {
           DEFAULT: '#E6E7EB',
-          dark: '#000000',
+          dark: '#171717',
         },
         body: {
           DEFAULT: '#E6E7EB',
-          dark: '#000000',
+          dark: '#171717',
         },
         highlight: {
           DEFAULT: '#1ED760',
