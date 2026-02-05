@@ -939,8 +939,8 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 className={cn(
                   'absolute top-1/2 -translate-y-1/2 w-1.5 cursor-trim z-20 rounded-r flex items-center justify-center',
                   track.type === 'text' || track.type === 'subtitle'
-                    ? 'sm:h-3 md:h-4 lg:h-5'
-                    : 'sm:h-3 md:h-7 lg:h-8',
+                    ? 'sm:h-3 md:h-4 lg:h-4'
+                    : 'sm:h-3 md:h-7 lg:h-6',
                   isResizing === 'left' ? 'bg-blue-500' : 'bg-secondary',
                 )}
                 style={{ left }}
@@ -953,8 +953,8 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 className={cn(
                   'absolute top-1/2 -translate-y-1/2 w-1.5 cursor-trim z-20 rounded-l flex items-center justify-center',
                   track.type === 'text' || track.type === 'subtitle'
-                    ? 'sm:h-3 md:h-4 lg:h-5'
-                    : 'sm:h-3 md:h-6 lg:h-8',
+                    ? 'sm:h-3 md:h-4 lg:h-4'
+                    : 'sm:h-3 md:h-6 lg:h-6',
                   isResizing === 'right' ? 'bg-blue-500' : 'bg-secondary',
                 )}
                 style={{ left: left + width - 6 }}

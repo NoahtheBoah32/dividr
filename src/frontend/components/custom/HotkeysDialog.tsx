@@ -86,17 +86,18 @@ const HotkeyItemComponent = React.forwardRef<HTMLDivElement, HotkeyItemProps>(
       <div
         ref={ref}
         className={cn(
-          'flex items-start justify-between py-2 px-3 rounded-lg transition-all duration-150 group gap-4',
+          'flex items-start justify-between py-2 px-3 mx-1.5 rounded-lg transition-all duration-150 group gap-4',
           'hover:bg-muted/40',
           'cursor-default',
-          isHighlighted && 'ring-2 ring-primary/60 ring-offset-2',
+          isHighlighted &&
+            'ring-2 ring-destructive focus:outline-none focus:ring-0',
           isActive && 'bg-muted/60 ring-1 ring-primary/50',
           showConflict &&
             'p-0 focus:outline-none focus:ring-0 ring-0 hover:bg-transparent',
         )}
       >
         <div className="flex items-center gap-2">
-          <span className="text-sm text-foreground/90 group-hover:text-foreground pt-0.5">
+          <span className="text-normal text-foreground/90 group-hover:text-foreground pt-0.5">
             {description}
           </span>
           {isActive ? (
@@ -252,13 +253,13 @@ const HotkeySectionComponent: React.FC<HotkeySectionProps> = ({
                       <X className="h-4 w-4" />
                     </button>
                   </AlertAction>
-                  <TriangleAlert className="h-5 w-5 text-white" />
+                  <TriangleAlert className="h-4 w-4 text-white" />
                   <div className="space-y-6">
                     <div className="space-y-1">
-                      <AlertTitle className="text-white">
+                      <AlertTitle className="text-white text-sm">
                         Shortcut Conflict Detected
                       </AlertTitle>
-                      <AlertDescription className="text-white/80">
+                      <AlertDescription className="text-white/80 text-xs">
                         {conflict
                           ? `This combination is already assigned to ‘${conflict.conflictAction}’. Please choose a different key combination.`
                           : ''}
@@ -760,7 +761,7 @@ export const HotkeysDialog: React.FC<HotkeysDialogProps> = ({
                     <div key={group.name} className="space-y-4">
                       <div className="flex items-center gap-3">
                         <div className="h-[2px] w-2 bg-primary rounded-full" />
-                        <h2 className="text-xs font-bold tracking-[0.2em] text-primary/80 uppercase">
+                        <h2 className="text-sm font-bold tracking-[0.2em] text-primary/80 uppercase">
                           {group.name}
                         </h2>
                         <div className="flex-1 h-[1px] bg-gradient-to-r from-primary/20 via-border/50 to-transparent" />
