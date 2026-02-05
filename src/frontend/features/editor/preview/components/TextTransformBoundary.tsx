@@ -151,7 +151,9 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
   // Fixed handle size in pixels (consistent across all zoom levels)
   const HANDLE_SIZE = 10;
   const HANDLE_OFFSET = HANDLE_SIZE / 2;
-  const ROTATION_HANDLE_DISTANCE = 30;
+  const ROTATION_HANDLE_DISTANCE = 60;
+  const ROTATION_HANDLE_SIZE = 40;
+  const ROTATION_ICON_SIZE = 24;
 
   // Convert normalized coordinates to pixel coordinates for rendering
   const normalizedToPixels = useCallback(
@@ -1426,8 +1428,8 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
             <div
               className="transform-handle absolute pointer-events-auto cursor-grab hover:scale-110 transition-transform flex items-center justify-center"
               style={{
-                width: `${20 * handleScale}px`,
-                height: `${20 * handleScale}px`,
+                width: `${ROTATION_HANDLE_SIZE * handleScale}px`,
+                height: `${ROTATION_HANDLE_SIZE * handleScale}px`,
                 bottom: `-${ROTATION_HANDLE_DISTANCE * handleScale}px`,
                 left: '50%',
                 transform: `translateX(-50%)`,
@@ -1437,7 +1439,7 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
               onMouseDown={handleRotateMouseDown}
             >
               <RefreshCw
-                size={12 * handleScale}
+                size={ROTATION_ICON_SIZE * handleScale}
                 color="white"
                 strokeWidth={2.5}
               />
