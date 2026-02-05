@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileStream: (filePath: string, start?: number, end?: number) =>
     ipcRenderer.invoke('get-file-stream', filePath, start, end),
 
+  // Media cache helpers
+  getMediaCacheDir: () => ipcRenderer.invoke('get-media-cache-dir'),
+  mediaPathExists: (pathOrUrl: string) =>
+    ipcRenderer.invoke('media-path-exists', pathOrUrl),
+
   // File processing methods
   processDroppedFiles: (
     fileBuffers: Array<{

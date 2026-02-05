@@ -1,3 +1,5 @@
+import { toMediaServerUrl } from '@/shared/utils/mediaServer';
+
 export interface ThumbnailOptions {
   videoPath: string;
   /** Optional content-based signature for stable caching across reimports */
@@ -47,6 +49,8 @@ export class VideoThumbnailGenerator {
     PersistentThumbnailCacheEntry
   >();
   private static cacheInitialized = false;
+  private static cacheValidationTimer: ReturnType<typeof setInterval> | null =
+    null;
   private static readonly CACHE_STORAGE_KEY = 'dividr_thumbnail_cache_v1';
   private static readonly MAX_PERSISTENT_CACHE_SIZE = 100;
 
@@ -73,6 +77,103 @@ export class VideoThumbnailGenerator {
     }
 
     this.cacheInitialized = true;
+    this.scheduleCacheValidation();
+  }
+
+  private static joinPath(...parts: string[]): string {
+    if (parts.length === 0) return '';
+    return parts
+      .filter((part) => part && part.length > 0)
+      .map((part, index) => {
+        if (index === 0) {
+          return part.replace(/[\\/]+$/, '');
+        }
+        return part.replace(/^[\\/]+/, '').replace(/[\\/]+$/, '');
+      })
+      .join('/');
+  }
+
+  private static async getMediaCacheBaseDir(): Promise<string> {
+    if (
+      typeof window === 'undefined' ||
+      !window.electronAPI?.getMediaCacheDir
+    ) {
+      return 'public';
+    }
+
+    try {
+      const result = await window.electronAPI.getMediaCacheDir();
+      if (result?.success && result.path) {
+        return result.path;
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to get media cache directory:', error);
+    }
+
+    return 'public';
+  }
+
+  private static async mediaPathExists(pathOrUrl: string): Promise<boolean> {
+    if (!pathOrUrl) return false;
+
+    if (typeof window !== 'undefined' && window.electronAPI?.mediaPathExists) {
+      try {
+        const result = await window.electronAPI.mediaPathExists(pathOrUrl);
+        return !!result?.exists;
+      } catch {
+        return false;
+      }
+    }
+
+    if (pathOrUrl.startsWith('http')) {
+      try {
+        const response = await fetch(pathOrUrl, { method: 'HEAD' });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  private static scheduleCacheValidation(): void {
+    if (this.cacheValidationTimer || typeof window === 'undefined') return;
+
+    this.cacheValidationTimer = setInterval(
+      () => {
+        void this.pruneInvalidCacheEntries(10);
+      },
+      5 * 60 * 1000,
+    );
+
+    void this.pruneInvalidCacheEntries(10);
+  }
+
+  private static async pruneInvalidCacheEntries(maxChecks = 10): Promise<void> {
+    if (typeof window === 'undefined' || !window.electronAPI?.mediaPathExists) {
+      return;
+    }
+
+    let checked = 0;
+    let removed = 0;
+
+    for (const [key, entry] of this.persistentCache.entries()) {
+      if (checked >= maxChecks) break;
+      checked++;
+
+      const isValid = await this.validateThumbnailsExist(entry.thumbnails);
+      if (!isValid) {
+        this.persistentCache.delete(key);
+        this.thumbnailCache.delete(key);
+        this.cacheAccessTimes.delete(key);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      this.saveCacheToStorage();
+    }
   }
 
   private static saveCacheToStorage(): void {
@@ -126,17 +227,27 @@ export class VideoThumbnailGenerator {
     this.cleanupCache();
   }
 
-  private static getCachedEntryByKey(
+  private static async getCachedEntryByKey(
     cacheKey: string,
-  ): { cacheKey: string; thumbnails: VideoThumbnail[] } | null {
+  ): Promise<{ cacheKey: string; thumbnails: VideoThumbnail[] } | null> {
     const cached = this.thumbnailCache.get(cacheKey);
     if (cached) {
+      const isValid = await this.validateThumbnailsExist(cached);
+      if (!isValid) {
+        this.removeCacheEntryByKey(cacheKey);
+        return null;
+      }
       this.cacheAccessTimes.set(cacheKey, Date.now());
       return { cacheKey, thumbnails: cached };
     }
 
     const persistent = this.persistentCache.get(cacheKey);
     if (persistent?.thumbnails?.length) {
+      const isValid = await this.validateThumbnailsExist(persistent.thumbnails);
+      if (!isValid) {
+        this.removeCacheEntryByKey(cacheKey);
+        return null;
+      }
       persistent.lastAccessed = Date.now();
       this.cacheAccessTimes.set(cacheKey, Date.now());
       this.thumbnailCache.set(cacheKey, persistent.thumbnails);
@@ -146,9 +257,9 @@ export class VideoThumbnailGenerator {
     return null;
   }
 
-  static getCachedThumbnailEntry(
+  static async getCachedThumbnailEntry(
     options: ThumbnailOptions,
-  ): { cacheKey: string; thumbnails: VideoThumbnail[] } | null {
+  ): Promise<{ cacheKey: string; thumbnails: VideoThumbnail[] } | null> {
     this.initializeCache();
     const cacheKey = this.createCacheKey(options);
     return this.getCachedEntryByKey(cacheKey);
@@ -165,12 +276,36 @@ export class VideoThumbnailGenerator {
     if (!url) return false;
     if (url.startsWith('data:')) return true;
 
+    const exists = await this.mediaPathExists(url);
+    if (exists) return true;
+
     try {
       const response = await fetch(url, { method: 'HEAD' });
       return response.ok;
     } catch {
       return false;
     }
+  }
+
+  private static async validateThumbnailsExist(
+    thumbnails: VideoThumbnail[],
+  ): Promise<boolean> {
+    if (!thumbnails || thumbnails.length === 0) return false;
+
+    const sampleUrls = new Set<string>();
+    sampleUrls.add(thumbnails[0]?.url);
+    if (thumbnails.length > 2) {
+      sampleUrls.add(thumbnails[Math.floor(thumbnails.length / 2)]?.url);
+    }
+    sampleUrls.add(thumbnails[thumbnails.length - 1]?.url);
+
+    for (const url of sampleUrls) {
+      if (!url) continue;
+      const isValid = await this.validateThumbnailUrl(url);
+      if (!isValid) return false;
+    }
+
+    return true;
   }
 
   /**
@@ -184,7 +319,7 @@ export class VideoThumbnailGenerator {
     const cacheKey = this.createCacheKey(options);
 
     // Return cached result if available
-    const cachedEntry = this.getCachedEntryByKey(cacheKey);
+    const cachedEntry = await this.getCachedEntryByKey(cacheKey);
     if (cachedEntry?.thumbnails) {
       return {
         success: true,
@@ -234,7 +369,12 @@ export class VideoThumbnailGenerator {
       );
 
       // Generate output directory path
-      const outputDir = `public/thumbnails/${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const cacheBase = await this.getMediaCacheBaseDir();
+      const outputDir = this.joinPath(
+        cacheBase,
+        'thumbnails',
+        `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      );
 
       // Note: Output directory will be created by the thumbnail generation process
       console.log(`📁 Thumbnails will be stored in: ${outputDir}`);
@@ -243,11 +383,15 @@ export class VideoThumbnailGenerator {
       return await this.extractWithFFmpeg(options, cacheKey, outputDir);
     } catch (error) {
       console.error('Error generating video thumbnails:', error);
-      return {
-        success: false,
-        thumbnails: [],
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+      try {
+        return await this.generatePlaceholderThumbnails(options, cacheKey);
+      } catch (placeholderError) {
+        return {
+          success: false,
+          thumbnails: [],
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
     }
   }
 
@@ -321,10 +465,10 @@ export class VideoThumbnailGenerator {
   /**
    * Get cached thumbnails if available
    */
-  static getCachedThumbnails(
+  static async getCachedThumbnails(
     options: ThumbnailOptions,
-  ): VideoThumbnail[] | null {
-    const entry = this.getCachedThumbnailEntry(options);
+  ): Promise<VideoThumbnail[] | null> {
+    const entry = await this.getCachedThumbnailEntry(options);
     if (entry?.thumbnails) {
       console.log(`✅ Cache HIT for ${entry.cacheKey}`);
       return entry.thumbnails;
@@ -383,9 +527,10 @@ export class VideoThumbnailGenerator {
     // Check if the custom FFmpeg method is available (requires app restart)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (!(window.electronAPI as any).runCustomFFmpeg) {
-      throw new Error(
-        'FFmpeg thumbnail extraction requires app restart to enable new IPC handlers',
+      console.warn(
+        'FFmpeg thumbnail extraction not available, using placeholders',
       );
+      return this.generatePlaceholderThumbnails(options, cacheKey);
     }
 
     const totalThumbnails = Math.ceil(duration / intervalSeconds);
@@ -425,24 +570,46 @@ export class VideoThumbnailGenerator {
 
       console.log('✅ FFmpeg thumbnail extraction successful');
 
-      // Generate thumbnail metadata
+      const outputFiles = (result.output || []).slice().sort();
+      if (outputFiles.length === 0) {
+        console.warn(
+          '⚠️ No thumbnail files were generated, using placeholders',
+        );
+        return this.generatePlaceholderThumbnails(options, cacheKey);
+      }
+
+      // Generate thumbnail metadata from actual files
       const thumbnails: VideoThumbnail[] = [];
-      for (let i = 0; i < totalThumbnails; i++) {
-        const trackTimestamp = i * intervalSeconds;
+      for (const file of outputFiles) {
+        const match = file.match(/thumb_(\d+)\.jpg$/);
+        const index = match ? parseInt(match[1], 10) : thumbnails.length + 1;
+        const trackTimestamp = (index - 1) * intervalSeconds;
+        if (trackTimestamp > duration) continue;
+
         const frameNumber = Math.floor(trackTimestamp * fps);
-        const thumbnailFilename = `thumb_${String(i + 1).padStart(4, '0')}.jpg`;
+        const filePath = this.joinPath(outputDir, file);
+        const exists = await this.mediaPathExists(filePath);
+        if (!exists) {
+          console.warn(`⚠️ Thumbnail file missing on disk: ${filePath}`);
+          continue;
+        }
 
         // Use the media server URL for serving thumbnails
-        const thumbnailUrl = `http://localhost:3001/${outputDir}/${thumbnailFilename}`;
+        const thumbnailUrl = toMediaServerUrl(filePath);
 
         thumbnails.push({
-          id: `${cacheKey}_${i}`,
+          id: `${cacheKey}_${index}`,
           timestamp: trackTimestamp,
           frameNumber,
           url: thumbnailUrl,
           width,
           height,
         });
+      }
+
+      if (thumbnails.length === 0) {
+        console.warn('⚠️ No valid thumbnails found, using placeholders');
+        return this.generatePlaceholderThumbnails(options, cacheKey);
       }
 
       // Cache the result with cleanup

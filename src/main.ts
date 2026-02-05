@@ -10,7 +10,6 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  cancelCurrentFfmpeg,
   runFfmpeg,
   runFfmpegWithProgress,
 } from './backend/ffmpeg/export/ffmpegRunner';
@@ -203,7 +202,62 @@ interface FFmpegQueueTask {
 
 const ffmpegTaskQueue: FFmpegQueueTask[] = [];
 let isProcessingFFmpegQueue = false;
-let currentQueuedFFmpegProcess: ReturnType<typeof spawn> | null = null;
+
+// Global FFmpeg process tracking
+let currentFfmpegProcess: ReturnType<typeof spawn> | null = null;
+let currentFfmpegStartedAt: number | null = null;
+let currentFfmpegTimeout: NodeJS.Timeout | null = null;
+const DEFAULT_FFMPEG_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const STALE_FFMPEG_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+
+function clearCurrentFfmpegProcess(): void {
+  if (currentFfmpegTimeout) {
+    clearTimeout(currentFfmpegTimeout);
+    currentFfmpegTimeout = null;
+  }
+  currentFfmpegProcess = null;
+  currentFfmpegStartedAt = null;
+}
+
+function killCurrentFfmpegProcess(reason: string): boolean {
+  if (!currentFfmpegProcess || currentFfmpegProcess.killed) {
+    clearCurrentFfmpegProcess();
+    return false;
+  }
+
+  console.warn(`🛑 Killing FFmpeg process (${reason})`);
+  const proc = currentFfmpegProcess;
+  try {
+    proc.kill('SIGTERM');
+  } catch (error) {
+    console.warn('⚠️ Failed to send SIGTERM to FFmpeg:', error);
+  }
+
+  setTimeout(() => {
+    if (proc && !proc.killed) {
+      try {
+        proc.kill('SIGKILL');
+      } catch (error) {
+        console.warn('⚠️ Failed to send SIGKILL to FFmpeg:', error);
+      }
+    }
+    clearCurrentFfmpegProcess();
+  }, 2000);
+
+  return true;
+}
+
+function ensureNoStaleFfmpegProcess(): void {
+  if (!currentFfmpegProcess || !currentFfmpegStartedAt) return;
+  if (currentFfmpegProcess.killed || currentFfmpegProcess.exitCode !== null) {
+    clearCurrentFfmpegProcess();
+    return;
+  }
+  const age = Date.now() - currentFfmpegStartedAt;
+  if (age > STALE_FFMPEG_THRESHOLD_MS) {
+    killCurrentFfmpegProcess(`stale-process (${Math.round(age / 1000)}s)`);
+  }
+}
 
 /**
  * Add a task to the FFmpeg priority queue.
@@ -275,8 +329,102 @@ async function processFFmpegQueue() {
   }
 
   isProcessingFFmpegQueue = false;
-  currentQueuedFFmpegProcess = null;
   console.log('✅ FFmpeg queue empty');
+}
+
+// =============================================================================
+
+interface QueuedFfmpegOptions {
+  priority: FFmpegPriority;
+  timeoutMs?: number;
+  windowsHide?: boolean;
+  stdio?: Array<'pipe' | 'ignore'>;
+  onStdout?: (text: string) => void;
+  onStderr?: (text: string) => void;
+  binaryPath?: string;
+  onStart?: (process: ReturnType<typeof spawn>) => void;
+}
+
+function runQueuedFfmpeg(
+  args: string[],
+  options: QueuedFfmpegOptions,
+): Promise<{
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}> {
+  return queueFFmpegTask(options.priority, () => {
+    return new Promise((resolve, reject) => {
+      const binaryPath = options.binaryPath || ffmpegPath;
+      if (!binaryPath) {
+        reject(
+          new Error(
+            'FFmpeg binary not available. Please ensure ffmpeg-static is properly installed.',
+          ),
+        );
+        return;
+      }
+
+      ensureNoStaleFfmpegProcess();
+
+      const stdio = options.stdio || ['ignore', 'pipe', 'pipe'];
+      const ffmpeg = spawn(binaryPath, args, {
+        stdio,
+        windowsHide: options.windowsHide ?? true,
+      });
+
+      currentFfmpegProcess = ffmpeg;
+      currentFfmpegStartedAt = Date.now();
+      options.onStart?.(ffmpeg);
+
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+
+      const timeoutMs = options.timeoutMs ?? DEFAULT_FFMPEG_TIMEOUT_MS;
+      if (timeoutMs > 0) {
+        currentFfmpegTimeout = setTimeout(() => {
+          timedOut = true;
+          killCurrentFfmpegProcess(`timeout ${timeoutMs}ms`);
+        }, timeoutMs);
+      }
+
+      if (ffmpeg.stdout) {
+        ffmpeg.stdout.on('data', (data) => {
+          const text = data.toString();
+          stdout += text;
+          options.onStdout?.(text);
+        });
+      }
+
+      if (ffmpeg.stderr) {
+        ffmpeg.stderr.on('data', (data) => {
+          const text = data.toString();
+          stderr += text;
+          options.onStderr?.(text);
+        });
+      }
+
+      const cleanup = () => {
+        if (ffmpeg.stdout) ffmpeg.stdout.removeAllListeners();
+        if (ffmpeg.stderr) ffmpeg.stderr.removeAllListeners();
+        ffmpeg.removeAllListeners();
+        clearCurrentFfmpegProcess();
+      };
+
+      ffmpeg.on('close', (code, signal) => {
+        cleanup();
+        resolve({ code, signal, stdout, stderr, timedOut });
+      });
+
+      ffmpeg.on('error', (error) => {
+        cleanup();
+        reject(error);
+      });
+    });
+  });
 }
 
 // =============================================================================
@@ -734,27 +882,188 @@ const ensurePythonInitialized = async (_reason: string): Promise<void> => {
 // Create a simple HTTP server to serve media files
 let mediaServer: http.Server | null = null;
 const MEDIA_SERVER_PORT = 3001;
+const MEDIA_CACHE_DIR_NAME = 'media-cache';
+const MEDIA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const TEMP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
+const MEDIA_CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+let mediaCacheDir: string | null = null;
+let mediaCacheCleanupTimer: NodeJS.Timeout | null = null;
+
+function getMediaCacheDir(): string {
+  if (mediaCacheDir) return mediaCacheDir;
+  const baseDir = path.join(app.getPath('userData'), MEDIA_CACHE_DIR_NAME);
+  try {
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to ensure media cache directory:', error);
+  }
+  mediaCacheDir = baseDir;
+  return mediaCacheDir;
+}
+
+function resolveMediaPath(input: string): string | null {
+  if (!input) return null;
+
+  let candidate = input;
+
+  // If this is a media server URL, extract the path portion
+  if (/^https?:\/\//i.test(input)) {
+    try {
+      const url = new URL(input);
+      if (
+        (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
+        url.port === String(MEDIA_SERVER_PORT)
+      ) {
+        if (url.pathname === '/media-file' && url.searchParams.has('path')) {
+          const paramPath = url.searchParams.get('path') || '';
+          candidate = decodeURIComponent(paramPath);
+        } else {
+          candidate = decodeURIComponent(url.pathname.slice(1));
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to parse media URL:', error);
+      return null;
+    }
+  }
+
+  // Normalize Windows absolute paths with a leading slash (e.g., /C:\...)
+  if (candidate.startsWith('/') && /^[A-Za-z]:[\\/]/.test(candidate.slice(1))) {
+    candidate = candidate.slice(1);
+  }
+
+  // Resolve relative paths against current working directory
+  const resolved = path.isAbsolute(candidate)
+    ? candidate
+    : path.resolve(candidate);
+
+  return resolved;
+}
+
+function setCorsHeaders(res: http.ServerResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+}
+
+function cleanupMediaCache(): void {
+  const baseDir = getMediaCacheDir();
+  if (!fs.existsSync(baseDir)) return;
+
+  const now = Date.now();
+
+  const pruneDir = (dirPath: string, ttlMs: number): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        pruneDir(fullPath, ttlMs);
+        // Remove empty directories
+        try {
+          if (fs.readdirSync(fullPath).length === 0) {
+            fs.rmdirSync(fullPath);
+          }
+        } catch {
+          // Ignore cleanup errors
+        }
+      } else {
+        try {
+          const stats = fs.statSync(fullPath);
+          if (now - stats.mtimeMs > ttlMs) {
+            fs.unlinkSync(fullPath);
+          }
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    }
+  };
+
+  pruneDir(baseDir, MEDIA_CACHE_TTL_MS);
+
+  const tempDirs = [
+    path.join(os.tmpdir(), 'dividr-audio-extracts'),
+    path.join(os.tmpdir(), 'dividr-transcode'),
+  ];
+
+  for (const tempDir of tempDirs) {
+    if (fs.existsSync(tempDir)) {
+      pruneDir(tempDir, TEMP_CACHE_TTL_MS);
+    }
+  }
+}
+
+function startMediaCacheCleanup(): void {
+  if (mediaCacheCleanupTimer) return;
+  cleanupMediaCache();
+  mediaCacheCleanupTimer = setInterval(
+    cleanupMediaCache,
+    MEDIA_CACHE_CLEANUP_INTERVAL_MS,
+  );
+}
 
 function createMediaServer() {
   mediaServer = http.createServer((req, res) => {
     if (!req.url) {
+      setCorsHeaders(res);
       res.writeHead(404);
       res.end();
       return;
     }
 
-    // Parse the file path from the URL
-    const urlPath = decodeURIComponent(req.url.slice(1)); // Remove leading slash
+    if (req.method === 'OPTIONS') {
+      setCorsHeaders(res);
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    let urlPath = '';
+    try {
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      if (
+        parsedUrl.pathname === '/media-file' &&
+        parsedUrl.searchParams.has('path')
+      ) {
+        const paramPath = parsedUrl.searchParams.get('path') || '';
+        urlPath = decodeURIComponent(paramPath);
+      } else {
+        urlPath = decodeURIComponent(parsedUrl.pathname.slice(1));
+      }
+    } catch (error) {
+      console.error('Error parsing media server URL:', error);
+      setCorsHeaders(res);
+      res.writeHead(400);
+      res.end('Invalid URL');
+      return;
+    }
+
+    const resolvedPath = resolveMediaPath(urlPath);
+    if (!resolvedPath) {
+      setCorsHeaders(res);
+      res.writeHead(400);
+      res.end('Invalid media path');
+      return;
+    }
 
     try {
-      if (!fs.existsSync(urlPath)) {
+      if (!fs.existsSync(resolvedPath)) {
+        setCorsHeaders(res);
         res.writeHead(404);
         res.end('File not found');
         return;
       }
 
-      const stats = fs.statSync(urlPath);
-      const ext = path.extname(urlPath).toLowerCase();
+      const stats = fs.statSync(resolvedPath);
+      const ext = path.extname(resolvedPath).toLowerCase();
 
       // Set appropriate MIME type
       let mimeType = 'application/octet-stream';
@@ -778,25 +1087,55 @@ function createMediaServer() {
         const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
         const chunksize = end - start + 1;
 
-        const stream = fs.createReadStream(urlPath, { start, end });
+        const stream = fs.createReadStream(resolvedPath, { start, end });
+        setCorsHeaders(res);
         res.writeHead(206, {
           'Content-Range': `bytes ${start}-${end}/${stats.size}`,
           'Accept-Ranges': 'bytes',
           'Content-Length': chunksize,
           'Content-Type': mimeType,
-          'Access-Control-Allow-Origin': '*',
         });
+
+        stream.on('error', (streamError) => {
+          console.error('Error streaming file:', streamError);
+          if (!res.headersSent) {
+            setCorsHeaders(res);
+            res.writeHead(500);
+          }
+          res.end('Stream error');
+        });
+
+        res.on('close', () => {
+          stream.destroy();
+        });
+
         stream.pipe(res);
       } else {
+        setCorsHeaders(res);
         res.writeHead(200, {
           'Content-Length': stats.size,
           'Content-Type': mimeType,
-          'Access-Control-Allow-Origin': '*',
         });
-        fs.createReadStream(urlPath).pipe(res);
+
+        const stream = fs.createReadStream(resolvedPath);
+        stream.on('error', (streamError) => {
+          console.error('Error streaming file:', streamError);
+          if (!res.headersSent) {
+            setCorsHeaders(res);
+            res.writeHead(500);
+          }
+          res.end('Stream error');
+        });
+
+        res.on('close', () => {
+          stream.destroy();
+        });
+
+        stream.pipe(res);
       }
     } catch (error) {
       console.error('Error serving file:', error);
+      setCorsHeaders(res);
       res.writeHead(500);
       res.end('Internal server error');
     }
@@ -817,6 +1156,7 @@ function createMediaServer() {
 // Start media server when app is ready
 app.whenReady().then(() => {
   createMediaServer();
+  startMediaCacheCleanup();
 });
 
 // IPC Handler for opening file dialog
@@ -1043,7 +1383,7 @@ ipcMain.handle(
 
     // Use priority queue with HIGHEST priority (1) for audio extraction
     // This ensures audio extracts before sprite sheets to prevent waveform delays
-    return queueFFmpegTask(1, async () => {
+    return (async () => {
       // Create a unique output directory for extracted audio files
       const audioOutputDir =
         outputDir || path.join(os.tmpdir(), 'dividr-audio-extracts');
@@ -1078,123 +1418,102 @@ ipcMain.handle(
       console.log('🎬 AUDIO EXTRACTION FFMPEG COMMAND:');
       console.log(['ffmpeg', ...args].join(' '));
 
-      return new Promise((resolve) => {
-        const ffmpeg = spawn(ffmpegPath, args);
-        currentFfmpegProcess = ffmpeg;
+      const ffmpegResult = await runQueuedFfmpeg(args, {
+        priority: 1,
+        timeoutMs: 5 * 60 * 1000, // 5 minutes
+        onStdout: (text) =>
+          console.log(`[Audio Extract stdout] ${text.trim()}`),
+        onStderr: (text) =>
+          console.log(`[Audio Extract stderr] ${text.trim()}`),
+      });
 
-        let stdout = '';
-        let stderr = '';
+      if (ffmpegResult.timedOut) {
+        return {
+          success: false,
+          error: 'Audio extraction timed out',
+        };
+      }
 
-        ffmpeg.stdout.on('data', (data) => {
-          const text = data.toString();
-          stdout += text;
-          console.log(`[Audio Extract stdout] ${text.trim()}`);
-        });
+      if (ffmpegResult.code === 0) {
+        try {
+          // Verify that the audio file was created and has content
+          // Use async stat with retry for EMFILE protection
+          let stats: fs.Stats | null = null;
+          let lastError: Error | null = null;
 
-        ffmpeg.stderr.on('data', (data) => {
-          const text = data.toString();
-          stderr += text;
-          console.log(`[Audio Extract stderr] ${text.trim()}`);
-        });
-
-        ffmpeg.on('close', async (code) => {
-          currentFfmpegProcess = null;
-          console.log(`🎵 Audio extraction process exited with code: ${code}`);
-
-          if (code === 0) {
+          for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              // Verify that the audio file was created and has content
-              // Use async stat with retry for EMFILE protection
-              let stats: fs.Stats | null = null;
-              let lastError: Error | null = null;
-
-              for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                  stats = fs.statSync(audioOutputPath);
-                  break;
-                } catch (statErr) {
-                  lastError = statErr as Error;
-                  if (isEMFILEError(statErr) && attempt < 3) {
-                    console.warn(
-                      `⚠️ EMFILE during audio file verification, retry ${attempt}/3`,
-                    );
-                    await new Promise((r) => setTimeout(r, 500 * attempt));
-                  } else {
-                    throw statErr;
-                  }
-                }
-              }
-
-              if (stats && stats.size > 0) {
-                // Create preview URL for the extracted audio
-                // Use the same logic as the create-preview-url handler
-                const previewUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodeURIComponent(audioOutputPath)}`;
-                const previewResult = { success: true, url: previewUrl };
-
-                console.log('✅ Audio extraction successful!');
-                console.log('📁 Audio file path:', audioOutputPath);
-                console.log('📏 Audio file size:', stats.size, 'bytes');
-
-                resolve({
-                  success: true,
-                  audioPath: audioOutputPath,
-                  previewUrl: previewResult.success
-                    ? previewResult.url
-                    : undefined,
-                  size: stats.size,
-                  message: 'Audio extracted successfully',
-                });
+              stats = fs.statSync(audioOutputPath);
+              break;
+            } catch (statErr) {
+              lastError = statErr as Error;
+              if (isEMFILEError(statErr) && attempt < 3) {
+                console.warn(
+                  `⚠️ EMFILE during audio file verification, retry ${attempt}/3`,
+                );
+                await new Promise((r) => setTimeout(r, 500 * attempt));
               } else {
-                console.error('❌ Audio file was created but is empty');
-                resolve({
-                  success: false,
-                  error: 'Audio extraction failed: output file is empty',
-                });
-              }
-            } catch (statError) {
-              const errorMessage =
-                statError instanceof Error
-                  ? statError.message
-                  : 'Unknown error';
-              console.error(
-                '❌ Failed to verify extracted audio file:',
-                errorMessage,
-              );
-
-              // Provide helpful EMFILE message
-              if (isEMFILEError(statError)) {
-                resolve({
-                  success: false,
-                  error:
-                    'System file limit reached during audio verification. Please try again.',
-                });
-              } else {
-                resolve({
-                  success: false,
-                  error: `Audio extraction failed: ${errorMessage}`,
-                });
+                throw statErr;
               }
             }
-          } else {
-            console.error('❌ Audio extraction failed with exit code:', code);
-            console.error('stderr:', stderr);
-            resolve({
-              success: false,
-              error: `Audio extraction failed with exit code ${code}: ${stderr}`,
-            });
           }
-        });
 
-        ffmpeg.on('error', (error) => {
-          currentFfmpegProcess = null;
-          console.error('❌ Audio extraction spawn error:', error);
-          resolve({
+          if (stats && stats.size > 0) {
+            // Create preview URL for the extracted audio
+            // Use the same logic as the create-preview-url handler
+            const previewUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodeURIComponent(audioOutputPath)}`;
+
+            console.log('✅ Audio extraction successful!');
+            console.log('📁 Audio file path:', audioOutputPath);
+            console.log('📏 Audio file size:', stats.size, 'bytes');
+
+            return {
+              success: true,
+              audioPath: audioOutputPath,
+              previewUrl,
+              size: stats.size,
+              message: 'Audio extracted successfully',
+            };
+          }
+
+          console.error('❌ Audio file was created but is empty');
+          return {
             success: false,
-            error: `Audio extraction failed: ${error.message}`,
-          });
-        });
-      });
-    }); // End queueFFmpegTask
+            error: 'Audio extraction failed: output file is empty',
+          };
+        } catch (statError) {
+          const errorMessage =
+            statError instanceof Error ? statError.message : 'Unknown error';
+          console.error(
+            '❌ Failed to verify extracted audio file:',
+            errorMessage,
+          );
+
+          // Provide helpful EMFILE message
+          if (isEMFILEError(statError)) {
+            return {
+              success: false,
+              error:
+                'System file limit reached during audio verification. Please try again.',
+            };
+          }
+
+          return {
+            success: false,
+            error: `Audio extraction failed: ${errorMessage}`,
+          };
+        }
+      }
+
+      console.error(
+        '❌ Audio extraction failed with exit code:',
+        ffmpegResult.code,
+      );
+      return {
+        success: false,
+        error: `Audio extraction failed with exit code ${ffmpegResult.code}: ${ffmpegResult.stderr}`,
+      };
+    })();
   },
 );
 
@@ -1260,78 +1579,56 @@ ipcMain.handle(
     console.log(['ffmpeg', ...finalArgs].join(' '));
 
     // Use priority queue with LOWEST priority (3) for thumbnail extraction
-    return queueFFmpegTask(
-      3,
-      () =>
-        new Promise((resolve) => {
-          const ffmpeg = spawn(ffmpegPath, finalArgs);
-          currentFfmpegProcess = ffmpeg;
+    const ffmpegResult = await runQueuedFfmpeg(finalArgs, {
+      priority: 3,
+      timeoutMs: 10 * 60 * 1000, // 10 minutes
+      onStdout: (text) => console.log(`[FFmpeg stdout] ${text.trim()}`),
+      onStderr: (text) => console.log(`[FFmpeg stderr] ${text.trim()}`),
+    });
 
-          let stdout = '';
-          let stderr = '';
+    if (ffmpegResult.timedOut) {
+      return {
+        success: false,
+        error: 'FFmpeg process timed out',
+      };
+    }
 
-          ffmpeg.stdout.on('data', (data) => {
-            const text = data.toString();
-            stdout += text;
-            console.log(`[FFmpeg stdout] ${text.trim()}`);
-          });
+    console.log(`🎬 FFmpeg process exited with code: ${ffmpegResult.code}`);
 
-          ffmpeg.stderr.on('data', (data) => {
-            const text = data.toString();
-            stderr += text;
-            console.log(`[FFmpeg stderr] ${text.trim()}`);
-          });
+    if (ffmpegResult.code === 0) {
+      if (!hasOutputDir) {
+        return { success: true, output: [] };
+      }
+      // List generated files
+      try {
+        const outputFiles = fs
+          .readdirSync(absoluteOutputDir)
+          .filter((file) => file.startsWith('thumb_') && file.endsWith('.jpg'))
+          .sort();
 
-          ffmpeg.on('close', (code) => {
-            currentFfmpegProcess = null;
-            console.log(`🎬 FFmpeg process exited with code: ${code}`);
+        console.log(
+          `✅ Generated ${outputFiles.length} thumbnail files:`,
+          outputFiles,
+        );
 
-            if (code === 0) {
-              // List generated files
-              try {
-                const outputFiles = fs
-                  .readdirSync(absoluteOutputDir)
-                  .filter(
-                    (file) =>
-                      file.startsWith('thumb_') && file.endsWith('.jpg'),
-                  )
-                  .sort();
+        return {
+          success: true,
+          output: outputFiles,
+        };
+      } catch (listError) {
+        console.error('❌ Error listing output files:', listError);
+        return {
+          success: false,
+          error: `FFmpeg succeeded but failed to list output files: ${listError.message}`,
+        };
+      }
+    }
 
-                console.log(
-                  `✅ Generated ${outputFiles.length} thumbnail files:`,
-                  outputFiles,
-                );
-
-                resolve({
-                  success: true,
-                  output: outputFiles,
-                });
-              } catch (listError) {
-                console.error('❌ Error listing output files:', listError);
-                resolve({
-                  success: false,
-                  error: `FFmpeg succeeded but failed to list output files: ${listError.message}`,
-                });
-              }
-            } else {
-              console.error(`❌ FFmpeg failed with exit code: ${code}`);
-              resolve({
-                success: false,
-                error: `FFmpeg process failed with exit code ${code}. stderr: ${stderr}`,
-              });
-            }
-          });
-
-          ffmpeg.on('error', (error) => {
-            currentFfmpegProcess = null;
-            console.error('❌ FFmpeg spawn error:', error);
-            resolve({
-              success: false,
-              error: `Failed to spawn FFmpeg process: ${error.message}`,
-            });
-          });
-        }),
-    );
+    console.error(`❌ FFmpeg failed with exit code: ${ffmpegResult.code}`);
+    return {
+      success: false,
+      error: `FFmpeg process failed with exit code ${ffmpegResult.code}. stderr: ${ffmpegResult.stderr}`,
+    };
   },
 );
 
@@ -1480,97 +1777,53 @@ async function processSpriteSheetsInBackground(
 
       // Execute FFmpeg command with improved error handling and timeout
       // Uses PRIORITY 3 (lowest) in FFmpeg queue - sprite sheets should yield to audio extraction
-      const result = await queueFFmpegTask(
-        3,
-        () =>
-          new Promise<{ success: boolean; error?: string }>((resolve) => {
-            const ffmpeg = spawn(ffmpegPath as string, adjustedCommand, {
-              stdio: ['ignore', 'pipe', 'pipe'],
-              windowsHide: true, // Hide console window on Windows
-            });
+      // Set adaptive timeout based on video complexity
+      const timeoutMs = Math.min(300000, 60000 + i * 60000); // Max 5 minutes, min 1 minute + 1 minute per sheet
+      const ffmpegResult = await runQueuedFfmpeg(adjustedCommand, {
+        priority: 3,
+        timeoutMs,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
 
-            let stderr = '';
-            let stdout = '';
+      const result: { success: boolean; error?: string } = {
+        success: false,
+      };
 
-            // Set adaptive timeout based on video complexity
-            const timeoutMs = Math.min(300000, 60000 + i * 60000); // Max 5 minutes, min 1 minute + 1 minute per sheet
-            const processTimeout: NodeJS.Timeout = setTimeout(() => {
-              ffmpeg.kill('SIGKILL');
-              resolve({
-                success: false,
-                error: `FFmpeg process timed out after ${timeoutMs / 1000} seconds`,
-              });
-            }, timeoutMs);
+      if (ffmpegResult.timedOut) {
+        result.success = false;
+        result.error = `FFmpeg process timed out after ${timeoutMs / 1000} seconds`;
+      } else if (ffmpegResult.code === 0) {
+        console.log(`✅ Sprite sheet ${i + 1} generated successfully`);
 
-            ffmpeg.stdout.on('data', (data) => {
-              stdout += data.toString();
-              // Optional: Could parse progress from stdout for more detailed progress
-            });
+        // Progressive loading: Notify renderer that this sheet is ready
+        if (mainWindow) {
+          mainWindow.webContents.send('sprite-sheet-sheet-ready', {
+            jobId,
+            sheetIndex: i,
+            totalSheets: job.commands.length,
+            sheetPath: path.join(
+              absoluteOutputDir,
+              `sprite_${i.toString().padStart(3, '0')}.jpg`,
+            ),
+          });
+        }
 
-            ffmpeg.stderr.on('data', (data) => {
-              const text = data.toString();
-              stderr += text;
-              // Progress updates could be parsed here if needed
-            });
-
-            ffmpeg.on('close', (code) => {
-              clearTimeout(processTimeout);
-              if (code === 0) {
-                console.log(`✅ Sprite sheet ${i + 1} generated successfully`);
-
-                // Progressive loading: Notify renderer that this sheet is ready
-                if (mainWindow) {
-                  mainWindow.webContents.send('sprite-sheet-sheet-ready', {
-                    jobId,
-                    sheetIndex: i,
-                    totalSheets: job.commands.length,
-                    sheetPath: path.join(
-                      absoluteOutputDir,
-                      `sprite_${i.toString().padStart(3, '0')}.jpg`,
-                    ),
-                  });
-                }
-
-                resolve({ success: true });
-              } else {
-                console.error(
-                  `❌ Sprite sheet ${i + 1} failed with exit code: ${code}`,
-                );
-                // Try to extract meaningful error from stderr
-                const errorMatch =
-                  stderr.match(/Error: (.+)/i) ||
-                  stderr.match(/\[error\] (.+)/i);
-                const meaningfulError = errorMatch
-                  ? errorMatch[1]
-                  : `Process failed with code ${code}`;
-                resolve({
-                  success: false,
-                  error: `FFmpeg: ${meaningfulError}`,
-                });
-              }
-            });
-
-            ffmpeg.on('error', (error) => {
-              clearTimeout(processTimeout);
-              console.error('❌ FFmpeg spawn error:', error);
-              resolve({
-                success: false,
-                error: `Failed to spawn FFmpeg process: ${error.message}`,
-              });
-            });
-
-            // Handle process being killed
-            ffmpeg.on('exit', (code, signal) => {
-              clearTimeout(processTimeout);
-              if (signal === 'SIGKILL') {
-                resolve({
-                  success: false,
-                  error: 'Process was terminated due to timeout',
-                });
-              }
-            });
-          }),
-      );
+        result.success = true;
+      } else {
+        console.error(
+          `❌ Sprite sheet ${i + 1} failed with exit code: ${ffmpegResult.code}`,
+        );
+        // Try to extract meaningful error from stderr
+        const errorMatch =
+          ffmpegResult.stderr.match(/Error: (.+)/i) ||
+          ffmpegResult.stderr.match(/\[error\] (.+)/i);
+        const meaningfulError = errorMatch
+          ? errorMatch[1]
+          : `Process failed with code ${ffmpegResult.code}`;
+        result.success = false;
+        result.error = `FFmpeg: ${meaningfulError}`;
+      }
 
       if (!result.success) {
         console.error(
@@ -1679,7 +1932,7 @@ async function processSpriteSheetsInBackground(
 // IPC Handler to cancel FFmpeg operation
 ipcMain.handle('cancel-ffmpeg', async () => {
   try {
-    const cancelled = cancelCurrentFfmpeg();
+    const cancelled = killCurrentFfmpegProcess('user-cancel');
     if (cancelled) {
       return {
         success: true,
@@ -2145,6 +2398,35 @@ ipcMain.handle(
   },
 );
 
+// IPC handlers for media cache utilities
+ipcMain.handle('get-media-cache-dir', async () => {
+  try {
+    const dir = getMediaCacheDir();
+    return { success: true, path: dir };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('media-path-exists', async (_event, pathOrUrl: string) => {
+  try {
+    const resolved = resolveMediaPath(pathOrUrl);
+    if (!resolved) {
+      return { success: false, exists: false, error: 'Invalid media path' };
+    }
+    return { success: true, exists: fs.existsSync(resolved), path: resolved };
+  } catch (error) {
+    return {
+      success: false,
+      exists: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
 // FFmpeg IPC handlers
 ipcMain.handle('ffmpeg:detect-frame-rate', async (event, videoPath: string) => {
   return new Promise((resolve, reject) => {
@@ -2343,235 +2625,237 @@ ipcMain.handle('getVideoDimensions', async (_event, filePath: string) => {
     });
   });
 });
-// Global FFmpeg process tracking
-let currentFfmpegProcess: ReturnType<typeof spawn> | null = null;
-
 ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
   console.log('🎯 MAIN PROCESS: ffmpegRun handler called!');
   console.log('🎯 MAIN PROCESS: Received job:', JSON.stringify(job, null, 2));
-
-  if (currentFfmpegProcess && !currentFfmpegProcess.killed) {
-    throw new Error('Another FFmpeg process is already running');
-  }
 
   const location = job.outputPath || 'public/output/';
   // Ensure we have an absolute path for the location
   const absoluteLocation = path.isAbsolute(location)
     ? location
     : path.resolve(location);
-  let tempSubtitlePath: string | null = null;
 
-  try {
-    // Create temporary subtitle file if subtitle content is provided
-    if (job.subtitleContent && job.operations.subtitles) {
-      tempSubtitlePath = path.join(absoluteLocation, 'temp_subtitles.ass');
+  return queueFFmpegTask(2, async () => {
+    let tempSubtitlePath: string | null = null;
 
-      // Ensure directory exists
-      if (!fs.existsSync(absoluteLocation)) {
-        fs.mkdirSync(absoluteLocation, { recursive: true });
-      }
+    try {
+      // Create temporary subtitle file if subtitle content is provided
+      if (job.subtitleContent && job.operations.subtitles) {
+        tempSubtitlePath = path.join(absoluteLocation, 'temp_subtitles.ass');
 
-      // Write subtitle content to file
-      fs.writeFileSync(tempSubtitlePath, job.subtitleContent, 'utf8');
-      console.log('📝 Created temporary subtitle file:', tempSubtitlePath);
-
-      // Update the job to use the absolute path instead of just the filename
-      job.operations.subtitles = tempSubtitlePath;
-      console.log('📁 Updated subtitle path to absolute:', tempSubtitlePath);
-    }
-
-    // Verify subtitle file exists before running FFmpeg
-    if (tempSubtitlePath) {
-      if (!fs.existsSync(tempSubtitlePath)) {
-        throw new Error(`Subtitle file does not exist: ${tempSubtitlePath}`);
-      }
-      console.log('✅ Subtitle file verified to exist:', tempSubtitlePath);
-    }
-
-    // Build proper FFmpeg command
-    const baseArgs = await buildFfmpegCommand(
-      job,
-      absoluteLocation,
-      ffmpegPath,
-    );
-    const args = ['-progress', 'pipe:1', '-y', ...baseArgs];
-
-    console.log('🎬 COMPLETE FFMPEG COMMAND:');
-    console.log(['ffmpeg', ...args].join(' '));
-
-    return new Promise((resolve, reject) => {
-      //console.log('🚀 Starting FFmpeg with args:', args);
-
-      // Double-check subtitle file still exists right before spawning
-      if (tempSubtitlePath && !fs.existsSync(tempSubtitlePath)) {
-        reject(
-          new Error(
-            `Subtitle file disappeared before FFmpeg start: ${tempSubtitlePath}`,
-          ),
-        );
-        return;
-      }
-
-      if (!ffmpegPath) {
-        reject(
-          new Error(
-            'FFmpeg binary not available. Please ensure ffmpeg-static is properly installed.',
-          ),
-        );
-        return;
-      }
-
-      const ffmpeg = spawn(ffmpegPath, args);
-      currentFfmpegProcess = ffmpeg;
-
-      let logs = '';
-
-      ffmpeg.stdout.on('data', (data) => {
-        const text = data.toString();
-        logs += `[stdout] ${text}\n`;
-        event.sender.send('ffmpeg:progress', { type: 'stdout', data: text });
-      });
-
-      ffmpeg.stderr.on('data', (data) => {
-        const text = data.toString();
-        logs += `[stderr] ${text}\n`;
-        event.sender.send('ffmpeg:progress', { type: 'stderr', data: text });
-      });
-
-      ffmpeg.on('close', (code, signal) => {
-        currentFfmpegProcess = null;
-
-        // Always cleanup temporary subtitle file after FFmpeg completes
-        if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
-          try {
-            fs.unlinkSync(tempSubtitlePath);
-            console.log(
-              '🗑️ Cleaned up temporary subtitle file after FFmpeg completion',
-            );
-          } catch (cleanupError) {
-            console.warn(
-              '⚠️ Failed to cleanup temporary subtitle file after completion:',
-              cleanupError,
-            );
-          }
+        // Ensure directory exists
+        if (!fs.existsSync(absoluteLocation)) {
+          fs.mkdirSync(absoluteLocation, { recursive: true });
         }
 
-        // Check if this was a user cancellation:
-        // 1. Signal is SIGTERM/SIGKILL (direct signal kill)
-        // 2. Code 255 AND logs contain "received signal 15" (FFmpeg caught signal)
-        const wasCancelled =
-          signal === 'SIGTERM' ||
-          signal === 'SIGKILL' ||
-          (code === 255 &&
-            (logs.includes('received signal 15') ||
-              logs.includes('Exiting normally, received signal')));
+        // Write subtitle content to file
+        fs.writeFileSync(tempSubtitlePath, job.subtitleContent, 'utf8');
+        console.log('📝 Created temporary subtitle file:', tempSubtitlePath);
 
-        if (wasCancelled) {
-          console.log('🛑 FFmpeg process was cancelled by user');
+        // Update the job to use the absolute path instead of just the filename
+        job.operations.subtitles = tempSubtitlePath;
+        console.log('📁 Updated subtitle path to absolute:', tempSubtitlePath);
+      }
 
-          // Delete the incomplete output file
-          const outputFilePath = path.join(absoluteLocation, job.output);
-          console.log(
-            '🔍 Checking for incomplete output file at:',
-            outputFilePath,
+      // Verify subtitle file exists before running FFmpeg
+      if (tempSubtitlePath) {
+        if (!fs.existsSync(tempSubtitlePath)) {
+          throw new Error(`Subtitle file does not exist: ${tempSubtitlePath}`);
+        }
+        console.log('✅ Subtitle file verified to exist:', tempSubtitlePath);
+      }
+
+      // Build proper FFmpeg command
+      const baseArgs = await buildFfmpegCommand(
+        job,
+        absoluteLocation,
+        ffmpegPath,
+      );
+      const args = ['-progress', 'pipe:1', '-y', ...baseArgs];
+
+      console.log('🎬 COMPLETE FFMPEG COMMAND:');
+      console.log(['ffmpeg', ...args].join(' '));
+
+      return new Promise((resolve, reject) => {
+        // Double-check subtitle file still exists right before spawning
+        if (tempSubtitlePath && !fs.existsSync(tempSubtitlePath)) {
+          reject(
+            new Error(
+              `Subtitle file disappeared before FFmpeg start: ${tempSubtitlePath}`,
+            ),
           );
-
-          if (fs.existsSync(outputFilePath)) {
-            try {
-              fs.unlinkSync(outputFilePath);
-              console.log('🗑️ Deleted incomplete output file:', outputFilePath);
-            } catch (deleteError) {
-              console.warn(
-                '⚠️ Failed to delete incomplete output file:',
-                deleteError,
-              );
-            }
-          } else {
-            console.log(
-              'ℹ️ No output file found to delete (may not have been created yet)',
-            );
-          }
-
-          resolve({
-            success: true,
-            cancelled: true,
-            logs,
-            message: 'Export cancelled by user',
-          });
           return;
         }
 
-        console.log(
-          `🏁 FFmpeg process finished with code: ${code}, signal: ${signal}`,
-        );
-
-        if (code === 0) {
-          resolve({ success: true, logs });
-        } else {
-          reject(new Error(`FFmpeg exited with code ${code}\nLogs:\n${logs}`));
+        if (!ffmpegPath) {
+          reject(
+            new Error(
+              'FFmpeg binary not available. Please ensure ffmpeg-static is properly installed.',
+            ),
+          );
+          return;
         }
-      });
 
-      ffmpeg.on('error', (err) => {
-        currentFfmpegProcess = null;
-        console.log('❌ FFmpeg process error:', err.message);
+        ensureNoStaleFfmpegProcess();
+        const ffmpeg = spawn(ffmpegPath, args);
+        currentFfmpegProcess = ffmpeg;
+        currentFfmpegStartedAt = Date.now();
 
-        // Cleanup temporary subtitle file on error
-        if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
-          try {
-            fs.unlinkSync(tempSubtitlePath);
+        const exportTimeoutMs = 30 * 60 * 1000; // 30 minutes
+        if (exportTimeoutMs > 0) {
+          currentFfmpegTimeout = setTimeout(() => {
+            killCurrentFfmpegProcess(`export-timeout ${exportTimeoutMs}ms`);
+          }, exportTimeoutMs);
+        }
+
+        let logs = '';
+
+        ffmpeg.stdout.on('data', (data) => {
+          const text = data.toString();
+          logs += `[stdout] ${text}\n`;
+          event.sender.send('ffmpeg:progress', { type: 'stdout', data: text });
+        });
+
+        ffmpeg.stderr.on('data', (data) => {
+          const text = data.toString();
+          logs += `[stderr] ${text}\n`;
+          event.sender.send('ffmpeg:progress', { type: 'stderr', data: text });
+        });
+
+        ffmpeg.on('close', (code, signal) => {
+          if (ffmpeg.stdout) ffmpeg.stdout.removeAllListeners();
+          if (ffmpeg.stderr) ffmpeg.stderr.removeAllListeners();
+          ffmpeg.removeAllListeners();
+          clearCurrentFfmpegProcess();
+
+          // Always cleanup temporary subtitle file after FFmpeg completes
+          if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
+            try {
+              fs.unlinkSync(tempSubtitlePath);
+              console.log(
+                '🗑️ Cleaned up temporary subtitle file after FFmpeg completion',
+              );
+            } catch (cleanupError) {
+              console.warn(
+                '⚠️ Failed to cleanup temporary subtitle file after completion:',
+                cleanupError,
+              );
+            }
+          }
+
+          // Check if this was a user cancellation:
+          // 1. Signal is SIGTERM/SIGKILL (direct signal kill)
+          // 2. Code 255 AND logs contain "received signal 15" (FFmpeg caught signal)
+          const wasCancelled =
+            signal === 'SIGTERM' ||
+            signal === 'SIGKILL' ||
+            (code === 255 &&
+              (logs.includes('received signal 15') ||
+                logs.includes('Exiting normally, received signal')));
+
+          if (wasCancelled) {
+            console.log('🛑 FFmpeg process was cancelled by user');
+
+            // Delete the incomplete output file
+            const outputFilePath = path.join(absoluteLocation, job.output);
             console.log(
-              '🗑️ Cleaned up temporary subtitle file after FFmpeg error',
+              '🔍 Checking for incomplete output file at:',
+              outputFilePath,
             );
-          } catch (cleanupError) {
-            console.warn(
-              '⚠️ Failed to cleanup temporary subtitle file after error:',
-              cleanupError,
+
+            if (fs.existsSync(outputFilePath)) {
+              try {
+                fs.unlinkSync(outputFilePath);
+                console.log(
+                  '🗑️ Deleted incomplete output file:',
+                  outputFilePath,
+                );
+              } catch (deleteError) {
+                console.warn(
+                  '⚠️ Failed to delete incomplete output file:',
+                  deleteError,
+                );
+              }
+            } else {
+              console.log(
+                'ℹ️ No output file found to delete (may not have been created yet)',
+              );
+            }
+
+            resolve({
+              success: true,
+              cancelled: true,
+              logs,
+              message: 'Export cancelled by user',
+            });
+            return;
+          }
+
+          console.log(
+            `🏁 FFmpeg process finished with code: ${code}, signal: ${signal}`,
+          );
+
+          if (code === 0) {
+            resolve({ success: true, logs });
+          } else {
+            reject(
+              new Error(`FFmpeg exited with code ${code}\nLogs:\n${logs}`),
             );
           }
-        }
+        });
 
-        reject(err);
+        ffmpeg.on('error', (err) => {
+          if (ffmpeg.stdout) ffmpeg.stdout.removeAllListeners();
+          if (ffmpeg.stderr) ffmpeg.stderr.removeAllListeners();
+          ffmpeg.removeAllListeners();
+          clearCurrentFfmpegProcess();
+          console.log('❌ FFmpeg process error:', err.message);
+
+          // Cleanup temporary subtitle file on error
+          if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
+            try {
+              fs.unlinkSync(tempSubtitlePath);
+              console.log(
+                '🗑️ Cleaned up temporary subtitle file after FFmpeg error',
+              );
+            } catch (cleanupError) {
+              console.warn(
+                '⚠️ Failed to cleanup temporary subtitle file after error:',
+                cleanupError,
+              );
+            }
+          }
+
+          reject(err);
+        });
       });
-    });
-  } catch (error) {
-    console.log('💥 Setup error occurred before FFmpeg could start:', error);
+    } catch (error) {
+      console.log('💥 Setup error occurred before FFmpeg could start:', error);
 
-    // Only cleanup on setup errors, not FFmpeg execution errors
-    if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
-      try {
-        fs.unlinkSync(tempSubtitlePath);
-        console.log('🗑️ Cleaned up temporary subtitle file due to setup error');
-      } catch (cleanupError) {
-        console.warn(
-          '⚠️ Failed to cleanup temporary subtitle file after setup error:',
-          cleanupError,
-        );
+      // Only cleanup on setup errors, not FFmpeg execution errors
+      if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
+        try {
+          fs.unlinkSync(tempSubtitlePath);
+          console.log(
+            '🗑️ Cleaned up temporary subtitle file due to setup error',
+          );
+        } catch (cleanupError) {
+          console.warn(
+            '⚠️ Failed to cleanup temporary subtitle file after setup error:',
+            cleanupError,
+          );
+        }
       }
+      throw error;
     }
-    throw error;
-  }
+  });
 });
 
 ipcMain.handle('ffmpeg:cancel', async () => {
-  if (currentFfmpegProcess && !currentFfmpegProcess.killed) {
-    console.log('🛑 Cancelling FFmpeg process...');
-
-    // Send SIGTERM for graceful termination
-    currentFfmpegProcess.kill('SIGTERM');
-
-    // Force kill after 2 seconds if still running
-    setTimeout(() => {
-      if (currentFfmpegProcess && !currentFfmpegProcess.killed) {
-        console.log('⚠️ Force killing FFmpeg process...');
-        currentFfmpegProcess.kill('SIGKILL');
-      }
-    }, 2000);
-
-    currentFfmpegProcess = null;
+  const cancelled = killCurrentFfmpegProcess('user-cancel');
+  if (cancelled) {
     return { success: true, message: 'Export cancelled' };
   }
-
   return { success: false, message: 'No export running' };
 });
 
@@ -2604,41 +2888,37 @@ async function runProxyFFmpeg(
     [ffmpegBinaryPath, ...args].join(' '),
   );
 
-  return new Promise((resolve) => {
-    const ffmpeg = spawn(ffmpegBinaryPath, args);
-
-    let stderrOutput = '';
-    ffmpeg.stderr.on('data', (data) => {
-      const chunk = data.toString();
-      stderrOutput += chunk;
-
-      // Send progress updates to renderer
-      if (chunk.includes('time=') && eventSender) {
-        eventSender.send('proxy-progress', {
-          path: inputPath,
-          log: chunk,
-          encoder: encoderConfig.type,
-        });
-      }
+  try {
+    const ffmpegResult = await runQueuedFfmpeg(args, {
+      priority: 2,
+      binaryPath: ffmpegBinaryPath,
+      timeoutMs: 30 * 60 * 1000, // 30 minutes
+      onStderr: (chunk) => {
+        // Send progress updates to renderer
+        if (chunk.includes('time=') && eventSender) {
+          eventSender.send('proxy-progress', {
+            path: inputPath,
+            log: chunk,
+            encoder: encoderConfig.type,
+          });
+        }
+      },
     });
 
-    ffmpeg.on('close', (code) => {
-      resolve({
-        success: code === 0,
-        code: code ?? undefined,
-        stderr: stderrOutput,
-      });
-    });
-
-    ffmpeg.on('error', (err) => {
-      console.error(`❌ FFmpeg spawn error (${encoderConfig.type}):`, err);
-      resolve({
-        success: false,
-        code: -1,
-        stderr: err.message,
-      });
-    });
-  });
+    return {
+      success: ffmpegResult.code === 0,
+      code: ffmpegResult.code ?? undefined,
+      stderr: ffmpegResult.stderr,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ FFmpeg spawn error (${encoderConfig.type}):`, message);
+    return {
+      success: false,
+      code: -1,
+      stderr: message,
+    };
+  }
 }
 
 // IPC Handler for generating proxy files for 4K video optimization
@@ -3051,21 +3331,21 @@ ipcMain.handle(
 
         console.log('   Command:', `ffmpeg ${args.join(' ')}`);
 
-        const runFfmpegDenoise = (runArgs: string[]) =>
-          new Promise<{ success: boolean; stderrLog: string }>((resolve) => {
-            const ffmpeg = spawn(ffmpegPath!, runArgs);
-            let durationSec = 0;
-            let stderrLog = '';
+        const runFfmpegDenoise = async (runArgs: string[]) => {
+          let durationSec = 0;
+          let stderrLog = '';
 
-            // Send initial loading state
-            event.sender.send('media-tools:progress', {
-              stage: 'loading',
-              progress: 0,
-              message: 'Initializing FFmpeg...',
-            });
+          // Send initial loading state
+          event.sender.send('media-tools:progress', {
+            stage: 'loading',
+            progress: 0,
+            message: 'Initializing FFmpeg...',
+          });
 
-            ffmpeg.stderr.on('data', (data) => {
-              const text = data.toString();
+          const ffmpegResult = await runQueuedFfmpeg(runArgs, {
+            priority: 2,
+            timeoutMs: 30 * 60 * 1000, // 30 minutes
+            onStderr: (text) => {
               stderrLog += text;
 
               // 1. Parse Duration: Duration: 00:00:10.50,
@@ -3103,25 +3383,23 @@ ipcMain.handle(
                   });
                 }
               }
-            });
-
-            ffmpeg.on('close', (code) => {
-              if (code === 0) {
-                resolve({ success: true, stderrLog });
-              } else {
-                console.error('❌ FFmpeg noise reduction failed. Code:', code);
-                resolve({ success: false, stderrLog });
-              }
-            });
-
-            ffmpeg.on('error', (err) => {
-              console.error('❌ FFmpeg spawn error:', err);
-              resolve({
-                success: false,
-                stderrLog: err.message,
-              });
-            });
+            },
           });
+
+          if (ffmpegResult.timedOut) {
+            return { success: false, stderrLog: 'FFmpeg timed out' };
+          }
+
+          if (ffmpegResult.code === 0) {
+            return { success: true, stderrLog };
+          }
+
+          console.error(
+            '❌ FFmpeg noise reduction failed. Code:',
+            ffmpegResult.code,
+          );
+          return { success: false, stderrLog };
+        };
 
         const firstAttempt = await runFfmpegDenoise(args);
         if (firstAttempt.success) {
@@ -3696,87 +3974,132 @@ ipcMain.handle(
 
     console.log(`   FFmpeg command: ffmpeg ${args.join(' ')}`);
 
-    // Start FFmpeg process
-    const ffmpegProcess = spawn(ffmpegPath, args);
-    job.process = ffmpegProcess;
-
     let stderrOutput = '';
 
-    ffmpegProcess.stdout.on('data', (data) => {
-      const output = data.toString();
-
-      // Parse progress
-      const timeMatch = output.match(/out_time_ms=(\d+)/);
-      if (timeMatch) {
-        const currentTimeMs = parseInt(timeMatch[1], 10);
-        job.currentTime = currentTimeMs / 1000000;
-
-        if (job.duration > 0) {
-          job.progress = Math.min(100, (job.currentTime / job.duration) * 100);
+    const ffmpegTask = runQueuedFfmpeg(args, {
+      priority: 2,
+      timeoutMs: 30 * 60 * 1000, // 30 minutes
+      onStart: (proc) => {
+        job.process = proc;
+        if (job.status === 'cancelled') {
+          proc.kill('SIGTERM');
         }
+      },
+      onStdout: (data) => {
+        const output = data.toString();
 
-        // Send progress to renderer
-        mainWindow?.webContents.send('transcode:progress', {
-          jobId: job.id,
-          mediaId: job.mediaId,
-          status: job.status,
-          progress: job.progress,
-          currentTime: job.currentTime,
-          duration: job.duration,
-        });
-      }
-    });
+        // Parse progress
+        const timeMatch = output.match(/out_time_ms=(\d+)/);
+        if (timeMatch) {
+          const currentTimeMs = parseInt(timeMatch[1], 10);
+          job.currentTime = currentTimeMs / 1000000;
 
-    ffmpegProcess.stderr.on('data', (data) => {
-      stderrOutput += data.toString();
-    });
-
-    ffmpegProcess.on('close', (code) => {
-      if (code === 0) {
-        job.status = 'completed';
-        job.progress = 100;
-        job.completedAt = Date.now();
-
-        const processingTime =
-          job.completedAt - (job.startedAt || job.completedAt);
-        console.log(
-          `✅ Transcode completed: ${jobId} in ${(processingTime / 1000).toFixed(1)}s`,
-        );
-
-        // Create preview URL for the transcoded file
-        const previewUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodeURIComponent(outputPath)}`;
-
-        mainWindow?.webContents.send('transcode:completed', {
-          jobId: job.id,
-          mediaId: job.mediaId,
-          success: true,
-          outputPath,
-          previewUrl,
-        });
-      } else if (job.status === 'cancelled') {
-        console.log(`🚫 Transcode cancelled: ${jobId}`);
-
-        // Clean up output file
-        if (fs.existsSync(outputPath)) {
-          try {
-            fs.unlinkSync(outputPath);
-          } catch (e) {
-            console.warn('   Could not delete incomplete transcode file');
+          if (job.duration > 0) {
+            job.progress = Math.min(
+              100,
+              (job.currentTime / job.duration) * 100,
+            );
           }
+
+          // Send progress to renderer
+          mainWindow?.webContents.send('transcode:progress', {
+            jobId: job.id,
+            mediaId: job.mediaId,
+            status: job.status,
+            progress: job.progress,
+            currentTime: job.currentTime,
+            duration: job.duration,
+          });
+        }
+      },
+      onStderr: (data) => {
+        stderrOutput += data.toString();
+      },
+    });
+
+    void ffmpegTask
+      .then((result) => {
+        if (result.timedOut) {
+          job.status = 'failed';
+          job.error = 'FFmpeg transcode timed out';
+          mainWindow?.webContents.send('transcode:completed', {
+            jobId: job.id,
+            mediaId: job.mediaId,
+            success: false,
+            error: job.error,
+          });
+          delete job.process;
+          return;
         }
 
-        mainWindow?.webContents.send('transcode:completed', {
-          jobId: job.id,
-          mediaId: job.mediaId,
-          success: false,
-          error: 'Cancelled',
-        });
-      } else {
-        job.status = 'failed';
-        job.error =
-          stderrOutput.slice(-500) || `FFmpeg exited with code ${code}`;
+        if (result.code === 0) {
+          job.status = 'completed';
+          job.progress = 100;
+          job.completedAt = Date.now();
 
-        console.error(`❌ Transcode failed: ${jobId}`);
+          const processingTime =
+            job.completedAt - (job.startedAt || job.completedAt);
+          console.log(
+            `✅ Transcode completed: ${jobId} in ${(processingTime / 1000).toFixed(1)}s`,
+          );
+
+          // Create preview URL for the transcoded file
+          const previewUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodeURIComponent(outputPath)}`;
+
+          mainWindow?.webContents.send('transcode:completed', {
+            jobId: job.id,
+            mediaId: job.mediaId,
+            success: true,
+            outputPath,
+            previewUrl,
+          });
+
+          delete job.process;
+          return;
+        }
+
+        if (job.status === 'cancelled') {
+          console.log(`🚫 Transcode cancelled: ${jobId}`);
+
+          // Clean up output file
+          if (fs.existsSync(outputPath)) {
+            try {
+              fs.unlinkSync(outputPath);
+            } catch (e) {
+              console.warn('   Could not delete incomplete transcode file');
+            }
+          }
+
+          mainWindow?.webContents.send('transcode:completed', {
+            jobId: job.id,
+            mediaId: job.mediaId,
+            success: false,
+            error: 'Cancelled',
+          });
+        } else {
+          job.status = 'failed';
+          job.error =
+            stderrOutput.slice(-500) ||
+            `FFmpeg exited with code ${result.code}`;
+
+          console.error(`❌ Transcode failed: ${jobId}`);
+          console.error(`   Error: ${job.error}`);
+
+          mainWindow?.webContents.send('transcode:completed', {
+            jobId: job.id,
+            mediaId: job.mediaId,
+            success: false,
+            error: job.error,
+          });
+        }
+
+        delete job.process;
+      })
+      .catch((error) => {
+        job.status = 'failed';
+        job.error = error instanceof Error ? error.message : 'Unknown error';
+
+        console.error(`❌ Transcode process error: ${jobId}`);
         console.error(`   Error: ${job.error}`);
 
         mainWindow?.webContents.send('transcode:completed', {
@@ -3785,26 +4108,7 @@ ipcMain.handle(
           success: false,
           error: job.error,
         });
-      }
-
-      // Clean up process reference
-      delete job.process;
-    });
-
-    ffmpegProcess.on('error', (error) => {
-      job.status = 'failed';
-      job.error = error.message;
-
-      console.error(`❌ Transcode process error: ${jobId}`);
-      console.error(`   Error: ${error.message}`);
-
-      mainWindow?.webContents.send('transcode:completed', {
-        jobId: job.id,
-        mediaId: job.mediaId,
-        success: false,
-        error: error.message,
       });
-    });
 
     return {
       success: true,
@@ -3852,7 +4156,8 @@ ipcMain.handle('transcode:cancel', async (event, jobId: string) => {
     return { success: true };
   }
 
-  return { success: false, error: 'Job not running' };
+  job.status = 'cancelled';
+  return { success: true, message: 'Job queued for cancellation' };
 });
 
 // IPC Handler to cancel all transcode jobs for a media ID
@@ -3866,11 +4171,11 @@ ipcMain.handle('transcode:cancel-for-media', async (event, mediaId: string) => {
       job.mediaId === mediaId &&
       (job.status === 'queued' || job.status === 'processing')
     ) {
+      job.status = 'cancelled';
       if (job.process && !job.process.killed) {
-        job.status = 'cancelled';
         job.process.kill('SIGTERM');
-        cancelled++;
       }
+      cancelled++;
     }
   }
 
@@ -4197,6 +4502,19 @@ app.on('before-quit', () => {
   if (mediaServer) {
     mediaServer.close();
     console.log('📁 Media server stopped');
+  }
+
+  if (mediaCacheCleanupTimer) {
+    clearInterval(mediaCacheCleanupTimer);
+    mediaCacheCleanupTimer = null;
+  }
+
+  // Ensure any active FFmpeg process is terminated before exit
+  try {
+    killCurrentFfmpegProcess('app-quit');
+    ffmpegTaskQueue.length = 0;
+  } catch (error) {
+    console.warn('⚠️ Failed to cleanup FFmpeg before quit:', error);
   }
 
   // Cleanup noise reduction temp directory

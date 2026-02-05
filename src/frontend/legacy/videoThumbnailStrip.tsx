@@ -116,7 +116,7 @@ export const VideoThumbnailStrip: React.FC<VideoThumbnailStripProps> =
 
         // Check if we already have cached thumbnails for these exact parameters
         const cachedThumbnails =
-          VideoThumbnailGenerator.getCachedThumbnails(options);
+          await VideoThumbnailGenerator.getCachedThumbnails(options);
         if (cachedThumbnails && cachedThumbnails.length > 0) {
           console.log('📸 Using cached thumbnails for', track.name);
           setState((prev) => ({

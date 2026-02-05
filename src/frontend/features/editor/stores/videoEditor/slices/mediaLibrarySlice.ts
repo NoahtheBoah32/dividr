@@ -4,6 +4,7 @@ import { VideoSpriteSheetGenerator } from '@/backend/frontend_use/videoSpriteShe
 import { VideoThumbnailGenerator } from '@/backend/frontend_use/videoThumbnailGenerator';
 import { projectService } from '@/backend/services/projectService';
 import { ContentSignature } from '@/frontend/utils/contentSignature';
+import { toMediaServerUrl } from '@/shared/utils/mediaServer';
 import { v4 as uuidv4 } from 'uuid';
 import { StateCreator } from 'zustand';
 import { MediaLibraryItem } from '../types';
@@ -579,6 +580,8 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
+        const latestState = get() as any;
+        latestState.markUnsavedChanges?.();
         console.log(`✅ Waveform cache HIT (signature) for: ${mediaItem.name}`);
         return true;
       }
@@ -719,6 +722,8 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
+        const latestState = get() as any;
+        latestState.markUnsavedChanges?.();
         console.log(`✅ Waveform generated and cached for: ${mediaItem.name}`);
         console.log(
           `📈 Generated ${result.peaks.length} peaks with ${result.lodTiers?.length || 0} LOD tiers`,
@@ -1129,16 +1134,7 @@ export const createMediaLibrarySlice: StateCreator<
             }
           }
 
-          // Convert file path to URL (handle absolute Windows paths)
-          const normalizedPath = data.sheetPath.replace(/\\/g, '/');
-          const publicIndex = normalizedPath.indexOf('/public/');
-          const relativePath =
-            publicIndex !== -1
-              ? normalizedPath.substring(publicIndex + 1)
-              : normalizedPath.includes('sprite-sheets/')
-                ? `public/${normalizedPath.substring(normalizedPath.indexOf('sprite-sheets/'))}`
-                : normalizedPath;
-          const sheetUrl = `http://localhost:3001/${relativePath}`;
+          const sheetUrl = toMediaServerUrl(data.sheetPath);
 
           // Add this sheet progressively to the store
           get().addSpriteSheetProgressively(
@@ -1419,7 +1415,7 @@ export const createMediaLibrarySlice: StateCreator<
     }
 
     // Cache-first: try content-signature-based cache before any other checks
-    const cachedEntry = VideoThumbnailGenerator.getCachedThumbnailEntry({
+    const cachedEntry = await VideoThumbnailGenerator.getCachedThumbnailEntry({
       videoPath,
       contentSignature: contentSignatureKey,
       duration: 0.1, // Very short duration, just one frame

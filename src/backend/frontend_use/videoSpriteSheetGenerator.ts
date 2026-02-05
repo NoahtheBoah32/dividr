@@ -1,5 +1,7 @@
 import { VideoTrack } from '@/frontend/features/editor/stores/videoEditor/index';
 
+import { toMediaServerUrl } from '@/shared/utils/mediaServer';
+
 export interface SpriteSheetOptions {
   videoPath: string;
   /** Optional content-based signature for stable caching across reimports */
@@ -67,6 +69,8 @@ export class VideoSpriteSheetGenerator {
   private static readonly CACHE_STORAGE_KEY = 'dividr_sprite_cache';
   private static readonly MAX_CACHE_AGE_DAYS = 7; // Cache expires after 7 days
   private static cacheInitialized = false;
+  private static cacheValidationTimer: ReturnType<typeof setInterval> | null =
+    null;
   private static isSignatureKey(cacheKey: string): boolean {
     return cacheKey.startsWith('sprite_png_v4_sig_');
   }
@@ -93,53 +97,29 @@ export class VideoSpriteSheetGenerator {
         throw new Error(`Invalid video path: ${videoPath}`);
       }
 
-      // Use FFprobe to get exact video information
-      const probeCommand = [
-        '-v',
-        'quiet',
-        '-print_format',
-        'json',
-        '-show_format',
-        '-show_streams',
-        '-select_streams',
-        'v:0',
+      const durationPromise = window.electronAPI.getDuration(videoPath);
+      const fpsPromise = window.electronAPI.invoke(
+        'ffmpeg:detect-frame-rate',
         videoPath,
-      ];
+      );
 
-      const result = await (
-        window.electronAPI as unknown as {
-          runCustomFFmpeg: (
-            args: string[],
-          ) => Promise<{ success: boolean; output?: string; error?: string }>;
-        }
-      ).runCustomFFmpeg(['ffprobe', ...probeCommand]);
+      const [durationResult, fpsResult] = await Promise.allSettled([
+        durationPromise,
+        fpsPromise,
+      ]);
 
-      if (!result.success || !result.output) {
-        throw new Error(result.error || 'Failed to get video metadata');
-      }
-
-      const metadata = JSON.parse(result.output);
-      const videoStream = metadata.streams?.[0];
-      const format = metadata.format;
-
-      if (!videoStream || !format) {
-        throw new Error('No video stream found in metadata');
-      }
-
-      // Get precise duration and fps
-      const duration =
-        parseFloat(format.duration) || parseFloat(videoStream.duration) || 0;
-      const fpsString =
-        videoStream.r_frame_rate || videoStream.avg_frame_rate || '30/1';
-      const [num, den] = fpsString.split('/').map(Number);
-      const fps = num / (den || 1);
+      const rawDuration =
+        durationResult.status === 'fulfilled' ? durationResult.value : 0;
+      const rawFps = fpsResult.status === 'fulfilled' ? fpsResult.value : 30;
+      const duration = Number.isFinite(rawDuration) ? rawDuration : 0;
+      const fps = Number.isFinite(rawFps) && rawFps > 0 ? rawFps : 30;
 
       // Calculate exact frame count
       const frameCount = Math.floor(duration * fps);
 
       console.log(`📊 Video metadata for ${videoPath.split(/[\\/]/).pop()}:`);
       console.log(`   • Duration: ${duration.toFixed(3)}s`);
-      console.log(`   • FPS: ${fps.toFixed(3)} (${fpsString})`);
+      console.log(`   • FPS: ${fps.toFixed(3)}`);
       console.log(`   • Frame count: ${frameCount}`);
 
       return { duration, fps, frameCount };
@@ -193,6 +173,101 @@ export class VideoSpriteSheetGenerator {
     }
 
     this.cacheInitialized = true;
+    this.scheduleCacheValidation();
+  }
+
+  private static joinPath(...parts: string[]): string {
+    if (parts.length === 0) return '';
+    return parts
+      .filter((part) => part && part.length > 0)
+      .map((part, index) => {
+        if (index === 0) {
+          return part.replace(/[\\/]+$/, '');
+        }
+        return part.replace(/^[\\/]+/, '').replace(/[\\/]+$/, '');
+      })
+      .join('/');
+  }
+
+  private static async getMediaCacheBaseDir(): Promise<string> {
+    if (
+      typeof window === 'undefined' ||
+      !window.electronAPI?.getMediaCacheDir
+    ) {
+      return 'public';
+    }
+
+    try {
+      const result = await window.electronAPI.getMediaCacheDir();
+      if (result?.success && result.path) {
+        return result.path;
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to get media cache directory:', error);
+    }
+
+    return 'public';
+  }
+
+  private static async mediaPathExists(pathOrUrl: string): Promise<boolean> {
+    if (!pathOrUrl) return false;
+
+    if (typeof window !== 'undefined' && window.electronAPI?.mediaPathExists) {
+      try {
+        const result = await window.electronAPI.mediaPathExists(pathOrUrl);
+        return !!result?.exists;
+      } catch {
+        return false;
+      }
+    }
+
+    if (pathOrUrl.startsWith('http')) {
+      try {
+        const response = await fetch(pathOrUrl, { method: 'HEAD' });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  private static scheduleCacheValidation(): void {
+    if (this.cacheValidationTimer || typeof window === 'undefined') return;
+
+    this.cacheValidationTimer = setInterval(
+      () => {
+        void this.pruneInvalidCacheEntries(5);
+      },
+      5 * 60 * 1000,
+    );
+
+    void this.pruneInvalidCacheEntries(5);
+  }
+
+  private static async pruneInvalidCacheEntries(maxChecks = 5): Promise<void> {
+    if (typeof window === 'undefined' || !window.electronAPI?.mediaPathExists) {
+      return;
+    }
+
+    let checked = 0;
+    let removed = 0;
+
+    for (const [key, entry] of this.spriteSheetCache.entries()) {
+      if (checked >= maxChecks) break;
+      checked++;
+      const isValid = await this.validateCacheEntry(entry);
+      if (!isValid) {
+        this.spriteSheetCache.delete(key);
+        this.cacheAccessTimes.delete(key);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      this.saveCacheToStorage();
+    }
   }
 
   /**
@@ -202,10 +277,13 @@ export class VideoSpriteSheetGenerator {
     result: SpriteSheetGenerationResult,
   ): Promise<boolean> {
     try {
+      if (!result.spriteSheets || result.spriteSheets.length === 0) {
+        return false;
+      }
       // Check if sprite sheet URLs are still accessible
       for (const sheet of result.spriteSheets) {
-        const response = await fetch(sheet.url, { method: 'HEAD' });
-        if (!response.ok) {
+        const exists = await this.mediaPathExists(sheet.url);
+        if (!exists) {
           return false;
         }
       }
@@ -394,7 +472,12 @@ export class VideoSpriteSheetGenerator {
         );
       }
 
-      const outputDir = `public/sprite-sheets/${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const cacheBase = await this.getMediaCacheBaseDir();
+      const outputDir = this.joinPath(
+        cacheBase,
+        'sprite-sheets',
+        `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      );
       const commands: string[][] = [];
       const sheetMetadata: Array<{
         index: number;
@@ -597,9 +680,21 @@ export class VideoSpriteSheetGenerator {
 
       // Build sprite sheet metadata after successful generation
       const spriteSheets: SpriteSheet[] = [];
+      const missingSheets: string[] = [];
 
       for (const metadata of sheetMetadata) {
-        const spriteSheetUrl = `http://localhost:3001/${outputDir}/sprite_${metadata.index.toString().padStart(3, '0')}.jpg`;
+        const sheetPath = this.joinPath(
+          outputDir,
+          `sprite_${metadata.index.toString().padStart(3, '0')}.jpg`,
+        );
+        const exists = await this.mediaPathExists(sheetPath);
+        if (!exists) {
+          console.warn(`⚠️ Sprite sheet file missing on disk: ${sheetPath}`);
+          missingSheets.push(sheetPath);
+          continue;
+        }
+
+        const spriteSheetUrl = toMediaServerUrl(sheetPath);
         const thumbnails: SpriteSheetThumbnail[] = [];
 
         // Only create thumbnails for actual frames (not empty grid slots)
@@ -666,6 +761,12 @@ export class VideoSpriteSheetGenerator {
         );
       }
 
+      if (missingSheets.length > 0 || spriteSheets.length === 0) {
+        throw new Error(
+          `Sprite sheet generation incomplete (missing ${missingSheets.length} file(s))`,
+        );
+      }
+
       console.log('✅ All sprite sheets generated successfully in background');
 
       // Cache the result with persistent storage
@@ -704,38 +805,49 @@ export class VideoSpriteSheetGenerator {
   ): Promise<{ success: boolean; error?: string }> {
     return new Promise((resolve) => {
       let isResolved = false;
+      let pollTimer: ReturnType<typeof setTimeout> | null = null;
+      let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
-      // Set up event listeners for job completion
-      (
-        window.electronAPI as unknown as {
-          onSpriteSheetJobCompleted: (
-            callback: (data: { jobId: string }) => void,
-          ) => void;
-        }
-      ).onSpriteSheetJobCompleted((data: { jobId: string }) => {
+      const cleanup = () => {
+        if (pollTimer) clearTimeout(pollTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        window.electronAPI.removeListener(
+          'sprite-sheet-job-completed',
+          handleCompleted,
+        );
+        window.electronAPI.removeListener(
+          'sprite-sheet-job-error',
+          handleError,
+        );
+      };
+
+      const handleCompleted = (_event: unknown, data: { jobId: string }) => {
         if (data.jobId === actualJobId && !isResolved) {
           isResolved = true;
+          cleanup();
           console.log('✅ Background sprite sheet generation completed');
           resolve({ success: true });
         }
-      });
+      };
 
-      (
-        window.electronAPI as unknown as {
-          onSpriteSheetJobError: (
-            callback: (data: { jobId: string; error: string }) => void,
-          ) => void;
-        }
-      ).onSpriteSheetJobError((data: { jobId: string; error: string }) => {
+      const handleError = (
+        _event: unknown,
+        data: { jobId: string; error: string },
+      ) => {
         if (data.jobId === actualJobId && !isResolved) {
           isResolved = true;
+          cleanup();
           console.error(
             '❌ Background sprite sheet generation failed:',
             data.error,
           );
           resolve({ success: false, error: data.error });
         }
-      });
+      };
+
+      // Set up event listeners for job completion
+      window.electronAPI.on('sprite-sheet-job-completed', handleCompleted);
+      window.electronAPI.on('sprite-sheet-job-error', handleError);
 
       // Progress polling as fallback
       const pollProgress = async () => {
@@ -762,6 +874,7 @@ export class VideoSpriteSheetGenerator {
             if (current >= total && stage === 'Completed') {
               if (!isResolved) {
                 isResolved = true;
+                cleanup();
                 resolve({ success: true });
                 return;
               }
@@ -773,6 +886,7 @@ export class VideoSpriteSheetGenerator {
             // Job might have completed and been cleaned up
             if (!isResolved) {
               isResolved = true;
+              cleanup();
               resolve({ success: true });
               return;
             }
@@ -783,22 +897,18 @@ export class VideoSpriteSheetGenerator {
 
         // Continue polling if not resolved
         if (!isResolved) {
-          setTimeout(pollProgress, 1000); // Poll every second
+          pollTimer = setTimeout(pollProgress, 1000); // Poll every second
         }
       };
 
       // Start polling after a short delay
-      setTimeout(pollProgress, 500);
+      pollTimer = setTimeout(pollProgress, 500);
 
       // Set timeout
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         if (!isResolved) {
           isResolved = true;
-          (
-            window.electronAPI as unknown as {
-              removeSpriteSheetListeners?: () => void;
-            }
-          ).removeSpriteSheetListeners?.();
+          cleanup();
           resolve({
             success: false,
             error: `Sprite sheet generation timed out after ${Math.round(timeoutMs / 1000)} seconds`,

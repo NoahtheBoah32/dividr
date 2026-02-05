@@ -5,11 +5,85 @@ import { StateCreator } from 'zustand';
 import { AUTO_SAVE_CONFIG } from '../utils/constants';
 
 const SPRITE_SHEET_SKIP_DURATION_SECONDS = 1800;
+const EXTRACTED_AUDIO_MARKER = '_extracted.';
 
 // Auto-save manager state (module-level to persist across re-renders)
 let autoSaveTimeoutId: NodeJS.Timeout | null = null;
 let lastSaveTimestamp = 0;
 let pendingAutoSave = false;
+
+const scheduleWaveformRehydrate = (get: () => any): void => {
+  setTimeout(() => {
+    try {
+      const state = get() as any;
+      const mediaLibrary: any[] = state.mediaLibrary || [];
+      const tracks: any[] = state.tracks || [];
+      const mediaById = new Map<string, any>(
+        mediaLibrary.map((item) => [item.id, item]),
+      );
+      const mediaBySource = new Map<string, any>(
+        mediaLibrary.map((item) => [item.source, item]),
+      );
+
+      const waveformTargets = new Set<string>();
+
+      tracks.forEach((track) => {
+        if (track.type !== 'audio') return;
+
+        let mediaItem = track.mediaId
+          ? mediaById.get(track.mediaId)
+          : mediaBySource.get(track.source);
+
+        if (!mediaItem && track.previewUrl) {
+          mediaItem = mediaLibrary.find(
+            (item) => item.previewUrl === track.previewUrl,
+          );
+        }
+
+        if (!mediaItem) return;
+
+        const hasWaveform =
+          mediaItem.waveform?.success && mediaItem.waveform.peaks?.length > 0;
+        if (hasWaveform) return;
+
+        if (
+          mediaItem.type === 'video' &&
+          !mediaItem.extractedAudio &&
+          (track.source?.includes(EXTRACTED_AUDIO_MARKER) ||
+            track.previewUrl?.includes(EXTRACTED_AUDIO_MARKER))
+        ) {
+          state.updateMediaLibraryItem?.(mediaItem.id, {
+            extractedAudio: {
+              audioPath: track.source,
+              previewUrl: track.previewUrl,
+              size: mediaItem.extractedAudio?.size || 0,
+              extractedAt: mediaItem.extractedAudio?.extractedAt || Date.now(),
+            },
+          });
+          state.markUnsavedChanges?.();
+        }
+
+        waveformTargets.add(mediaItem.id);
+      });
+
+      if (waveformTargets.size > 0) {
+        console.log(
+          `🔄 Rehydrating waveforms for ${waveformTargets.size} media item(s)`,
+        );
+      }
+
+      waveformTargets.forEach((mediaId) => {
+        state
+          .generateWaveformForMedia?.(mediaId)
+          .catch((error: Error) =>
+            console.warn('Waveform rehydrate failed:', error),
+          );
+      });
+    } catch (error) {
+      console.warn('Waveform rehydrate scheduling failed:', error);
+    }
+  }, 0);
+};
 
 export interface ProjectSlice {
   currentProjectId: string | null;
@@ -217,6 +291,8 @@ export const createProjectSlice: StateCreator<
         groupStartState: null,
         groupActionName: null,
       }));
+
+      scheduleWaveformRehydrate(get);
 
       console.log(`✅ Loaded project data for: ${project.metadata.title}`);
     } catch (error) {

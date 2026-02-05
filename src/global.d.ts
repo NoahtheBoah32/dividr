@@ -76,6 +76,19 @@ declare global {
         error?: string;
       }>;
 
+      // Media cache helpers
+      getMediaCacheDir: () => Promise<{
+        success: boolean;
+        path?: string;
+        error?: string;
+      }>;
+      mediaPathExists: (pathOrUrl: string) => Promise<{
+        success: boolean;
+        exists: boolean;
+        path?: string;
+        error?: string;
+      }>;
+
       // File processing methods
       processDroppedFiles: (
         fileBuffers: Array<{
