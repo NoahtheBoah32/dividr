@@ -162,7 +162,7 @@ export const DragGhost: React.FC<DragGhostProps> = React.memo(
 
       // Text content for other track types (text, subtitle)
       return (
-        <div className="text-white text-[11px] h-fit whitespace-nowrap overflow-hidden text-ellipsis px-2 py-1">
+        <div className="text-white text-[11px] flex items-center whitespace-nowrap overflow-hidden text-ellipsis px-2">
           {track.type === 'subtitle' && track.subtitleText
             ? track.subtitleText
             : track.type === 'text' && track.textContent
@@ -183,6 +183,7 @@ export const DragGhost: React.FC<DragGhostProps> = React.memo(
         )}
         style={{
           width: `${width}px`,
+          height: `${trackHeight}px`,
           background: getTrackGradient(track.type),
           willChange: 'transform',
         }}

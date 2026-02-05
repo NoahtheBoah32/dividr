@@ -83,7 +83,7 @@ const ColorPickerPopoverComponent: React.FC<ColorPickerPopoverProps> = ({
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            'h-7 w-7 aspect-square rounded-md border border-border transition-colors relative overflow-hidden',
+            'h-7 w-7 aspect-square rounded border border-border transition-colors relative overflow-hidden',
             disabled && 'cursor-not-allowed opacity-50',
           )}
           disabled={disabled}

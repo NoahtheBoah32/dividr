@@ -18,13 +18,12 @@ export const PreviewPlaceholder: React.FC<PreviewPlaceholderProps> = ({
   onImport,
 }) => {
   const { theme, resolvedTheme } = useTheme();
-  const isDarkTheme =
-    (theme === 'system' ? resolvedTheme : theme) !== 'light';
+  const isDarkTheme = (theme === 'system' ? resolvedTheme : theme) !== 'light';
 
   return (
     <div
       className={cn(
-        'absolute inset-0 flex flex-col gap-2 items-center justify-center border-2 border-dashed rounded-lg cursor-pointer transition-all duration-200',
+        'absolute inset-0 flex flex-col gap-2 items-center justify-center border-2 border-dashed rounded cursor-pointer transition-all duration-200',
         dragActive
           ? 'border-secondary bg-secondary/10'
           : 'border-accent hover:!border-secondary hover:bg-secondary/10',

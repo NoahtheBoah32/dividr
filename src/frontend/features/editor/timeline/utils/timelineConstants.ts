@@ -50,11 +50,11 @@ export const TRACK_ITEM_HEIGHTS: Record<
   string,
   { sm: number; md: number; lg: number }
 > = {
-  text: { sm: 22, md: 24, lg: 28 }, // Track item height for text (fits in h-6, h-7, h-8) - much smaller
-  subtitle: { sm: 22, md: 24, lg: 28 }, // Track item height for subtitle (fits in h-6, h-7, h-8) - much smaller
-  image: { sm: 22, md: 30, lg: 44 }, // Track item height for image (fits in h-6, h-8, h-12) - standard size
-  video: { sm: 22, md: 30, lg: 44 }, // Track item height for video (fits in h-6, h-8, h-12) - standard size
-  audio: { sm: 22, md: 30, lg: 44 }, // Track item height for audio (fits in h-6, h-8, h-12) - standard size
+  text: { sm: 20, md: 24, lg: 28 }, // Track item height for text (row height minus 4px)
+  subtitle: { sm: 20, md: 24, lg: 28 }, // Track item height for subtitle (row height minus 4px)
+  image: { sm: 20, md: 28, lg: 44 }, // Track item height for image (row height minus 4px)
+  video: { sm: 20, md: 28, lg: 44 }, // Track item height for video (row height minus 4px)
+  audio: { sm: 20, md: 28, lg: 44 }, // Track item height for audio (row height minus 4px)
 };
 
 /**
@@ -154,7 +154,7 @@ export const getTrackItemHeight = (trackTypeOrId: string): number => {
 
   if (!itemConfig) {
     // Fallback to default heights
-    if (width < 640) return 22;
+    if (width < 640) return 20;
     if (width < 1024) return 28;
     return 44;
   }
@@ -189,6 +189,8 @@ export const getTrackItemHeightClasses = (trackTypeOrId: string): string => {
         return 'h-5'; // 20px
       case 22:
         return 'h-[22px]'; // 22px
+      case 26:
+        return 'h-[26px]'; // 26px
       case 24:
         return 'h-6'; // 24px
       case 28:
@@ -201,6 +203,8 @@ export const getTrackItemHeightClasses = (trackTypeOrId: string): string => {
         return 'h-9'; // 36px
       case 38:
         return 'h-[38px]'; // 38px
+      case 46:
+        return 'h-[46px]'; // 46px
       case 44:
         return 'h-11'; // 44px
       case 46:

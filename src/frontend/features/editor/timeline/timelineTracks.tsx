@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { Skeleton } from '@/frontend/components/ui/skeleton';
 import { cn } from '@/frontend/utils/utils';
 import { Film } from 'lucide-react';
@@ -51,6 +52,7 @@ const getGridInterval = (frameWidth: number, fps: number): number => {
   const pixelsPerSecond = frameWidth * fps;
 
   // MUST match timelineRuler.tsx tickInterval logic exactly
+  if (pixelsPerSecond >= 200) return 1; // Per-frame ticks
   if (pixelsPerSecond >= 100) return fps / 4; // 0.25 second intervals
   if (pixelsPerSecond >= 50) return fps / 2; // 0.5 second intervals
   if (pixelsPerSecond >= 25) return fps; // 1 second intervals
@@ -1080,7 +1082,18 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
       transcribingSubtitleRowIndex !== null &&
       parsedRow.rowIndex === transcribingSubtitleRowIndex;
 
-    const isEvenRow = parsedRow.rowIndex % 2 === 0;
+    const hasTracks = tracks.length > 0;
+    const isRowSelected = useMemo(
+      () => tracks.some((track) => selectedTrackIds.includes(track.id)),
+      [tracks, selectedTrackIds],
+    );
+    const rowBackgroundClass = isDragOver
+      ? 'bg-secondary/10'
+      : hasTracks
+        ? isRowSelected
+          ? 'bg-muted/40'
+          : 'bg-muted/25'
+        : 'bg-transparent';
 
     const skeletonHeightClass = getTrackItemHeightClasses(rowDef.id);
 
@@ -1313,28 +1326,34 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
         className={cn(
           'relative border-l-[3px]',
           isPlaceholder ? 'h-12' : getRowHeightClasses(rowDef.id),
-          isDragOver
-            ? 'bg-secondary/10 border-l-secondary'
-            : isEvenRow
-              ? 'bg-transparent'
-              : 'bg-muted/20',
+          isDragOver ? 'border-l-secondary' : 'border-l-transparent',
           isPlaceholder && 'border-l-transparent',
         )}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        {!isPlaceholder && (hasTracks || isDragOver) && (
+          <div
+            className={cn(
+              'absolute left-0 right-0 top-1/2 -translate-y-1/2 pointer-events-none z-0 rounded-md',
+              getTrackItemHeightClasses(rowDef.id),
+              rowBackgroundClass,
+            )}
+          />
+        )}
+
         {/* Grid lines - adaptive based on zoom level */}
-        <div
+        {/* <div
           className="absolute top-0 h-full pointer-events-none"
           style={{
             left: 0,
             width: timelineWidth,
             background: gridBackground,
           }}
-        />
+        /> */}
 
-        <div className="h-full flex items-center">
+        <div className="h-full flex items-center relative z-10">
           {isSubtitleRowTranscribing ? (
             <div className="h-full w-full flex items-center gap-2 px-2">
               <Skeleton
@@ -2063,14 +2082,14 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
                 onDrop={handlePlaceholderDrop}
               >
                 {/* Grid lines - adaptive based on zoom level */}
-                <div
+                {/* <div
                   className="absolute top-0 h-full pointer-events-none"
                   style={{
                     left: 0,
                     width: timelineWidth,
                     background: placeholderGridBackground,
                   }}
-                />
+                /> */}
               </div>
             );
           })}
@@ -2132,14 +2151,14 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
                 onDrop={handlePlaceholderDrop}
               >
                 {/* Grid lines - adaptive based on zoom level */}
-                <div
+                {/* <div
                   className="absolute top-0 h-full pointer-events-none"
                   style={{
                     left: 0,
                     width: timelineWidth,
                     background: placeholderGridBackground,
                   }}
-                />
+                /> */}
               </div>
             );
           })}

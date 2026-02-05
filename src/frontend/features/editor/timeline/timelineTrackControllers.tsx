@@ -298,15 +298,12 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
       };
     }, [rowDef.id]);
 
-    // Alternating row background (even/odd)
-    const isEvenRow = parsedRow.rowIndex % 2 === 0;
-
     return (
       <div
         className={cn(
           'flex items-center justify-between px-2 gap-6 border-b border-border/20',
           getRowHeightClasses(rowDef.id),
-          isEvenRow ? 'bg-transparent' : 'bg-muted/20', // Alternating background
+          'bg-transparent',
         )}
       >
         {/* Track type info with row label */}

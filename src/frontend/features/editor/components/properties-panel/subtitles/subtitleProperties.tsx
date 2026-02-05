@@ -355,7 +355,7 @@ const SubtitlePropertiesComponent: React.FC<SubtitlePropertiesProps> = ({
               />
             ) : (
               <div
-                className="px-3 py-2 bg-muted/50 border border-border rounded-lg cursor-text hover:bg-muted/70 transition-colors"
+                className="px-3 py-2 bg-muted/50 border border-border rounded cursor-text hover:bg-muted/70 transition-colors"
                 onClick={handleStartEditing}
                 role="button"
                 tabIndex={0}

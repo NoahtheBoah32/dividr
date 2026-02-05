@@ -1,5 +1,6 @@
+import { cn } from '@/frontend/utils/utils';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { VideoTrack } from '../stores/videoEditor/index';
+import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
 
 interface ImageTrackStripProps {
   track: VideoTrack;
@@ -76,6 +77,10 @@ GPUAcceleratedImageTile.displayName = 'GPUAcceleratedImageTile';
 
 export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
   ({ track, width, height, zoomLevel }) => {
+    const selectedTrackIds = useVideoEditorStore(
+      (state) => state.timeline.selectedTrackIds,
+    );
+    const isSelected = selectedTrackIds.includes(track.id);
     const containerRef = useRef<HTMLDivElement>(null);
     const [imageLoaded, setImageLoaded] = useState(false);
     const [imageError, setImageError] = useState<string | null>(null);
@@ -259,7 +264,7 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
     return (
       <div
         ref={containerRef}
-        className="absolute top-0 left-0 overflow-hidden"
+        className="absolute top-0 left-0 overflow-hidden group"
         style={{
           width,
           height,
@@ -318,7 +323,10 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
 
         {/* Track name overlay */}
         <div
-          className="absolute bottom-1 left-2 text-white text-xs font-medium pointer-events-none whitespace-nowrap overflow-hidden"
+          className={cn(
+            'absolute bottom-1 left-2 text-white text-xs font-medium pointer-events-none whitespace-nowrap overflow-hidden group-hover:opacity-100 opacity-0 transition-opacity duration-200',
+            isSelected ? 'opacity-100' : 'opacity-0',
+          )}
           style={{
             zIndex: 2,
             textShadow: '1px 1px 2px rgba(0,0,0,0.8)',

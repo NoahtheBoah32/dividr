@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { VideoTrack } from '@/frontend/features/editor/stores/videoEditor/index';
 import { getDisplayFps } from '@/frontend/features/editor/stores/videoEditor/types/timeline.types';
 import { cn } from '@/frontend/utils/utils';
@@ -130,6 +131,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
     const tickInterval = useMemo(() => {
       const pixelsPerSecond = frameWidth * displayFps;
 
+      if (pixelsPerSecond >= 200) return 1; // Per-frame ticks (extremely zoomed in)
       if (pixelsPerSecond >= 100) return displayFps / 4; // 0.25 second intervals (very zoomed in)
       if (pixelsPerSecond >= 50) return displayFps / 2; // 0.5 second intervals
       if (pixelsPerSecond >= 25) return displayFps; // 1 second intervals
@@ -251,7 +253,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
         /> */}
 
         {/* Track Content Regions Indicator */}
-        <div className="absolute bottom-0.5 left-0 right-0 h-[1.5px] bg-accent">
+        {/* <div className="absolute bottom-0.5 left-0 right-0 h-[1.5px] bg-accent">
           {trackRegions.map((region, index) => (
             <div
               key={index}
@@ -259,14 +261,14 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
                 position: 'absolute',
                 left: Math.max(0, region.startX),
                 width: Math.max(1, region.endX - Math.max(0, region.startX)),
-                height: '3px',
+                height: '2px',
                 backgroundColor: region.color,
                 opacity: 0.6,
                 borderRadius: '1px',
               }}
             />
           ))}
-        </div>
+        </div> */}
 
         {/* Time Ticks */}
         {ticks.map(
@@ -280,14 +282,14 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
             const getTickHeight = () => {
               // Label ticks get prominent height
               if (isLabelTick) {
-                return 16;
+                return 10;
               }
               if (isHour) {
-                return 14;
+                return 10;
               }
               if (isMinute) {
                 return pixelsPerSecond >= 100
-                  ? 14
+                  ? 10
                   : pixelsPerSecond >= 50
                     ? 12
                     : 10;
@@ -332,7 +334,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
                 <div
                   className={cn(tickClasses)}
                   style={{
-                    width: isMajorTick ? '2px' : '1px',
+                    width: isMajorTick ? '1px' : '0.5px',
                     height: `${tickHeight}px`,
                   }}
                 />

@@ -2,6 +2,7 @@ import {
   SpriteSheet,
   SpriteSheetThumbnail,
 } from '@/backend/frontend_use/videoSpriteSheetGenerator';
+import { cn } from '@/frontend/utils/utils';
 import { Loader2 } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSpriteSheetProgress } from '../../editor/hooks/useMediaReadiness';
@@ -116,6 +117,10 @@ const GPUAcceleratedSprite: React.FC<{
 export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
   React.memo(
     ({ track, frameWidth, width, height, zoomLevel }) => {
+      const selectedTrackIds = useVideoEditorStore(
+        (state) => state.timeline.selectedTrackIds,
+      );
+      const isSelected = selectedTrackIds.includes(track.id);
       const containerRef = useRef<HTMLDivElement>(null);
       const [state, setState] = useState<SpriteSheetStripState>({
         spriteSheets: [],
@@ -405,7 +410,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
       return (
         <div
           ref={containerRef}
-          className="absolute top-0 left-0 overflow-hidden"
+          className="absolute top-0 left-0 overflow-hidden group"
           style={{
             width,
             height,
@@ -484,7 +489,10 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
 
           {/* Track name overlay */}
           <div
-            className="absolute bottom-1 left-2 text-white text-xs font-medium pointer-events-none whitespace-nowrap overflow-hidden"
+            className={cn(
+              'absolute bottom-1 left-2 text-white text-xs font-medium pointer-events-none whitespace-nowrap overflow-hidden group-hover:opacity-100 opacity-0 transition-opacity duration-200',
+              isSelected ? 'opacity-100' : 'opacity-0',
+            )}
             style={{
               zIndex: 2,
               textShadow: '1px 1px 2px rgba(0,0,0,0.8)',
