@@ -65,7 +65,7 @@ export function useAlignmentGuides({
       }
 
       // Debug logging (development mode only)
-      if (process.env.NODE_ENV === 'development') {
+      if ((import.meta as any).env?.DEV === true) {
         console.log('[Drag Guides Debug]', {
           textCenter: { x: elementCenterX, y: elementCenterY },
           videoCenter: { x: frameCenterX, y: frameCenterY },

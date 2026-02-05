@@ -39,6 +39,40 @@ export const FullscreenPreview: React.FC = () => {
     };
   }, [setFullscreen]);
 
+  useEffect(() => {
+    if (!preview.isFullscreen) return;
+
+    const root = document.documentElement;
+    root.dataset.previewFullscreen = 'true';
+
+    const isWindows =
+      typeof navigator !== 'undefined' &&
+      /Windows/i.test(navigator.userAgent || '');
+
+    if (isWindows && window.appControl?.setWindowFullscreen) {
+      window.appControl.setWindowFullscreen(true);
+    }
+
+    if (isWindows && window.appControl?.setTitlebarOverlay) {
+      window.appControl.setTitlebarOverlay({
+        color: '#000000',
+        symbolColor: '#000000',
+        height: 0,
+      });
+    }
+
+    return () => {
+      delete root.dataset.previewFullscreen;
+      if (isWindows) {
+        if (window.appControl?.setWindowFullscreen) {
+          window.appControl.setWindowFullscreen(false);
+        }
+        window.dispatchEvent(new Event('titlebar-height-refresh'));
+        window.dispatchEvent(new Event('titlebar-ready'));
+      }
+    };
+  }, [preview.isFullscreen]);
+
   // Format time helper
   const displayFps = useMemo(() => getDisplayFps(tracks), [tracks]);
   const formatTime = useCallback(

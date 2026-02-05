@@ -17,7 +17,9 @@ export const PreviewPlaceholder: React.FC<PreviewPlaceholderProps> = ({
   dragActive,
   onImport,
 }) => {
-  const { theme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
+  const isDarkTheme =
+    (theme === 'system' ? resolvedTheme : theme) !== 'light';
 
   return (
     <div
@@ -29,7 +31,7 @@ export const PreviewPlaceholder: React.FC<PreviewPlaceholderProps> = ({
       )}
       onClick={onImport}
     >
-      <img src={theme === 'dark' ? NewDark : New} alt="New Project" />
+      <img src={isDarkTheme ? NewDark : New} alt="New Project" />
       <p className="text-sm text-muted-foreground">
         Click to browse or drag and drop files here
       </p>

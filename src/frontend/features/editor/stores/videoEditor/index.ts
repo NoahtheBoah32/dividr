@@ -47,6 +47,8 @@ type VideoEditorStore = TimelineSlice &
   TranscriptionSlice;
 
 // Create the unified store
+const isDev = (import.meta as any).env?.DEV === true;
+
 export const useVideoEditorStore = create<VideoEditorStore>()(
   devtools(
     persist(
@@ -138,13 +140,13 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
     ),
     {
       name: 'VideoEditorStore',
-      enabled: process.env.NODE_ENV === 'development',
+      enabled: isDev,
     },
   ),
 );
 
 // Expose store to window for console debugging (development only)
-if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+if (typeof window !== 'undefined' && isDev) {
   (window as any).__videoEditorStore = useVideoEditorStore;
 }
 

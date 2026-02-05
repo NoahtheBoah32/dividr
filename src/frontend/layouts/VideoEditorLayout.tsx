@@ -45,10 +45,12 @@ const VideoEditorLayoutComponent = () => {
   return (
     <ProjectGuard>
       <div
-        className="h-screen flex flex-col text-zinc-900 bg-zinc-100 dark:text-zinc-100 dark:bg-zinc-900 p-4"
+        className="h-screen flex flex-col text-foreground bg-background p-4"
         onMouseDown={handleLayoutClick}
       >
-        <TitleBar className="relative z-10 border-b border-accent -mx-4 px-4 -mt-4 py-2" />
+        <TitleBar className="relative z-10 -mx-4 px-4 -mt-4 py-2" />
+
+        <div className="border-b border-border/50 -mx-4 px-4 my-[1.5px]" />
 
         <div className="grid grid-cols-[auto_1fr] grid-rows-[55px_1fr_auto] flex-1 min-h-0">
           {/* Menubar and Project Additional controllers */}

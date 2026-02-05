@@ -2,11 +2,19 @@ import { useTheme } from '@/frontend/providers/ThemeProvider';
 import { Toaster as Sonner, ToasterProps } from 'sonner';
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = 'system' } = useTheme();
+  const { theme = 'system', resolvedTheme } = useTheme();
+  const sonnerTheme =
+    theme === 'soft-dark'
+      ? 'dark'
+      : theme === 'system'
+        ? resolvedTheme === 'light'
+          ? 'light'
+          : 'dark'
+        : theme;
 
   return (
     <Sonner
-      theme={theme as ToasterProps['theme']}
+      theme={sonnerTheme as ToasterProps['theme']}
       className="toaster group"
       style={
         {

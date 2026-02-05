@@ -35,7 +35,9 @@ import { useLayout } from './hooks/useLayout';
  * @returns JSX.Element - The rendered component displaying projects.
  */
 const Projects = () => {
-  const { theme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
+  const isDarkTheme =
+    (theme === 'system' ? resolvedTheme : theme) !== 'light';
   const navigate = useNavigate();
 
   const {
@@ -355,7 +357,7 @@ const Projects = () => {
         <div className="flex-1 flex items-center justify-center text-center">
           <div className="flex flex-col items-center gap-[25px] max-w-md">
             <img
-              src={theme === 'dark' ? NewDark : New}
+              src={isDarkTheme ? NewDark : New}
               alt="New Project"
               className="w-24 h-24"
             />

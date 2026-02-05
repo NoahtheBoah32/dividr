@@ -688,6 +688,12 @@ declare global {
       closeApp: () => void;
       minimizeApp: () => void;
       maximizeApp: () => void;
+      setTitlebarOverlay: (options: {
+        color?: string;
+        symbolColor?: string;
+        height?: number;
+      }) => Promise<boolean>;
+      setWindowFullscreen: (isFullscreen: boolean) => Promise<boolean>;
       openExternalLink: (link: string) => Promise<void>;
       getMaximizeState: () => Promise<boolean>;
       onMaximizeChanged: (callback: (isMaximized: boolean) => void) => void;

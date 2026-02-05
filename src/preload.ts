@@ -551,6 +551,13 @@ contextBridge.exposeInMainWorld('appControl', {
   maximizeApp: () => ipcRenderer.send('maximize-btn'),
   getAutoLaunch: () => ipcRenderer.invoke('get-auto-launch'),
   getMaximizeState: () => ipcRenderer.invoke('get-maximize-state'),
+  setTitlebarOverlay: (options: {
+    color?: string;
+    symbolColor?: string;
+    height?: number;
+  }) => ipcRenderer.invoke('set-titlebar-overlay', options),
+  setWindowFullscreen: (isFullscreen: boolean) =>
+    ipcRenderer.invoke('set-window-fullscreen', isFullscreen),
   onMaximizeChanged: (callback: (isMaximized: boolean) => void) => {
     ipcRenderer.on('window-maximize-changed', (_event, isMaximized: boolean) =>
       callback(isMaximized),

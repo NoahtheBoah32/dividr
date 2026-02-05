@@ -172,16 +172,14 @@ const AppMenuBarComponent = () => {
   }, [selectedTrackIds.length, removeSelectedTracks]);
 
   return (
-    <div className="flex items-center my-1 ml-4">
+    <div className="flex items-center">
       <Menubar variant="minimal">
-        <MenubarMenu>
-          <Link to="/">
-            <MenubarTrigger>Home</MenubarTrigger>
-          </Link>
-        </MenubarMenu>
         <MenubarMenu>
           <MenubarTrigger>File</MenubarTrigger>
           <MenubarContent>
+            <Link to="/">
+              <MenubarItem>Home</MenubarItem>
+            </Link>
             <MenubarItem onClick={handleNewProject}>
               New Project{' '}
               <MenubarShortcut>

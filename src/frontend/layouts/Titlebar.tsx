@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * A custom React fixed component
  * A Fixed element in the header portion of Downlodr, displays the title/logo of Downlodr with the window controls (maximize, minimize, and close)
@@ -19,7 +20,7 @@ import {
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
 import { useTheme } from '@/frontend/providers/ThemeProvider';
 import { cn } from '@/frontend/utils/utils';
-import { Copy, Minus, Plus, Square, Upload, X } from 'lucide-react';
+import { Minus, Plus, Square, Upload, X } from 'lucide-react';
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -29,16 +30,27 @@ interface TitleBarProps {
   className?: string;
 }
 
+const VersionBadge: React.FC = () => {
+  return (
+    <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 rounded-md bg-muted/50">
+      v{packageJson.version}
+    </span>
+  );
+};
+
 const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
   const { createNewProject, openProject, importProject } = useProjectStore();
-  const { theme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
   const { projects } = useProjectStore();
 
   const location = useLocation();
 
-  const [isMaximized, setIsMaximized] = React.useState<boolean>(false);
-
   const navigate = useNavigate();
+  const isWindows =
+    typeof navigator !== 'undefined' &&
+    /Windows/i.test(navigator.userAgent || '');
+  const isDev = (import.meta as any).env?.DEV === true;
+  const titlebarRef = React.useRef<HTMLDivElement>(null);
 
   // Determine context based on current route
   const isInVideoEditor = location.pathname.startsWith('/video-editor');
@@ -79,13 +91,77 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
   // Function to toggle maximize/restore
   const handleMaximizeRestore = () => {
     window.appControl.maximizeApp();
-    setIsMaximized(!isMaximized);
   };
 
   // Handle close button click
   const handleCloseClick = () => {
     window.appControl.quitApp();
   };
+
+  React.useEffect(() => {
+    const root = document.documentElement;
+    if (root.dataset.titlebarReady !== 'true') {
+      root.dataset.titlebarReady = 'false';
+    }
+
+    const rafIds: number[] = [];
+    rafIds.push(
+      requestAnimationFrame(() => {
+        rafIds.push(
+          requestAnimationFrame(() => {
+            (window as any).__titlebarReady = true;
+            root.dataset.titlebarReady = 'true';
+            window.dispatchEvent(new Event('titlebar-ready'));
+          }),
+        );
+      }),
+    );
+
+    return () => {
+      rafIds.forEach((id) => cancelAnimationFrame(id));
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!isWindows || !window.appControl?.setTitlebarOverlay) return;
+    const element = titlebarRef.current;
+    if (!element) return;
+
+    let lastHeight = 0;
+    const updateHeight = () => {
+      const nextHeight = Math.max(
+        1,
+        Math.round(element.getBoundingClientRect().height),
+      );
+      if (nextHeight === lastHeight) return;
+      lastHeight = nextHeight;
+      window.appControl?.setTitlebarOverlay?.({ height: nextHeight });
+    };
+
+    updateHeight();
+
+    const rafId = requestAnimationFrame(() => updateHeight());
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateHeight());
+      observer.observe(element);
+    }
+
+    const handleRefresh = () => {
+      lastHeight = 0;
+      updateHeight();
+    };
+    window.addEventListener('resize', updateHeight);
+    window.addEventListener('titlebar-height-refresh', handleRefresh);
+
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+      window.removeEventListener('titlebar-height-refresh', handleRefresh);
+      observer?.disconnect();
+      cancelAnimationFrame(rafId);
+    };
+  }, [isWindows]);
 
   // Adjust downlodr logo used depending on the light/dark mode
   /*
@@ -102,27 +178,28 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
   */
   return (
     <>
-      <div className={cn('', className)}>
-        <div className="relative flex items-center h-8 drag-area">
+      <div ref={titlebarRef} className={cn('', className)}>
+        <div className="relative flex items-center h-8 drag-area titlebar-safe-area">
           {/* Logo */}
           <div className="flex gap-2 items-center no-drag">
             <Link to="/" className="cursor-pointer">
               <img
-                src={theme === 'dark' ? LogoDark : LogoLight}
+                src={
+                  (theme === 'system' ? resolvedTheme : theme) !== 'light'
+                    ? LogoDark
+                    : LogoLight
+                }
                 className="h-10 w-auto"
                 alt="Dividr Logo"
               />
             </Link>
-            {/* Version Badge */}
-            <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 rounded-md bg-muted/50">
-              v{packageJson.version}
-            </span>
+            {!isInVideoEditor && <VersionBadge />}
 
             {isInVideoEditor && <AutosaveIndicator />}
           </div>
 
           {/* Right Side Controls */}
-          <div className="flex items-center gap-7 no-drag text-gray-800 dark:text-gray-100 ml-auto">
+          <div className="flex items-center gap-7 no-drag text-foreground ml-auto">
             {/* New Project Button - Only show when not in video editor */}
             {!isInVideoEditor && projects.length !== 0 && (
               <div className="flex items-center gap-2">
@@ -154,7 +231,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
             {/* Dark Mode/Light Mode Toggle */}
             <div className="flex items-center gap-7">
               {/* Test Tools - Only show in development */}
-              {process.env.NODE_ENV === 'development' && (
+              {isDev && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm" className="gap-1">
@@ -171,48 +248,47 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
+              {isInVideoEditor && <VersionBadge />}
               <ModeToggle />
             </div>
 
             {/* Window Controls */}
-            <div className="flex items-center gap-4">
-              {/* Minimize Button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => window.appControl.minimizeApp()}
-                title="Minimize"
-                className="rounded-md hover:bg-gray-100 dark:hover:bg-zinc-700 hover:opacity-100 !p-1 size-fit"
-              >
-                <Minus size={16} />
-              </Button>
+            {!isWindows && (
+              <div className="titlebar-controls flex items-center gap-4">
+                {/* Minimize Button */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => window.appControl.minimizeApp()}
+                  title="Minimize"
+                  className="rounded-md hover:bg-gray-100 dark:hover:bg-zinc-700 hover:opacity-100 !p-1 size-fit"
+                >
+                  <Minus size={16} />
+                </Button>
 
-              {/* Maximize Button with dynamic icon */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleMaximizeRestore}
-                title={isMaximized ? 'Restore' : 'Maximize'}
-                className="rounded-md hover:bg-gray-100 dark:hover:bg-zinc-700 hover:opacity-100 !p-1 size-fit"
-              >
-                {isMaximized ? (
-                  <Copy size={16} className="scale-x-[-1] transform" />
-                ) : (
+                {/* Maximize Button */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleMaximizeRestore}
+                  title="Maximize"
+                  className="rounded-md hover:bg-gray-100 dark:hover:bg-zinc-700 hover:opacity-100 !p-1 size-fit"
+                >
                   <Square size={16} />
-                )}
-              </Button>
+                </Button>
 
-              {/* Close Button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleCloseClick}
-                title="Close"
-                className="rounded-md hover:bg-red-600 dark:hover:bg-red-600 hover:text-zinc-100 !p-1 size-fit"
-              >
-                <X size={16} />
-              </Button>
-            </div>
+                {/* Close Button */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleCloseClick}
+                  title="Close"
+                  className="rounded-md hover:bg-red-600 dark:hover:bg-red-600 hover:text-zinc-100 !p-1 size-fit"
+                >
+                  <X size={16} />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </div>

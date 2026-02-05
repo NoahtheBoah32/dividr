@@ -21,7 +21,9 @@ const StartupLoader = ({
   progress,
   isVisible = true,
 }: StartupLoaderProps) => {
-  const { theme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
+  const isDarkTheme =
+    (theme === 'system' ? resolvedTheme : theme) !== 'light';
   const [dots, setDots] = useState('');
 
   // Animated dots effect
@@ -43,7 +45,7 @@ const StartupLoader = ({
         {/* Brand Logo */}
         <div className="relative">
           <img
-            src={theme === 'dark' ? LogoDark : Logo}
+            src={isDarkTheme ? LogoDark : Logo}
             alt="Dividr"
             className="w-32 h-32 animate-pulse"
           />

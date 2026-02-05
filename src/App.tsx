@@ -100,7 +100,7 @@ function App() {
   };
 
   return (
-    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+    <ThemeProvider defaultTheme="soft-dark" storageKey="vite-ui-theme">
       <WindowStateProvider>
         <RuntimeStatusProvider>
           {/* Show startup loader until app is ready */}

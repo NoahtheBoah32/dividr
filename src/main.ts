@@ -70,6 +70,14 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 let mainWindow: BrowserWindow | null = null;
 const forceQuit = false;
 let isWindowFocused = true;
+const titlebarOverlayState: {
+  color: string;
+  symbolColor: string;
+  height?: number;
+} = {
+  color: '#09090b',
+  symbolColor: '#09090b',
+};
 // Dynamic import of ffmpeg binaries to avoid module resolution issues
 let ffmpegPath: string | null = null;
 let ffprobePath: { path: string } | null = null;
@@ -333,6 +341,36 @@ async function processFFmpegQueue() {
 }
 
 // =============================================================================
+
+const applyTitlebarOverlay = (options?: {
+  color?: string;
+  symbolColor?: string;
+  height?: number;
+}) => {
+  if (process.platform !== 'win32' || !mainWindow) return;
+  if (options) {
+    if (typeof options.color === 'string') {
+      titlebarOverlayState.color = options.color;
+    }
+    if (typeof options.symbolColor === 'string') {
+      titlebarOverlayState.symbolColor = options.symbolColor;
+    }
+    if (typeof options.height === 'number') {
+      titlebarOverlayState.height = options.height;
+    }
+  }
+
+  const overlayOptions: Electron.TitleBarOverlayOptions = {
+    color: titlebarOverlayState.color,
+    symbolColor: titlebarOverlayState.symbolColor,
+  };
+
+  if (typeof titlebarOverlayState.height === 'number') {
+    overlayOptions.height = titlebarOverlayState.height;
+  }
+
+  mainWindow.setTitleBarOverlay(overlayOptions);
+};
 
 interface QueuedFfmpegOptions {
   priority: FFmpegPriority;
@@ -4291,10 +4329,14 @@ ipcMain.handle(
 );
 
 const createWindow = () => {
+  const useNativeTitlebarOverlay = process.platform === 'win32';
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
     frame: false,
+    ...(useNativeTitlebarOverlay
+      ? { titleBarStyle: 'hidden', titleBarOverlay: true }
+      : {}),
     autoHideMenuBar: true,
     minWidth: 1280,
     minHeight: 520,
@@ -4308,6 +4350,8 @@ const createWindow = () => {
       // devTools: false,
     },
   });
+
+  applyTitlebarOverlay();
 
   logStartupPerf();
 
@@ -4466,6 +4510,36 @@ ipcMain.on('maximize-btn', () => {
 ipcMain.handle('get-maximize-state', () => {
   if (!mainWindow) return false;
   return mainWindow.isMaximized();
+});
+
+ipcMain.handle(
+  'set-titlebar-overlay',
+  (
+    _event,
+    options: { color?: string; symbolColor?: string; height?: number },
+  ) => {
+    applyTitlebarOverlay(options);
+    return process.platform === 'win32' && !!mainWindow;
+  },
+);
+
+ipcMain.handle('set-window-fullscreen', (_event, isFullscreen: boolean) => {
+  if (!mainWindow) return false;
+  const nextState = Boolean(isFullscreen);
+  if (process.platform === 'darwin') {
+    const macWindow = mainWindow as BrowserWindow & {
+      setSimpleFullScreen?: (v: boolean) => void;
+    };
+    if (typeof macWindow.setSimpleFullScreen === 'function') {
+      macWindow.setSimpleFullScreen(nextState);
+    } else {
+      mainWindow.setFullScreen(nextState);
+    }
+    return true;
+  }
+
+  mainWindow.setFullScreen(nextState);
+  return true;
 });
 
 // Helper function to get run in background setting

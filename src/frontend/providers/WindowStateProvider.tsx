@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 type WindowStateProviderProps = {
   children: React.ReactNode;
@@ -12,48 +12,49 @@ const initialState: WindowStateProviderState = {
   isMaximized: false,
 };
 
-const WindowStateProviderContext =
-  createContext<WindowStateProviderState>(initialState);
+let currentState: WindowStateProviderState = initialState;
+let isInitialized = false;
+const listeners = new Set<() => void>();
 
-export function WindowStateProvider({
-  children,
-  ...props
-}: WindowStateProviderProps) {
-  const [isMaximized, setIsMaximized] = useState<boolean>(false);
+const notifyListeners = () => {
+  listeners.forEach((listener) => listener());
+};
 
-  useEffect(() => {
-    // Get initial state
-    window.appControl.getMaximizeState().then((state: boolean) => {
-      setIsMaximized(state);
-    });
+const updateState = (isMaximized: boolean) => {
+  if (currentState.isMaximized === isMaximized) return;
+  currentState = { isMaximized };
+  notifyListeners();
+};
 
-    // Listen for maximize state changes
-    window.appControl.onMaximizeChanged((state: boolean) => {
-      setIsMaximized(state);
-    });
+const ensureInitialized = () => {
+  if (isInitialized || typeof window === 'undefined') return;
+  isInitialized = true;
 
-    // Cleanup listener on unmount
-    return () => {
-      window.appControl.offMaximizeChanged();
-    };
-  }, []);
+  window.appControl
+    ?.getMaximizeState?.()
+    .then((state: boolean) => updateState(state))
+    .catch(() => null);
 
-  const value = {
-    isMaximized,
+  window.appControl?.onMaximizeChanged?.((state: boolean) => {
+    updateState(state);
+  });
+};
+
+const subscribe = (listener: () => void) => {
+  ensureInitialized();
+  listeners.add(listener);
+
+  return () => {
+    listeners.delete(listener);
   };
+};
 
-  return (
-    <WindowStateProviderContext.Provider {...props} value={value}>
-      {children}
-    </WindowStateProviderContext.Provider>
-  );
+const getSnapshot = () => currentState;
+const getServerSnapshot = () => initialState;
+
+export function WindowStateProvider({ children }: WindowStateProviderProps) {
+  return <>{children}</>;
 }
 
-export const useWindowState = () => {
-  const context = useContext(WindowStateProviderContext);
-
-  if (context === undefined)
-    throw new Error('useWindowState must be used within a WindowStateProvider');
-
-  return context;
-};
+export const useWindowState = () =>
+  useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);

@@ -2083,8 +2083,7 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
               <div
                 key={rowDef.id}
                 className={cn(
-                  isVideoZero &&
-                    'sticky bottom-0 z-30 dark:bg-zinc-900 bg-zinc-100',
+                  isVideoZero && 'sticky bottom-0 z-30 bg-background',
                 )}
               >
                 <TrackRow

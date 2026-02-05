@@ -574,7 +574,7 @@ export const TimelineTrackControllers: React.FC<TimelineTrackControllersProps> =
           {/* Header with Add Track button - STICKY */}
           <div
             className={cn(
-              'sticky top-0 z-20 dark:bg-zinc-900 bg-zinc-100 border-b border-border/20 flex items-center justify-center px-2',
+              'sticky top-0 z-20 bg-background border-b border-border/20 flex items-center justify-center px-2',
               TIMELINE_HEADER_HEIGHT_CLASSES,
             )}
           >
@@ -613,11 +613,7 @@ export const TimelineTrackControllers: React.FC<TimelineTrackControllersProps> =
                       : undefined
                   }
                 >
-                  <div
-                    className={cn(
-                      isVideoZero && 'dark:bg-zinc-900 bg-zinc-100',
-                    )}
-                  >
+                  <div className={cn(isVideoZero && 'bg-background')}>
                     <TrackControllerRow
                       rowDef={rowDef}
                       tracks={tracksByRow[rowDef.id] || []}
