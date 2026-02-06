@@ -1,4 +1,4 @@
-import fallbackMetadata from '@/frontend/assets/releaseMetaFallback.json';
+import packageJson from '../../../../package.json';
 import { Button } from '@/frontend/components/ui/button';
 import {
   Dialog,
@@ -9,7 +9,7 @@ import {
 } from '@/frontend/components/ui/dialog';
 import { ScrollArea } from '@/frontend/components/ui/scroll-area';
 import type {
-  ReleaseMetadata,
+  ReleaseDetails,
   ReleaseUpdateCache,
 } from '@/shared/types/release';
 import { formatPlatformLabel, normalizePlatform } from '@/shared/utils/release';
@@ -18,7 +18,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 
-const FALLBACK_METADATA = fallbackMetadata as ReleaseMetadata;
+const APP_NAME = 'DiviDr';
+const APP_VERSION = packageJson.version || '0.0.0';
 
 const AUTO_CHECK_FOR_UPDATES = false;
 
@@ -44,7 +45,10 @@ interface AboutDialogProps {
 }
 
 export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
-  const [metadata, setMetadata] = useState<ReleaseMetadata>(FALLBACK_METADATA);
+  const [releaseDetails, setReleaseDetails] = useState<ReleaseDetails | null>(
+    null,
+  );
+  const [releaseLoading, setReleaseLoading] = useState(false);
   const [updateCache, setUpdateCache] = useState<ReleaseUpdateCache | null>(
     null,
   );
@@ -52,24 +56,32 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
   const [updateAvailable, setUpdateAvailable] = useState<boolean | null>(null);
 
   const platformLabel = useMemo(() => {
-    const normalized = normalizePlatform(metadata.platform);
+    const normalized = normalizePlatform(detectPlatformFromUA());
     if (normalized) {
       return formatPlatformLabel(normalized);
     }
-    const fallback = detectPlatformFromUA();
-    return formatPlatformLabel(fallback ?? metadata.platform);
-  }, [metadata.platform]);
+    return formatPlatformLabel(detectPlatformFromUA() ?? 'Unknown');
+  }, []);
 
-  const loadMetadata = useCallback(async () => {
+  const installedTag = useMemo(() => {
+    const normalized = normalizePlatform(detectPlatformFromUA());
+    return normalized ? `v${APP_VERSION}-${normalized}` : `v${APP_VERSION}`;
+  }, []);
+
+  const loadReleaseDetails = useCallback(async () => {
+    setReleaseLoading(true);
     try {
-      const url = new URL('releaseMeta.json', window.location.href);
-      const response = await fetch(url.toString(), { cache: 'no-store' });
-      if (!response.ok) throw new Error('release metadata unavailable');
-      const data = (await response.json()) as ReleaseMetadata;
-      setMetadata({ ...FALLBACK_METADATA, ...data });
+      const result = await window.electronAPI.releaseGetInstalledRelease();
+      if (result.success && result.release) {
+        setReleaseDetails(result.release);
+      } else {
+        setReleaseDetails(null);
+      }
     } catch (error) {
-      console.warn('Failed to load release metadata:', error);
-      setMetadata(FALLBACK_METADATA);
+      console.warn('Failed to load release details:', error);
+      setReleaseDetails(null);
+    } finally {
+      setReleaseLoading(false);
     }
   }, []);
 
@@ -111,16 +123,24 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
 
   useEffect(() => {
     if (!open) return;
-    loadMetadata();
+    loadReleaseDetails();
     loadUpdateCache();
-  }, [loadMetadata, loadUpdateCache, open]);
+  }, [loadReleaseDetails, loadUpdateCache, open]);
 
   useEffect(() => {
     if (!AUTO_CHECK_FOR_UPDATES || !open) return;
     handleCheckUpdates();
   }, [handleCheckUpdates, open]);
 
-  const notes = metadata.notes?.trim() || 'Release notes are unavailable.';
+  const releaseTitle = releaseDetails?.title || 'Release details unavailable';
+  const releaseNotes = releaseDetails?.notes?.trim()
+    ? releaseDetails.notes
+    : releaseLoading
+      ? 'Loading release notes...'
+      : 'Release notes are available when online.';
+  const releaseTag = releaseDetails?.tag || installedTag;
+  const releaseDate = formatTimestamp(releaseDetails?.publishedAt);
+  const releaseCommit = releaseDetails?.commit || 'Unavailable';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -131,27 +151,27 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             Release notes and build information.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex h-full min-h-0 flex-col">
-          <header className="border-b rounded-t-lg border-border/60 bg-card px-6 py-5">
+        <div className="flex h-full flex-col">
+          <header className="border-b border-border/60 bg-card px-6 py-5">
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-2xl font-semibold tracking-tight">
-                  {metadata.appName}
+                  {APP_NAME}
                 </h1>
                 <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-sm font-medium text-foreground/80">
-                  v{metadata.version}
+                  v{APP_VERSION}
                 </span>
                 <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-sm font-medium text-foreground/80">
                   {platformLabel}
                 </span>
               </div>
               <div className="text-sm text-muted-foreground">
-                {metadata.title}
+                {releaseTitle}
               </div>
             </div>
           </header>
 
-          <section className="grid flex-1 min-h-0 gap-6 overflow-y-auto px-6 pb-6 pt-4 lg:grid-rows-[2fr_1fr]">
+          <section className="grid flex-1 min-h-0 gap-6 px-6 pb-6 pt-4 lg:grid-cols-[2fr_1fr]">
             <div className="flex min-h-0 flex-col gap-3">
               <div className="text-sm font-semibold text-foreground">
                 Release Notes
@@ -182,7 +202,9 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                         </p>
                       ),
                       ul: ({ children }) => (
-                        <ul className="list-disc space-y-2 pl-5">{children}</ul>
+                        <ul className="list-disc space-y-2 pl-5">
+                          {children}
+                        </ul>
                       ),
                       ol: ({ children }) => (
                         <ol className="list-decimal space-y-2 pl-5">
@@ -211,7 +233,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                       ),
                     }}
                   >
-                    {notes}
+                    {releaseNotes}
                   </ReactMarkdown>
                 </div>
               </ScrollArea>
@@ -220,23 +242,23 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             <div className="flex flex-col gap-4">
               <div className="rounded-xl border border-border/60 bg-card px-5 py-4 shadow-sm">
                 <div className="text-sm font-semibold text-foreground">
-                  Build Info
+                  Release Info
                 </div>
                 <div className="mt-3 space-y-2 text-sm text-foreground/80">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-muted-foreground">Release Tag</span>
                     <span className="font-mono text-xs text-foreground/80">
-                      {metadata.releaseTag}
+                      {releaseTag}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-muted-foreground">Build Date</span>
-                    <span>{formatTimestamp(metadata.buildDate)}</span>
+                    <span className="text-muted-foreground">Release Date</span>
+                    <span>{releaseDate}</span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-muted-foreground">Commit</span>
                     <span className="font-mono text-xs text-foreground/80">
-                      {metadata.commit}
+                      {releaseCommit}
                     </span>
                   </div>
                 </div>
@@ -249,7 +271,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                       Updates
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      Manual check (offline safe)
+                      Manual check (online)
                     </div>
                   </div>
                   <Button
@@ -278,9 +300,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                   {updateCache && (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">
-                          Latest Tag
-                        </span>
+                        <span className="text-muted-foreground">Latest Tag</span>
                         <span className="font-mono text-xs text-foreground/80">
                           {updateCache.latestTag}
                         </span>
@@ -294,9 +314,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">
-                          Last Checked
-                        </span>
+                        <span className="text-muted-foreground">Last Checked</span>
                         <span className="text-xs text-foreground/80">
                           {formatTimestamp(updateCache.checkedAt)}
                         </span>

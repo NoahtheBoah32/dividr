@@ -554,6 +554,21 @@ declare global {
       } | null>;
 
       /**
+       * Get release details for the installed version (online)
+       */
+      releaseGetInstalledRelease: () => Promise<{
+        success: boolean;
+        release?: {
+          tag: string;
+          title: string;
+          notes: string;
+          publishedAt: string | null;
+          commit: string | null;
+        };
+        error?: string;
+      }>;
+
+      /**
        * Listen for runtime download progress
        */
       onRuntimeDownloadProgress: (

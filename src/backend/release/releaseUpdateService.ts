@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { get as httpsGet } from 'https';
 import path from 'path';
 import type {
+  ReleaseDetails,
   ReleaseUpdateCache,
   ReleaseUpdateCheckResult,
 } from '../../shared/types/release';
@@ -21,6 +22,23 @@ interface GitHubRelease {
   prerelease: boolean;
   draft: boolean;
   body?: string | null;
+  published_at?: string | null;
+  created_at?: string | null;
+  target_commitish?: string | null;
+}
+
+interface GitHubRef {
+  object?: {
+    sha?: string;
+    type?: string;
+  };
+}
+
+interface GitHubTagObject {
+  object?: {
+    sha?: string;
+    type?: string;
+  };
 }
 
 const MAX_CACHE_BYTES = 10 * 1024;
@@ -80,6 +98,42 @@ const fetchJson = async <T>(url: string): Promise<T> => {
 const fetchReleases = async (repo: string): Promise<GitHubRelease[]> => {
   const url = `https://api.github.com/repos/${repo}/releases?per_page=100`;
   return fetchJson<GitHubRelease[]>(url);
+};
+
+const fetchReleaseByTag = async (
+  repo: string,
+  tag: string,
+): Promise<GitHubRelease> => {
+  const url = `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
+  return fetchJson<GitHubRelease>(url);
+};
+
+const fetchTagCommitSha = async (
+  repo: string,
+  tag: string,
+): Promise<string | null> => {
+  try {
+    const refUrl = `https://api.github.com/repos/${repo}/git/ref/tags/${encodeURIComponent(tag)}`;
+    const ref = await fetchJson<GitHubRef>(refUrl);
+    const objectSha = ref.object?.sha;
+    const objectType = ref.object?.type;
+
+    if (!objectSha) return null;
+
+    if (objectType === 'commit') {
+      return objectSha;
+    }
+
+    if (objectType === 'tag') {
+      const tagUrl = `https://api.github.com/repos/${repo}/git/tags/${objectSha}`;
+      const tagObject = await fetchJson<GitHubTagObject>(tagUrl);
+      return tagObject.object?.sha || null;
+    }
+
+    return objectSha;
+  } catch {
+    return null;
+  }
 };
 
 export const readReleaseUpdateCache = (): ReleaseUpdateCache | null => {
@@ -217,5 +271,30 @@ export const checkForReleaseUpdates =
         installedTag: getInstalledTag(installedVersion, platform ?? 'unknown'),
         error: error instanceof Error ? error.message : 'Update check failed',
       };
+    }
+  };
+
+export const getInstalledReleaseDetails =
+  async (): Promise<ReleaseDetails | null> => {
+    const platform = getPlatform();
+    if (!platform) return null;
+
+    const version = app.getVersion();
+    const tag = getInstalledTag(version, platform);
+
+    try {
+      const repo = getRepo();
+      const release = await fetchReleaseByTag(repo, tag);
+      const commit = await fetchTagCommitSha(repo, tag);
+
+      return {
+        tag,
+        title: release.name || release.tag_name || tag,
+        notes: release.body || '',
+        publishedAt: release.published_at || release.created_at || null,
+        commit,
+      };
+    } catch {
+      return null;
     }
   };

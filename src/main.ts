@@ -34,6 +34,7 @@ import {
 // Import runtime download manager for on-demand installation
 import {
   checkForReleaseUpdates,
+  getInstalledReleaseDetails,
   readReleaseUpdateCache,
 } from './backend/release/releaseUpdateService';
 import {
@@ -3722,6 +3723,22 @@ ipcMain.handle('release:check-updates', async () => {
 ipcMain.handle('release:get-update-cache', async () => {
   console.log('📦 MAIN PROCESS: release:get-update-cache handler called');
   return readReleaseUpdateCache();
+});
+
+ipcMain.handle('release:get-installed-release', async () => {
+  console.log('📘 MAIN PROCESS: release:get-installed-release handler called');
+  try {
+    const release = await getInstalledReleaseDetails();
+    if (!release) {
+      return { success: false, error: 'Release details unavailable' };
+    }
+    return { success: true, release };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Release lookup failed',
+    };
+  }
 });
 
 // IPC Handler to check if a media file has audio

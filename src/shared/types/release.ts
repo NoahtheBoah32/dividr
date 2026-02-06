@@ -11,6 +11,14 @@ export interface ReleaseMetadata {
   buildDate: string;
 }
 
+export interface ReleaseDetails {
+  tag: string;
+  title: string;
+  notes: string;
+  publishedAt: string | null;
+  commit: string | null;
+}
+
 export interface ReleaseUpdateCache {
   latestVersion: string;
   latestTag: string;
