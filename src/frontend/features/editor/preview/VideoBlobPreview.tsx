@@ -30,7 +30,7 @@ import { CanvasOverlay, UnifiedOverlayRenderer } from './overlays';
 import { TransformBoundaryLayer } from './overlays/TransformBoundaryLayer';
 import {
   calculateContentScale,
-  calculateFitDimensions,
+  calculateVideoFitTransform,
 } from './utils/scalingUtils';
 
 interface VideoBlobPreviewProps {
@@ -351,7 +351,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     [setSelectedTracks, preview.interactionMode],
   );
 
-  // Auto-fit video tracks when canvas aspect ratio changes
+  // Auto-fit media tracks (video + image) when canvas aspect ratio changes
   const prevCanvasDimensionsRef = useRef<{
     width: number;
     height: number;
@@ -390,31 +390,32 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
 
     if (!prevDimensions) return;
 
-    const videoTracks = tracks.filter(
-      (track) => track.type === 'video' && track.visible,
+    const mediaTracks = tracks.filter(
+      (track) =>
+        (track.type === 'video' || track.type === 'image') && track.visible,
     );
-    if (videoTracks.length === 0) return;
+    if (mediaTracks.length === 0) return;
 
-    videoTracks.forEach((track) => {
-      let originalWidth: number;
-      let originalHeight: number;
+    mediaTracks.forEach((track) => {
+      let originalWidth: number | undefined;
+      let originalHeight: number | undefined;
 
       if (track.width && track.height) {
         originalWidth = track.width;
         originalHeight = track.height;
-      } else if (videoRef.current && videoRef.current.videoWidth > 0) {
+      } else if (
+        track.type === 'video' &&
+        videoRef.current &&
+        videoRef.current.videoWidth > 0
+      ) {
         originalWidth = videoRef.current.videoWidth;
         originalHeight = videoRef.current.videoHeight;
-      } else {
-        return;
+      } else if (track.textTransform?.width && track.textTransform?.height) {
+        originalWidth = track.textTransform.width;
+        originalHeight = track.textTransform.height;
       }
 
-      const fittedDimensions = calculateFitDimensions(
-        originalWidth,
-        originalHeight,
-        preview.canvasWidth,
-        preview.canvasHeight,
-      );
+      if (!originalWidth || !originalHeight) return;
 
       const currentTransform = track.textTransform || {
         x: 0,
@@ -425,19 +426,40 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
         height: originalHeight,
       };
 
-      const needsUpdate =
-        Math.abs(currentTransform.width - fittedDimensions.width) > 0.5 ||
-        Math.abs(currentTransform.height - fittedDimensions.height) > 0.5;
+      const newTransform = calculateVideoFitTransform(
+        originalWidth,
+        originalHeight,
+        preview.canvasWidth,
+        preview.canvasHeight,
+        currentTransform,
+      );
 
-      if (needsUpdate) {
-        handleVideoTransformUpdate(track.id, {
-          width: fittedDimensions.width,
-          height: fittedDimensions.height,
-          x: currentTransform.x,
-          y: currentTransform.y,
-          scale: currentTransform.scale,
-          rotation: currentTransform.rotation,
-        });
+      const widthChanged =
+        Math.abs(
+          (currentTransform.width || originalWidth) - newTransform.width,
+        ) > 0.5;
+      const heightChanged =
+        Math.abs(
+          (currentTransform.height || originalHeight) - newTransform.height,
+        ) > 0.5;
+      const scaleChanged =
+        Math.abs((currentTransform.scale || 1) - newTransform.scale) > 0.001;
+
+      if (widthChanged || heightChanged || scaleChanged) {
+        const update = {
+          x: newTransform.x,
+          y: newTransform.y,
+          scale: newTransform.scale,
+          rotation: newTransform.rotation,
+          width: newTransform.width,
+          height: newTransform.height,
+        };
+
+        if (track.type === 'video') {
+          handleVideoTransformUpdate(track.id, update);
+        } else {
+          handleImageTransformUpdate(track.id, update);
+        }
       }
     });
   }, [
@@ -446,6 +468,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     tracks,
     videoRef,
     handleVideoTransformUpdate,
+    handleImageTransformUpdate,
   ]);
 
   const handleTextUpdate = useCallback(

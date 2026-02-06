@@ -496,14 +496,18 @@ export const FrameDrivenCompositor = forwardRef<
       // since the track reference changes on any store update
       // Compare relevant transform properties to detect actual visual changes
       const currentTracksTransformKey = tracks
-        .filter((t) => t.type === 'video' && t.visible)
+        .filter((t) => t.type === 'video')
         .map((t) => {
           const transform = t.textTransform;
           const x = transform?.x ?? 0;
           const y = transform?.y ?? 0;
           const scale = transform?.scale ?? 1;
           const rotation = transform?.rotation ?? 0;
-          return `${t.id}:${x},${y},${scale},${rotation}`;
+          const width = transform?.width ?? t.width ?? baseVideoWidth;
+          const height = transform?.height ?? t.height ?? baseVideoHeight;
+          const opacity = t.textStyle?.opacity ?? 100;
+          const visible = t.visible ? 1 : 0;
+          return `${t.id}:${visible}:${x},${y},${scale},${rotation},${width},${height},${opacity}`;
         })
         .join('|');
 
@@ -513,7 +517,15 @@ export const FrameDrivenCompositor = forwardRef<
         // This ensures rotation changes from Properties Panel are reflected immediately
         compositeFrame(currentFrame, false);
       }
-    }, [tracks, currentFrame, compositeFrame]);
+    }, [tracks, currentFrame, compositeFrame, baseVideoWidth, baseVideoHeight]);
+
+    // Re-render immediately when canvas size or base video dimensions change
+    // This keeps paused preview in sync after aspect ratio or zoom updates.
+    useEffect(() => {
+      // Use refs to avoid re-rendering every frame during playback.
+      compositeFrameRef.current(currentFrameRef.current, true);
+      lastRenderedFrameRef.current = currentFrameRef.current;
+    }, [width, height, baseVideoWidth, baseVideoHeight]);
 
     // Playback render loop
     useEffect(() => {
