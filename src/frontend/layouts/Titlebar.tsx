@@ -24,19 +24,10 @@ import { Minus, Plus, Square, Upload, X } from 'lucide-react';
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import packageJson from '../../../package.json';
 import { AutosaveIndicator } from '../features/editor/components/autoSaveIndicator';
 interface TitleBarProps {
   className?: string;
 }
-
-const VersionBadge: React.FC = () => {
-  return (
-    <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 rounded-md bg-muted/50">
-      v{packageJson.version}
-    </span>
-  );
-};
 
 const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
   const { createNewProject, openProject, importProject } = useProjectStore();
@@ -193,7 +184,6 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
                 alt="Dividr Logo"
               />
             </Link>
-            {!isInVideoEditor && <VersionBadge />}
 
             {isInVideoEditor && <AutosaveIndicator />}
           </div>
@@ -248,7 +238,6 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {isInVideoEditor && <VersionBadge />}
               <ModeToggle />
             </div>
 

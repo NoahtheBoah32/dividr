@@ -1,4 +1,3 @@
-import packageJson from '../../../../package.json';
 import { Button } from '@/frontend/components/ui/button';
 import {
   Dialog,
@@ -17,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
+import packageJson from '../../../../package.json';
 
 const APP_NAME = 'DiviDr';
 const APP_VERSION = packageJson.version || '0.0.0';
@@ -61,11 +61,6 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
       return formatPlatformLabel(normalized);
     }
     return formatPlatformLabel(detectPlatformFromUA() ?? 'Unknown');
-  }, []);
-
-  const installedTag = useMemo(() => {
-    const normalized = normalizePlatform(detectPlatformFromUA());
-    return normalized ? `v${APP_VERSION}-${normalized}` : `v${APP_VERSION}`;
   }, []);
 
   const loadReleaseDetails = useCallback(async () => {
@@ -138,9 +133,6 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
     : releaseLoading
       ? 'Loading release notes...'
       : 'Release notes are available when online.';
-  const releaseTag = releaseDetails?.tag || installedTag;
-  const releaseDate = formatTimestamp(releaseDetails?.publishedAt);
-  const releaseCommit = releaseDetails?.commit || 'Unavailable';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -151,8 +143,8 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             Release notes and build information.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex h-full flex-col">
-          <header className="border-b border-border/60 bg-card px-6 py-5">
+        <div className="flex h-full min-h-0 flex-col">
+          <header className="border-b rounded-t-lg border-border/60 bg-card px-6 py-5">
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="text-2xl font-semibold tracking-tight">
@@ -171,7 +163,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
             </div>
           </header>
 
-          <section className="grid flex-1 min-h-0 gap-6 px-6 pb-6 pt-4 lg:grid-cols-[2fr_1fr]">
+          <section className="grid overflow-y-auto flex-1 min-h-0 gap-6 px-6 pb-6 pt-4 grid-rows-[2fr_1fr]">
             <div className="flex min-h-0 flex-col gap-3">
               <div className="text-sm font-semibold text-foreground">
                 Release Notes
@@ -202,9 +194,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                         </p>
                       ),
                       ul: ({ children }) => (
-                        <ul className="list-disc space-y-2 pl-5">
-                          {children}
-                        </ul>
+                        <ul className="list-disc space-y-2 pl-5">{children}</ul>
                       ),
                       ol: ({ children }) => (
                         <ol className="list-decimal space-y-2 pl-5">
@@ -241,30 +231,6 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
 
             <div className="flex flex-col gap-4">
               <div className="rounded-xl border border-border/60 bg-card px-5 py-4 shadow-sm">
-                <div className="text-sm font-semibold text-foreground">
-                  Release Info
-                </div>
-                <div className="mt-3 space-y-2 text-sm text-foreground/80">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-muted-foreground">Release Tag</span>
-                    <span className="font-mono text-xs text-foreground/80">
-                      {releaseTag}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-muted-foreground">Release Date</span>
-                    <span>{releaseDate}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-muted-foreground">Commit</span>
-                    <span className="font-mono text-xs text-foreground/80">
-                      {releaseCommit}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-border/60 bg-card px-5 py-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-foreground">
@@ -300,7 +266,9 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                   {updateCache && (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">Latest Tag</span>
+                        <span className="text-muted-foreground">
+                          Latest Tag
+                        </span>
                         <span className="font-mono text-xs text-foreground/80">
                           {updateCache.latestTag}
                         </span>
@@ -314,7 +282,9 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">Last Checked</span>
+                        <span className="text-muted-foreground">
+                          Last Checked
+                        </span>
                         <span className="text-xs text-foreground/80">
                           {formatTimestamp(updateCache.checkedAt)}
                         </span>
