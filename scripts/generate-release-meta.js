@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const https = require('https');
 
@@ -39,7 +40,7 @@ const getTagName = () => {
   );
 };
 
-const fetchRelease = (repo, tag, token) => {
+const fetchReleaseFromApi = (repo, tag, token) => {
   const url = `https://api.github.com/repos/${repo}/releases/tags/${tag}`;
 
   return new Promise((resolve, reject) => {
@@ -54,7 +55,11 @@ const fetchRelease = (repo, tag, token) => {
     https
       .get(url, options, (res) => {
         if (res.statusCode && res.statusCode >= 400) {
-          reject(new Error(`GitHub API returned status ${res.statusCode}`));
+          const error = new Error(
+            `GitHub API returned status ${res.statusCode}`,
+          );
+          error.statusCode = res.statusCode;
+          reject(error);
           res.resume();
           return;
         }
@@ -81,6 +86,20 @@ const fetchRelease = (repo, tag, token) => {
       })
       .on('error', reject);
   });
+};
+
+const fetchReleaseFromGhCli = (repo, tag) => {
+  const output = execFileSync(
+    'gh',
+    ['release', 'view', tag, '-R', repo, '--json', 'tagName,name,body'],
+    { encoding: 'utf8' },
+  );
+  const parsed = JSON.parse(output);
+  return {
+    tag_name: parsed.tagName,
+    name: parsed.name,
+    body: parsed.body,
+  };
 };
 
 const main = async () => {
@@ -124,11 +143,29 @@ const main = async () => {
     throw new Error(`Tag does not match expected format: ${expectedTag}`);
   }
 
-  const release = await fetchRelease(
-    repo,
-    expectedTag,
-    process.env.GITHUB_TOKEN,
-  );
+  console.log(`Fetching release metadata for ${repo} (${expectedTag})`);
+  let release;
+  try {
+    release = await fetchReleaseFromApi(
+      repo,
+      expectedTag,
+      process.env.GITHUB_TOKEN,
+    );
+  } catch (error) {
+    const statusCode = error && error.statusCode;
+    if (statusCode === 404) {
+      console.warn(
+        'GitHub API returned 404, attempting GitHub CLI fallback...',
+      );
+      try {
+        release = fetchReleaseFromGhCli(repo, expectedTag);
+      } catch (cliError) {
+        throw error;
+      }
+    } else {
+      throw error;
+    }
+  }
 
   if (!release || release.tag_name !== expectedTag) {
     throw new Error('Matching GitHub release tag not found');
