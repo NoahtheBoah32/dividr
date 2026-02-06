@@ -182,12 +182,9 @@ const main = async () => {
     buildDate: new Date().toISOString(),
   };
 
-  const outputPath = path.resolve(
-    __dirname,
-    '..',
-    'public',
-    'releaseMeta.json',
-  );
+  const outputDir = path.resolve(__dirname, '..', 'public');
+  const outputPath = path.join(outputDir, 'releaseMeta.json');
+  fs.mkdirSync(outputDir, { recursive: true });
   fs.writeFileSync(outputPath, JSON.stringify(metadata, null, 2), 'utf8');
   console.log(`Release metadata written to ${outputPath}`);
 };
