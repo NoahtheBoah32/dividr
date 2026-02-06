@@ -58,6 +58,8 @@ interface TimelineProps {
   className?: string;
 }
 
+const PLAYHEAD_HOVER_PX = 4;
+
 export const Timeline: React.FC<TimelineProps> = React.memo(
   ({ className }) => {
     const timelineRef = useRef<HTMLDivElement>(null);
@@ -97,6 +99,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const [splitIndicatorPosition, setSplitIndicatorPosition] = useState<
       number | null
     >(null);
+    const [splitIndicatorFrame, setSplitIndicatorFrame] = useState<
+      number | null
+    >(null);
+    const [isSplitHoverNearPlayhead, setIsSplitHoverNearPlayhead] =
+      useState(false);
     const [hoveredTrack, setHoveredTrack] = useState<VideoTrack | null>(null);
     const [hoveredTrackRowId, setHoveredTrackRowId] = useState<string | null>(
       null,
@@ -1259,73 +1266,123 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       (e: React.MouseEvent) => {
         if (!isSplitModeActive || !tracksRef.current) {
           setSplitIndicatorPosition(null);
+          setSplitIndicatorFrame(null);
           setHoveredTrack(null);
           setHoveredTrackRowId(null);
           setLinkedTrackIndicators([]);
+          setIsSplitHoverNearPlayhead(false);
           return;
         }
 
-        const hoveredTrackAtPosition = findTrackAtPosition(
-          e.clientX,
-          e.clientY,
-          tracksRef.current,
-          frameWidth,
-          tracks,
-          visibleTrackRows,
-          dynamicRowsWithPlaceholders,
+        const rect = tracksRef.current.getBoundingClientRect();
+        const contentX = e.clientX - rect.left + tracksRef.current.scrollLeft;
+        const contentY = e.clientY - rect.top + tracksRef.current.scrollTop;
+        const playheadX = timeline.currentFrame * frameWidth;
+        const isNearPlayhead =
+          Math.abs(contentX - playheadX) <= PLAYHEAD_HOVER_PX;
+        setIsSplitHoverNearPlayhead(isNearPlayhead);
+
+        const hoveredRow = interactionRowBounds.find(
+          (row) => contentY >= row.top && contentY < row.bottom,
         );
 
-        if (hoveredTrackAtPosition) {
-          const rect = tracksRef.current.getBoundingClientRect();
-          const x = e.clientX - rect.left + tracksRef.current.scrollLeft;
-          const frame = Math.floor(x / frameWidth);
-          const indicatorPosition =
-            frame * frameWidth - tracksRef.current.scrollLeft;
-
-          setHoveredTrack(hoveredTrackAtPosition);
-          setHoveredTrackRowId(getTrackRowId(hoveredTrackAtPosition));
-          setSplitIndicatorPosition(indicatorPosition);
-
-          // Handle linked track indicators
-          const indicators: Array<{ rowId: string; position: number }> = [];
-
-          if (
-            hoveredTrackAtPosition.isLinked &&
-            hoveredTrackAtPosition.linkedTrackId
-          ) {
-            const linkedTrack = tracks.find(
-              (t) => t.id === hoveredTrackAtPosition.linkedTrackId,
-            );
-            if (
-              linkedTrack &&
-              frame > linkedTrack.startFrame &&
-              frame < linkedTrack.endFrame
-            ) {
-              // Add indicator for the linked track
-              indicators.push({
-                rowId: getTrackRowId(linkedTrack),
-                position: indicatorPosition,
-              });
-            }
-          }
-
-          setLinkedTrackIndicators(indicators);
-        } else {
+        if (!hoveredRow) {
           setHoveredTrack(null);
           setHoveredTrackRowId(null);
           setSplitIndicatorPosition(null);
+          setSplitIndicatorFrame(null);
           setLinkedTrackIndicators([]);
+          setIsSplitHoverNearPlayhead(false);
+          return;
         }
+
+        const targetFrame = isNearPlayhead
+          ? timeline.currentFrame
+          : Math.floor(contentX / frameWidth);
+        const trackAtFrame = tracks.find(
+          (track) =>
+            track.type === hoveredRow.type &&
+            (track.trackRowIndex ?? 0) === hoveredRow.rowIndex &&
+            targetFrame > track.startFrame &&
+            targetFrame < track.endFrame,
+        );
+
+        if (!trackAtFrame) {
+          setHoveredTrack(null);
+          setHoveredTrackRowId(null);
+          setSplitIndicatorPosition(null);
+          setSplitIndicatorFrame(null);
+          setLinkedTrackIndicators([]);
+          setIsSplitHoverNearPlayhead(false);
+          return;
+        }
+
+        const indicatorPosition = targetFrame * frameWidth - timeline.scrollX;
+
+        setHoveredTrack(trackAtFrame);
+        setHoveredTrackRowId(hoveredRow.rowId);
+        setSplitIndicatorPosition(indicatorPosition);
+        setSplitIndicatorFrame(targetFrame);
+
+        // Handle linked track indicators
+        const indicators: Array<{ rowId: string; position: number }> = [];
+
+        if (trackAtFrame.isLinked && trackAtFrame.linkedTrackId) {
+          const linkedTrack = tracks.find(
+            (t) => t.id === trackAtFrame.linkedTrackId,
+          );
+          if (
+            linkedTrack &&
+            targetFrame > linkedTrack.startFrame &&
+            targetFrame < linkedTrack.endFrame
+          ) {
+            // Add indicator for the linked track
+            indicators.push({
+              rowId: getTrackRowId(linkedTrack),
+              position: indicatorPosition,
+            });
+          }
+        }
+
+        setLinkedTrackIndicators(indicators);
       },
-      [dynamicRowsWithPlaceholders, frameWidth, isSplitModeActive, tracks],
+      [
+        frameWidth,
+        interactionRowBounds,
+        isSplitModeActive,
+        timeline.currentFrame,
+        timeline.scrollX,
+        tracks,
+      ],
     );
 
     const handleSplitMouseLeave = useCallback(() => {
       setSplitIndicatorPosition(null);
+      setSplitIndicatorFrame(null);
       setHoveredTrack(null);
       setHoveredTrackRowId(null);
       setLinkedTrackIndicators([]);
+      setIsSplitHoverNearPlayhead(false);
     }, []);
+
+    // Keep split indicator aligned when frame/scroll changes
+    useEffect(() => {
+      if (
+        !isSplitModeActive ||
+        !hoveredTrackRowId ||
+        splitIndicatorFrame === null
+      )
+        return;
+      setSplitIndicatorPosition(
+        splitIndicatorFrame * frameWidth - timeline.scrollX,
+      );
+    }, [
+      frameWidth,
+      hoveredTrackRowId,
+      isSplitModeActive,
+      timeline.scrollX,
+      splitIndicatorFrame,
+    ]);
 
     // Marquee selection handlers
     // MIGRATED: Now accounts for vertical scroll offset and includes auto-scroll
@@ -1699,6 +1756,43 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           return;
         }
 
+        // Split mode: cut at playhead time when near playhead, otherwise cut at mouse frame
+        if (isSplitModeActive) {
+          if (e.button !== 0) return;
+
+          const rect = tracksRef.current.getBoundingClientRect();
+          const contentX = e.clientX - rect.left + tracksRef.current.scrollLeft;
+          const contentY = e.clientY - rect.top + tracksRef.current.scrollTop;
+          const playheadX = timeline.currentFrame * frameWidth;
+          const isNearPlayhead =
+            Math.abs(contentX - playheadX) <= PLAYHEAD_HOVER_PX;
+
+          const hoveredRow = interactionRowBounds.find(
+            (row) => contentY >= row.top && contentY < row.bottom,
+          );
+
+          if (hoveredRow) {
+            const frame = isNearPlayhead
+              ? timeline.currentFrame
+              : Math.floor(contentX / frameWidth);
+            const trackToSplit = tracks.find(
+              (track) =>
+                track.type === hoveredRow.type &&
+                (track.trackRowIndex ?? 0) === hoveredRow.rowIndex &&
+                frame > track.startFrame &&
+                frame < track.endFrame,
+            );
+
+            if (trackToSplit) {
+              splitAtPosition(frame, trackToSplit.id);
+            }
+          }
+
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+
         const rect = tracksRef.current.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const clickY = e.clientY - rect.top;
@@ -1766,12 +1860,65 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         displayedTotalFrames,
         isSplitModeActive,
         interactionHandlers,
+        interactionRowBounds,
+        splitAtPosition,
+        timeline.currentFrame,
         visibleTrackRows,
         dynamicRowsWithPlaceholders,
         previewInteractionMode,
         setPreviewInteractionMode,
       ],
     );
+
+    const cutMarkers = (() => {
+      if (
+        !isSplitModeActive ||
+        !isSplitHoverNearPlayhead ||
+        !hoveredTrackRowId ||
+        !tracksRef.current
+      ) {
+        return null;
+      }
+
+      const currentScrollY = tracksRef.current.scrollTop;
+      const viewportHeight = tracksRef.current.clientHeight;
+
+      const rowIds = [
+        hoveredTrackRowId,
+        ...linkedTrackIndicators.map((indicator) => indicator.rowId),
+      ];
+      const uniqueRowIds = Array.from(new Set(rowIds));
+
+      const markers = uniqueRowIds
+        .map((rowId) => {
+          const rowBounds = getRowBoundsById(rowId);
+          if (!rowBounds) return null;
+
+          const indicatorTop = rowBounds.top - currentScrollY;
+          const indicatorHeight = rowBounds.bottom - rowBounds.top;
+
+          if (
+            indicatorTop + indicatorHeight < 0 ||
+            indicatorTop > viewportHeight
+          ) {
+            return null;
+          }
+
+          const clippedTop = Math.max(0, indicatorTop);
+          const clippedBottom = Math.min(
+            viewportHeight,
+            indicatorTop + indicatorHeight,
+          );
+          const clippedHeight = Math.max(0, clippedBottom - clippedTop);
+
+          if (clippedHeight === 0) return null;
+
+          return { key: rowId, top: clippedTop, height: clippedHeight };
+        })
+        .filter(Boolean) as Array<{ key: string; top: number; height: number }>;
+
+      return markers.length > 0 ? markers : null;
+    })();
 
     return (
       <div
@@ -1826,7 +1973,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   !playback.isDraggingTrack && 'cursor-pointer',
                 )}
                 onMouseDown={handleMouseDown}
-                title={playback.isDraggingTrack ? '' : 'Click to seek'}
+                title={
+                  playback.isDraggingTrack || isSplitModeActive
+                    ? ''
+                    : 'Click to seek'
+                }
               >
                 <TimelineRuler
                   frameWidth={frameWidth}
@@ -1858,7 +2009,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                             ? 'cursor-pointer'
                             : '',
                   )}
-                  title={playback.isDraggingTrack ? '' : 'Click to seek'}
+                  title={
+                    playback.isDraggingTrack || isSplitModeActive
+                      ? ''
+                      : 'Click to seek'
+                  }
                   style={{
                     scrollBehavior:
                       autoFollowEnabled && playback.isPlaying
@@ -1942,10 +2097,13 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   timelineScrollElement={tracksRef.current}
                   onStartDrag={handlePlayheadDragStart}
                   magneticSnapFrame={magneticSnapFrame}
+                  isInteractive={!isSplitModeActive}
+                  cutMarkers={cutMarkers ?? undefined}
                 />
 
                 {/* Split Indicator Line - confined to hovered track row */}
                 {isSplitModeActive &&
+                  !isSplitHoverNearPlayhead &&
                   splitIndicatorPosition !== null &&
                   hoveredTrackRowId &&
                   tracksRef.current &&
@@ -1979,6 +2137,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
                 {/* Linked Track Indicators */}
                 {isSplitModeActive &&
+                  !isSplitHoverNearPlayhead &&
                   tracksRef.current &&
                   linkedTrackIndicators.map((indicator, index) => {
                     if (!tracksRef.current) return null;

@@ -1,5 +1,14 @@
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/frontend/components/ui/tooltip';
 import { cn } from '@/frontend/utils/utils';
+import { SquareSplitHorizontal } from 'lucide-react';
 import React, { useCallback, useMemo } from 'react';
+import { ShortcutKbdStack } from '../shortcuts/ShortcutKbdStack';
+import { useShortcutKeys } from '../shortcuts/shortcutHooks';
 
 interface TimelinePlayheadProps {
   currentFrame: number;
@@ -9,6 +18,8 @@ interface TimelinePlayheadProps {
   timelineScrollElement?: HTMLElement | null;
   onStartDrag?: (e: React.MouseEvent) => void;
   magneticSnapFrame?: number | null;
+  isInteractive?: boolean;
+  cutMarkers?: Array<{ key: string; top: number; height: number }>;
 }
 
 export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
@@ -20,8 +31,12 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
     timelineScrollElement,
     onStartDrag,
     magneticSnapFrame,
+    isInteractive = true,
+    cutMarkers,
   }) => {
     if (!visible) return null;
+
+    const splitToolKeys = useShortcutKeys('timeline-split-playhead-k', ['k']);
 
     // Check if playhead is snapping (magneticSnapFrame matches currentFrame)
     const isSnapping =
@@ -33,6 +48,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
         (timelineScrollElement?.scrollLeft ?? scrollX),
       [currentFrame, frameWidth, scrollX, timelineScrollElement],
     );
+    const cutIconLeft = useMemo(() => left, [left]);
 
     const styles = useMemo(
       () => ({
@@ -60,6 +76,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
 
     const handleMouseDown = useCallback(
       (e: React.MouseEvent) => {
+        if (!isInteractive) return;
         // Only respond to left mouse button
         if (e.button !== 0) return;
 
@@ -70,14 +87,19 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
           onStartDrag(e);
         }
       },
-      [onStartDrag],
+      [isInteractive, onStartDrag],
     );
 
     return (
       <>
         {/* Playhead line - Enhanced Hitbox */}
         <div
-          className="group absolute top-0 z-30 h-full cursor-ew-resize select-none touch-none pointer-events-auto"
+          className={cn(
+            'group absolute top-0 z-30 h-full select-none touch-none',
+            isInteractive
+              ? 'cursor-ew-resize pointer-events-auto'
+              : 'pointer-events-none',
+          )}
           style={styles.hitbox}
           onMouseDown={handleMouseDown}
         >
@@ -90,9 +112,40 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
           />
         </div>
 
+        {cutMarkers && cutMarkers.length > 0 && (
+          <TooltipProvider>
+            {cutMarkers.map((marker) => (
+              <div
+                key={marker.key}
+                className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto z-[1001] text-foreground"
+                style={{
+                  left: `${cutIconLeft}px`,
+                  top: `${marker.top + marker.height / 2}px`,
+                }}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="bg-background rounded-sm p-1">
+                      <SquareSplitHorizontal size={18} />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="center">
+                    Split <ShortcutKbdStack combos={splitToolKeys} />
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            ))}
+          </TooltipProvider>
+        )}
+
         {/* Playhead handle - Enhanced Hitbox */}
         <div
-          className="absolute z-30 flex items-center justify-center cursor-grab active:cursor-grabbing will-change-transform pointer-events-auto"
+          className={cn(
+            'absolute z-30 flex items-center justify-center will-change-transform',
+            isInteractive
+              ? 'cursor-grab active:cursor-grabbing pointer-events-auto'
+              : 'pointer-events-none',
+          )}
           style={styles.handleContainer}
           onMouseDown={handleMouseDown}
         >
@@ -131,7 +184,28 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
       prevProps.visible === nextProps.visible &&
       prevProps.timelineScrollElement === nextProps.timelineScrollElement &&
       prevProps.onStartDrag === nextProps.onStartDrag &&
-      prevProps.magneticSnapFrame === nextProps.magneticSnapFrame
+      prevProps.magneticSnapFrame === nextProps.magneticSnapFrame &&
+      prevProps.isInteractive === nextProps.isInteractive &&
+      areCutMarkersEqual(prevProps.cutMarkers, nextProps.cutMarkers)
     );
   },
 );
+
+const areCutMarkersEqual = (
+  prev?: Array<{ key: string; top: number; height: number }>,
+  next?: Array<{ key: string; top: number; height: number }>,
+) => {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i += 1) {
+    if (
+      prev[i].key !== next[i].key ||
+      prev[i].top !== next[i].top ||
+      prev[i].height !== next[i].height
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
