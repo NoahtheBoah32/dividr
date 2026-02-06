@@ -28,25 +28,43 @@ interface SpriteSheetStripState {
 interface HybridTile {
   id: string;
   thumbnail: SpriteSheetThumbnail;
-  startX: number;
-  endX: number;
   tileStartX: number; // Where this specific tile starts
   tileWidth: number; // Width of this specific tile
   repeatIndex: number; // Which repeat of the thumbnail this is
   clipOffset: number; // How much to offset the background for partial tiles
 }
 
+// LOD presets tuned for timeline zoom levels (pixels per second)
+const SPRITE_LOD_PRESETS = [
+  { maxPixelsPerSecond: 12, strideFactor: 3, maxTiles: 24 }, // zoomed out
+  { maxPixelsPerSecond: 30, strideFactor: 2, maxTiles: 36 }, // medium
+  { maxPixelsPerSecond: 90, strideFactor: 1, maxTiles: 48 }, // zoomed in
+  { maxPixelsPerSecond: Infinity, strideFactor: 1, maxTiles: 60 }, // extreme
+];
+
+const HARD_MAX_TILES = 60;
+const MIN_TILES_TARGET = 20;
+const VIEWPORT_BUFFER_MULTIPLIER = 0.5;
+
+const getSpriteLodConfig = (pixelsPerSecond: number) => {
+  for (const preset of SPRITE_LOD_PRESETS) {
+    if (pixelsPerSecond <= preset.maxPixelsPerSecond) {
+      return preset;
+    }
+  }
+  return SPRITE_LOD_PRESETS[SPRITE_LOD_PRESETS.length - 1];
+};
+
 // Placeholder for tiles from sprite sheets not yet generated (progressive loading)
 const PlaceholderTile: React.FC<{
   tileStartX: number;
   tileWidth: number;
   height: number;
-  viewportOffset: number;
-}> = React.memo(({ tileStartX, tileWidth, height, viewportOffset }) => (
+}> = React.memo(({ tileStartX, tileWidth, height }) => (
   <div
     className="absolute top-0 bg-gray-700/40"
     style={{
-      transform: `translate3d(${tileStartX - viewportOffset}px, 0, 0)`,
+      transform: `translate3d(${tileStartX}px, 0, 0)`,
       width: tileWidth,
       height,
       willChange: 'transform',
@@ -60,20 +78,21 @@ const GPUAcceleratedSprite: React.FC<{
   tile: HybridTile;
   spriteSheet: SpriteSheet;
   height: number;
-  viewportOffset: number;
 }> = React.memo(
-  ({ tile, spriteSheet, height, viewportOffset }) => {
+  ({ tile, spriteSheet, height }) => {
     const { thumbnail, tileStartX, tileWidth, clipOffset } = tile;
 
     // Calculate display metrics
     const scale = height / thumbnail.height;
+    const baseThumbWidth = thumbnail.width * scale;
     const spriteWidth = spriteSheet.width * scale;
     const spriteHeight = spriteSheet.height * scale;
-    const thumbnailWidth = thumbnail.width * scale;
+    const bgX = thumbnail.x * scale;
     const bgY = thumbnail.y * scale;
+    const repeatCount = Math.max(1, Math.ceil(tileWidth / baseThumbWidth));
 
     // Use transform for positioning (GPU accelerated)
-    const transform = `translate3d(${tileStartX - viewportOffset}px, 0, 0)`;
+    const transform = `translate3d(${tileStartX}px, 0, 0)`;
 
     return (
       <div
@@ -87,18 +106,28 @@ const GPUAcceleratedSprite: React.FC<{
           overflow: 'hidden',
         }}
       >
-        <div
-          className="absolute"
-          style={{
-            width: `${thumbnailWidth}px`,
-            height: `${height}px`,
-            left: `-${clipOffset}px`,
-            backgroundImage: `url(${spriteSheet.url})`,
-            backgroundSize: `${spriteWidth}px ${spriteHeight}px`,
-            backgroundPosition: `-${thumbnail.x * scale}px -${bgY}px`,
-            imageRendering: 'auto',
-          }}
-        />
+        {Array.from({ length: repeatCount }).map((_, index) => {
+          const left = index * baseThumbWidth;
+          const remainingWidth = tileWidth - left;
+          if (remainingWidth <= 0) return null;
+          const drawWidth = Math.min(baseThumbWidth, remainingWidth);
+
+          return (
+            <div
+              key={`${tile.id}-repeat-${index}`}
+              className="absolute"
+              style={{
+                width: `${drawWidth}px`,
+                height: `${height}px`,
+                left: `${left - clipOffset}px`,
+                backgroundImage: `url(${spriteSheet.url})`,
+                backgroundSize: `${spriteWidth}px ${spriteHeight}px`,
+                backgroundPosition: `-${bgX}px -${bgY}px`,
+                imageRendering: 'auto',
+              }}
+            />
+          );
+        })}
       </div>
     );
   },
@@ -108,7 +137,6 @@ const GPUAcceleratedSprite: React.FC<{
       prev.tile.id === next.tile.id &&
       Math.abs(prev.tile.tileStartX - next.tile.tileStartX) < 1 &&
       Math.abs(prev.tile.tileWidth - next.tile.tileWidth) < 1 &&
-      Math.abs(prev.viewportOffset - next.viewportOffset) < 1 &&
       prev.height === next.height
     );
   },
@@ -128,10 +156,10 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         error: null,
       });
 
-      // Viewport state for culling
+      // Viewport state for culling (timeline scroll container)
       const [viewportBounds, setViewportBounds] = useState({
-        start: 0,
-        end: width,
+        scrollLeft: 0,
+        viewportWidth: 0,
       });
       const rafRef = useRef<number>(0);
 
@@ -148,6 +176,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
           durationSeconds: (track.endFrame - track.startFrame) / displayFps,
           trackStartTime: track.sourceStartTime || 0,
           pixelsPerSecond: frameWidth * displayFps,
+          trackStartPx: track.startFrame * frameWidth,
         }),
         [
           track.startFrame,
@@ -181,46 +210,85 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         );
       }, [mediaItem]);
 
-      // Hybrid tile generation - pixel-position based for correct zoom behavior
-      // Key insight: iterate by PIXEL POSITION at native tile width intervals,
-      // then pick the appropriate thumbnail for each position.
-      // This ensures:
-      // - Zoom-out: Frame-skipping (fewer tiles, each at proper aspect ratio)
-      // - Zoom-in: Frame-repeating (same thumbnail repeated to fill space)
-      const hybridTiles = useMemo(() => {
+      const allThumbnails = useMemo(() => {
         if (!shouldRenderSprites) return [];
-        const { spriteSheets } = state;
-        if (spriteSheets.length === 0) return [];
+        const flattened = state.spriteSheets.flatMap(
+          (sheet) => sheet.thumbnails,
+        );
+        if (flattened.length <= 1) return flattened;
 
-        const tiles: HybridTile[] = [];
+        const isSorted = flattened.every((thumb, index) => {
+          if (index === 0) return true;
+          return flattened[index - 1].timestamp <= thumb.timestamp;
+        });
 
-        const allThumbnails = spriteSheets.flatMap((sheet) => sheet.thumbnails);
+        if (isSorted) return flattened;
+        return [...flattened].sort((a, b) => a.timestamp - b.timestamp);
+      }, [shouldRenderSprites, state.spriteSheets]);
 
+      // Visible tiles are generated on-demand for the viewport range only.
+      const visibleTiles = useMemo(() => {
+        if (!shouldRenderSprites) return [];
         if (allThumbnails.length === 0) return [];
 
-        const { trackStartTime, durationSeconds, pixelsPerSecond } =
-          trackMetrics;
+        const { trackStartTime, pixelsPerSecond, trackStartPx } = trackMetrics;
+        if (pixelsPerSecond <= 0) return [];
 
-        // Get first thumbnail to calculate native display width
+        const viewportWidth = viewportBounds.viewportWidth;
+        if (viewportWidth <= 0) return [];
+
+        const viewportStart = viewportBounds.scrollLeft - trackStartPx;
+        const viewportEnd =
+          viewportBounds.scrollLeft + viewportWidth - trackStartPx;
+        const buffer = viewportWidth * VIEWPORT_BUFFER_MULTIPLIER;
+
+        const visibleStart = Math.max(0, viewportStart - buffer);
+        const visibleEnd = Math.min(width, viewportEnd + buffer);
+
+        if (visibleEnd <= 0 || visibleStart >= width) return [];
+
+        // Native thumbnail display width (constant size)
         const firstThumb = allThumbnails[0];
         const aspectRatio = firstThumb.width / firstThumb.height;
         const nativeDisplayWidth = aspectRatio * height;
 
-        // Total pixel width of the track
-        const totalPixels = durationSeconds * pixelsPerSecond;
+        // LOD selection based on zoom (pixels per second)
+        const lod = getSpriteLodConfig(pixelsPerSecond);
+        const maxTiles = Math.min(lod.maxTiles, HARD_MAX_TILES);
+        const minTiles = Math.min(MIN_TILES_TARGET, maxTiles);
 
-        // Iterate by pixel position at native tile width intervals
-        // This is the key change: we step through by display width, not by thumbnails
-        let tileIndex = 0;
-        let currentPixelX = 0;
+        const rangeWidth = Math.max(1, visibleEnd - visibleStart);
+        const baseStride = nativeDisplayWidth * lod.strideFactor;
+        const minStrideForMax = rangeWidth / maxTiles;
+        let tileStride = Math.max(baseStride, minStrideForMax, 1);
 
-        while (currentPixelX < totalPixels) {
-          // Calculate the time position for this tile
-          const currentTimeInTrack = currentPixelX / pixelsPerSecond;
+        // Optional soft lower bound to avoid too few tiles (without overlapping)
+        const maxStrideForMin = rangeWidth / minTiles;
+        if (
+          tileStride > maxStrideForMin &&
+          maxStrideForMin >= nativeDisplayWidth
+        ) {
+          tileStride = maxStrideForMin;
+        }
+
+        const startIndex = Math.max(0, Math.floor(visibleStart / tileStride));
+        const endIndex = Math.min(
+          Math.ceil(visibleEnd / tileStride),
+          Math.ceil(width / tileStride),
+        );
+
+        const tiles: HybridTile[] = [];
+        let tileCount = 0;
+
+        for (let i = startIndex; i <= endIndex; i++) {
+          if (tileCount >= maxTiles) break;
+          const tileStartX = i * tileStride;
+          if (tileStartX >= width) break;
+
+          const currentTimeInTrack = tileStartX / pixelsPerSecond;
           const currentTimeAbsolute = trackStartTime + currentTimeInTrack;
 
-          // Find the thumbnail that covers this time position
-          // Binary search for efficiency with large thumbnail arrays
+          // Binary search for closest thumbnail at or before current time
           let closestThumbnail = allThumbnails[0];
           let left = 0;
           let right = allThumbnails.length - 1;
@@ -235,125 +303,75 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
             }
           }
 
-          // Calculate tile width (may be partial at the end)
-          const tileWidth = Math.min(
-            nativeDisplayWidth,
-            totalPixels - currentPixelX,
-          );
+          const tileWidth = Math.min(tileStride, width - tileStartX);
+          if (tileWidth <= 0.5) continue;
 
-          // Only add tiles with meaningful width
-          if (tileWidth > 0.5) {
-            tiles.push({
-              id: `tile-${tileIndex}-${closestThumbnail.id}`,
-              thumbnail: closestThumbnail,
-              startX: currentPixelX,
-              endX: currentPixelX + tileWidth,
-              tileStartX: currentPixelX,
-              tileWidth,
-              repeatIndex: tileIndex,
-              clipOffset: 0,
-            });
-          }
-
-          currentPixelX += nativeDisplayWidth;
-          tileIndex++;
+          tiles.push({
+            id: `tile-${lod.maxTiles}-${i}-${closestThumbnail.id}`,
+            thumbnail: closestThumbnail,
+            tileStartX,
+            tileWidth,
+            repeatIndex: i,
+            clipOffset: 0,
+          });
+          tileCount++;
         }
 
         return tiles;
-      }, [shouldRenderSprites, state.spriteSheets, trackMetrics, height]);
+      }, [
+        shouldRenderSprites,
+        allThumbnails,
+        trackMetrics,
+        viewportBounds,
+        width,
+        height,
+      ]);
 
-      // High-performance viewport culling with buffer zone
-      const visibleTiles = useMemo(() => {
-        // Increase buffer significantly for fast scrolling/zooming
-        const buffer = width * 1.5; // 150% buffer for smooth continuous scrolling
-        const leftBound = Math.max(0, viewportBounds.start - buffer);
-        const rightBound = viewportBounds.end + buffer;
-
-        // If no tiles, return empty array
-        if (hybridTiles.length === 0) return [];
-
-        // Binary search for first visible tile
-        let left = 0;
-        let right = hybridTiles.length - 1;
-        let firstVisible = 0;
-
-        while (left <= right) {
-          const mid = Math.floor((left + right) / 2);
-          const tile = hybridTiles[mid];
-          if (tile.tileStartX + tile.tileWidth < leftBound) {
-            left = mid + 1;
-          } else {
-            firstVisible = mid;
-            right = mid - 1;
-          }
-        }
-
-        // Collect visible tiles with safety margin
-        const visible: HybridTile[] = [];
-        for (
-          let i = Math.max(0, firstVisible - 1);
-          i < hybridTiles.length;
-          i++
-        ) {
-          const tile = hybridTiles[i];
-          // Include tiles that are even partially visible
-          if (tile.tileStartX > rightBound) break;
-          if (tile.tileStartX + tile.tileWidth >= leftBound) {
-            visible.push(tile);
-          }
-        }
-
-        return visible;
-      }, [hybridTiles, viewportBounds, width]);
-
-      // Update viewport bounds on scroll/zoom - more responsive for continuous scrolling
+      // Update viewport bounds on scroll/zoom (rAF-throttled)
       useEffect(() => {
+        const scrollContainer = containerRef.current?.closest(
+          '.overflow-auto',
+        ) as HTMLElement | null;
+        if (!scrollContainer) return;
+
         const updateViewport = () => {
-          if (containerRef.current) {
-            const parent = containerRef.current.parentElement;
-            if (parent) {
-              const scrollLeft = parent.scrollLeft || 0;
-              setViewportBounds({
-                start: scrollLeft,
-                end: scrollLeft + parent.clientWidth,
-              });
-            }
-          }
+          setViewportBounds({
+            scrollLeft: scrollContainer.scrollLeft || 0,
+            viewportWidth: scrollContainer.clientWidth || 0,
+          });
         };
 
-        // Use direct updates for scroll (no RAF throttling) to be more responsive
-        const handleScroll = () => {
-          updateViewport();
+        const scheduleUpdate = () => {
+          if (rafRef.current) cancelAnimationFrame(rafRef.current);
+          rafRef.current = requestAnimationFrame(updateViewport);
         };
 
-        const parent = containerRef.current?.parentElement;
-        if (parent) {
-          parent.addEventListener('scroll', handleScroll, { passive: true });
-          updateViewport(); // Initial update
-        }
+        scrollContainer.addEventListener('scroll', scheduleUpdate, {
+          passive: true,
+        });
+        updateViewport();
 
         return () => {
-          if (parent) parent.removeEventListener('scroll', handleScroll);
+          scrollContainer.removeEventListener('scroll', scheduleUpdate);
           if (rafRef.current) cancelAnimationFrame(rafRef.current);
         };
       }, []);
 
-      // Update viewport when width changes (zoom level changes)
+      // Refresh viewport on zoom/size changes
       useEffect(() => {
-        const updateViewport = () => {
-          if (containerRef.current) {
-            const parent = containerRef.current.parentElement;
-            if (parent) {
-              const scrollLeft = parent.scrollLeft || 0;
-              setViewportBounds({
-                start: scrollLeft,
-                end: scrollLeft + parent.clientWidth,
-              });
-            }
-          }
-        };
-        updateViewport();
-      }, [width, zoomLevel]);
+        const scrollContainer = containerRef.current?.closest(
+          '.overflow-auto',
+        ) as HTMLElement | null;
+        if (!scrollContainer) return;
+
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(() => {
+          setViewportBounds({
+            scrollLeft: scrollContainer.scrollLeft || 0,
+            viewportWidth: scrollContainer.clientWidth || 0,
+          });
+        });
+      }, [width, zoomLevel, track.startFrame, frameWidth]);
 
       // CONSUME-ONLY: Read sprite sheets from store, never trigger generation
       // Generation is handled by mediaLibrarySlice during import
@@ -469,7 +487,6 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
                     tile={tile}
                     spriteSheet={sheet}
                     height={height}
-                    viewportOffset={viewportBounds.start}
                   />
                 );
               } else {
@@ -480,7 +497,6 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
                     tileStartX={tile.tileStartX}
                     tileWidth={tile.tileWidth}
                     height={height}
-                    viewportOffset={viewportBounds.start}
                   />
                 );
               }
