@@ -423,6 +423,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         checkedAt: string;
       };
       error?: string;
+      errorCode?: 'rate_limited' | 'network' | 'api_error';
+      rateLimitResetAt?: string | null;
     }>,
 
   releaseGetUpdateCache: () =>
@@ -444,6 +446,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         commit: string | null;
       };
       error?: string;
+      errorCode?: 'rate_limited' | 'network' | 'api_error';
+      rateLimitResetAt?: string | null;
     }>,
 
   // Listen for runtime download progress

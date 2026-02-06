@@ -1,8 +1,8 @@
+import releaseMetaFallback from '@/frontend/assets/releaseMetaFallback.json';
 import { Button } from '@/frontend/components/ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/frontend/components/ui/dialog';
@@ -12,6 +12,7 @@ import type {
   ReleaseUpdateCache,
 } from '@/shared/types/release';
 import { formatPlatformLabel, normalizePlatform } from '@/shared/utils/release';
+import { Info, RefreshCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -39,6 +40,22 @@ const formatTimestamp = (value?: string | null): string => {
   return date.toLocaleString();
 };
 
+const toIsoOrNull = (value?: string | null): string | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+};
+
+const FALLBACK_RELEASE_DETAILS: ReleaseDetails = {
+  tag: releaseMetaFallback.releaseTag || `v${APP_VERSION}-local`,
+  title: releaseMetaFallback.title || 'Development Build',
+  notes:
+    releaseMetaFallback.notes || 'Release notes are available when online.',
+  publishedAt: toIsoOrNull(releaseMetaFallback.buildDate),
+  commit: releaseMetaFallback.commit || null,
+};
+
 interface AboutDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -54,6 +71,9 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
   );
   const [isChecking, setIsChecking] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState<boolean | null>(null);
+  const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(
+    null,
+  );
 
   const platformLabel = useMemo(() => {
     const normalized = normalizePlatform(detectPlatformFromUA());
@@ -70,11 +90,16 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
       if (result.success && result.release) {
         setReleaseDetails(result.release);
       } else {
-        setReleaseDetails(null);
+        setReleaseDetails(FALLBACK_RELEASE_DETAILS);
+        if (result.errorCode === 'rate_limited') {
+          setUpdateStatusMessage(
+            'Update check temporarily unavailable. Using last known release information.',
+          );
+        }
       }
     } catch (error) {
       console.warn('Failed to load release details:', error);
-      setReleaseDetails(null);
+      setReleaseDetails(FALLBACK_RELEASE_DETAILS);
     } finally {
       setReleaseLoading(false);
     }
@@ -95,12 +120,22 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
 
     try {
       const result = await window.electronAPI.releaseCheckForUpdates();
-      if (result.success) {
-        if (result.latest) {
-          setUpdateCache(result.latest);
-        }
+      if (result.latest) {
+        setUpdateCache(result.latest);
+      }
+      if (typeof result.updateAvailable === 'boolean') {
         setUpdateAvailable(result.updateAvailable);
+      }
 
+      if (result.errorCode === 'rate_limited') {
+        setUpdateStatusMessage(
+          'Update check temporarily unavailable. Using last known release information.',
+        );
+        return;
+      }
+
+      if (result.success) {
+        setUpdateStatusMessage(null);
         if (result.updateAvailable && result.latest?.latestVersion) {
           toast.info(`Update available: v${result.latest.latestVersion}`, {
             description: result.latest.latestTitle,
@@ -136,39 +171,43 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[min(85vh,900px)] w-[min(1000px,92vw)] max-w-5xl p-0">
-        <DialogHeader className="sr-only">
-          <DialogTitle>About DiviDr</DialogTitle>
-          <DialogDescription>
-            Release notes and build information.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex h-full min-h-0 flex-col">
-          <header className="border-b rounded-t-lg border-border/60 bg-card px-6 py-5">
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl font-semibold tracking-tight">
-                  {APP_NAME}
-                </h1>
-                <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-sm font-medium text-foreground/80">
-                  v{APP_VERSION}
-                </span>
-                <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-sm font-medium text-foreground/80">
-                  {platformLabel}
-                </span>
-              </div>
-              <div className="text-sm text-muted-foreground">
-                {releaseTitle}
-              </div>
+      <DialogContent className="max-w-[1200px] min-w-[40vw] max-h-[90vh] p-0 flex flex-col">
+        <DialogHeader className="px-8 py-5 border-b border-border/50 bg-gradient-to-b from-muted/30 to-background">
+          <DialogTitle className="flex items-center gap-4">
+            <div className="p-2.5 bg-primary/15 rounded-xl ring-1 ring-primary/20">
+              <Info className="h-6 w-6 text-primary" />
             </div>
-          </header>
+            <div>
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-bold tracking-tight">
+                  About {APP_NAME}
+                </h2>
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-xs font-semibold text-foreground/80">
+                    v{APP_VERSION}
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-xs font-semibold text-foreground/80">
+                    {platformLabel}
+                  </span>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5 font-normal">
+                Release notes and build information
+              </p>
+            </div>
+          </DialogTitle>
+          <div className="text-sm text-muted-foreground mt-2">
+            {releaseTitle}
+          </div>
+        </DialogHeader>
 
-          <section className="grid overflow-y-auto flex-1 min-h-0 gap-6 px-6 pb-6 pt-4 grid-rows-[2fr_1fr]">
-            <div className="flex min-h-0 flex-col gap-3">
-              <div className="text-sm font-semibold text-foreground">
+        <ScrollArea className="flex-1 px-8 py-0 overflow-y-auto min-h-0">
+          <div className="grid gap-6 grid-rows-[2fr_1fr]">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              <div className="font-semibold text-xs text-muted-foreground/80 uppercase tracking-wide pb-1">
                 Release Notes
               </div>
-              <ScrollArea className="flex-1 rounded-xl border border-border/60 bg-card px-5 py-4 shadow-sm">
+              <div className="rounded-xl min-h-0 border border-border/60 bg-card px-5 py-4 shadow-sm">
                 <div className="space-y-4 text-sm leading-6 text-foreground/90">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
@@ -226,7 +265,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                     {releaseNotes}
                   </ReactMarkdown>
                 </div>
-              </ScrollArea>
+              </div>
             </div>
 
             <div className="flex flex-col gap-4">
@@ -251,6 +290,12 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                 </div>
 
                 <div className="mt-3 space-y-2 text-sm text-foreground/80">
+                  {updateStatusMessage && (
+                    <div className="text-xs text-muted-foreground">
+                      {updateStatusMessage}
+                    </div>
+                  )}
+
                   {updateAvailable === true && updateCache && (
                     <div className="rounded-md border border-secondary/40 bg-secondary/10 px-3 py-2 text-sm text-foreground">
                       Update available: v{updateCache.latestVersion}
@@ -300,7 +345,27 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                 </div>
               </div>
             </div>
-          </section>
+          </div>
+        </ScrollArea>
+
+        <div className="px-8 py-4 border-t border-border/50 bg-muted/10 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Tip:</span>
+            <span>Release notes update when online.</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs gap-2"
+              onClick={loadReleaseDetails}
+              disabled={releaseLoading}
+            >
+              <RefreshCcw className="h-3.5 w-3.5" />
+              {releaseLoading ? 'Refreshing…' : 'Refresh'}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

@@ -3849,11 +3849,7 @@ ipcMain.handle('release:get-update-cache', async () => {
 ipcMain.handle('release:get-installed-release', async () => {
   console.log('📘 MAIN PROCESS: release:get-installed-release handler called');
   try {
-    const release = await getInstalledReleaseDetails();
-    if (!release) {
-      return { success: false, error: 'Release details unavailable' };
-    }
-    return { success: true, release };
+    return await getInstalledReleaseDetails();
   } catch (error) {
     return {
       success: false,

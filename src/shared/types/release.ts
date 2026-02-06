@@ -19,6 +19,14 @@ export interface ReleaseDetails {
   commit: string | null;
 }
 
+export interface ReleaseDetailsResult {
+  success: boolean;
+  release?: ReleaseDetails;
+  error?: string;
+  errorCode?: 'rate_limited' | 'network' | 'api_error';
+  rateLimitResetAt?: string | null;
+}
+
 export interface ReleaseUpdateCache {
   latestVersion: string;
   latestTag: string;
@@ -33,4 +41,6 @@ export interface ReleaseUpdateCheckResult {
   installedTag: string;
   latest?: ReleaseUpdateCache;
   error?: string;
+  errorCode?: 'rate_limited' | 'network' | 'api_error';
+  rateLimitResetAt?: string | null;
 }

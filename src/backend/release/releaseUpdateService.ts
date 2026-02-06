@@ -1,9 +1,10 @@
 import { app } from 'electron';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
+import type { IncomingHttpHeaders } from 'http';
 import { get as httpsGet } from 'https';
 import path from 'path';
 import type {
-  ReleaseDetails,
+  ReleaseDetailsResult,
   ReleaseUpdateCache,
   ReleaseUpdateCheckResult,
 } from '../../shared/types/release';
@@ -41,8 +42,40 @@ interface GitHubTagObject {
   };
 }
 
+class GitHubApiError extends Error {
+  status: number;
+  url: string;
+  payload: unknown;
+  headers: IncomingHttpHeaders;
+  rateLimitResetAt: string | null;
+  isRateLimited: boolean;
+
+  constructor(
+    message: string,
+    status: number,
+    url: string,
+    payload: unknown,
+    headers: IncomingHttpHeaders,
+    rateLimitResetAt: string | null,
+    isRateLimited: boolean,
+  ) {
+    super(message);
+    this.name = 'GitHubApiError';
+    this.status = status;
+    this.url = url;
+    this.payload = payload;
+    this.headers = headers;
+    this.rateLimitResetAt = rateLimitResetAt;
+    this.isRateLimited = isRateLimited;
+  }
+}
+
+const RATE_LIMIT_COOLDOWN_MS = 45 * 60 * 1000;
 const MAX_CACHE_BYTES = 10 * 1024;
 const UPDATE_CACHE_FILE = 'release-update.json';
+
+let rateLimitCooldownUntil: number | null = null;
+let lastRateLimitResetAt: string | null = null;
 
 const getUpdateCachePath = (): string =>
   path.join(app.getPath('userData'), UPDATE_CACHE_FILE);
@@ -63,7 +96,121 @@ const getInstalledTag = (version: string, platform: string): string => {
   return `v${version}-${platform}`;
 };
 
+const getHeaderValue = (
+  headers: IncomingHttpHeaders,
+  key: string,
+): string | null => {
+  const value = headers[key.toLowerCase()];
+  if (!value) return null;
+  return Array.isArray(value) ? value[0] : value;
+};
+
+const getRateLimitResetAt = (headers: IncomingHttpHeaders): string | null => {
+  const reset = getHeaderValue(headers, 'x-ratelimit-reset');
+  if (!reset) return null;
+  const seconds = Number(reset);
+  if (!Number.isFinite(seconds)) return null;
+  return new Date(seconds * 1000).toISOString();
+};
+
+const isRateLimitResponse = (
+  status: number,
+  message: string,
+  headers: IncomingHttpHeaders,
+): boolean => {
+  if (status !== 403 && status !== 429) return false;
+  if (/rate limit/i.test(message)) return true;
+  const remaining = getHeaderValue(headers, 'x-ratelimit-remaining');
+  return remaining === '0';
+};
+
+const setRateLimitCooldown = (resetAt: string | null): void => {
+  const now = Date.now();
+  let cooldownUntil = now + RATE_LIMIT_COOLDOWN_MS;
+  if (resetAt) {
+    const resetMs = Date.parse(resetAt);
+    if (!Number.isNaN(resetMs)) {
+      cooldownUntil = Math.max(cooldownUntil, resetMs + 1000);
+    }
+  }
+  rateLimitCooldownUntil = cooldownUntil;
+  lastRateLimitResetAt = resetAt || new Date(cooldownUntil).toISOString();
+};
+
+const isRateLimitCooldownActive = (): boolean => {
+  if (!rateLimitCooldownUntil) return false;
+  return Date.now() < rateLimitCooldownUntil;
+};
+
+const logRateLimit = (error: GitHubApiError): void => {
+  const timestamp = new Date().toISOString();
+  console.warn('⚠️ [release] GitHub API rate limit exceeded', {
+    url: error.url,
+    status: error.status,
+    message: error.message,
+    rateLimitResetAt: error.rateLimitResetAt,
+    timestamp,
+  });
+};
+
+const getErrorInfo = (
+  error: unknown,
+): {
+  code: 'rate_limited' | 'network' | 'api_error';
+  message: string;
+  rateLimitResetAt?: string | null;
+} => {
+  if (error instanceof GitHubApiError) {
+    if (error.isRateLimited) {
+      return {
+        code: 'rate_limited',
+        message: error.message,
+        rateLimitResetAt: error.rateLimitResetAt ?? lastRateLimitResetAt,
+      };
+    }
+    return {
+      code: 'api_error',
+      message: error.message,
+    };
+  }
+
+  if (error && typeof error === 'object' && 'code' in error) {
+    const codeValue = (error as { code?: string }).code;
+    if (
+      codeValue === 'ENOTFOUND' ||
+      codeValue === 'ECONNREFUSED' ||
+      codeValue === 'ECONNRESET' ||
+      codeValue === 'ETIMEDOUT' ||
+      codeValue === 'EAI_AGAIN'
+    ) {
+      return {
+        code: 'network',
+        message: 'Network error while contacting GitHub',
+      };
+    }
+  }
+
+  return {
+    code: 'api_error',
+    message: error instanceof Error ? error.message : 'Update check failed',
+  };
+};
+
 const fetchJson = async <T>(url: string): Promise<T> => {
+  if (isRateLimitCooldownActive()) {
+    return Promise.reject(
+      new GitHubApiError(
+        'GitHub API rate limit cooldown active',
+        403,
+        url,
+        null,
+        {},
+        lastRateLimitResetAt,
+        true,
+      ),
+    );
+  }
+
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
@@ -73,14 +220,50 @@ const fetchJson = async <T>(url: string): Promise<T> => {
     };
 
     httpsGet(url, options, (response) => {
-      if (response.statusCode && response.statusCode >= 400) {
-        reject(new Error(`GitHub API returned status ${response.statusCode}`));
-        return;
-      }
-
+      const status = response.statusCode ?? 0;
+      const headers = response.headers ?? {};
       let data = '';
       response.on('data', (chunk) => (data += chunk));
       response.on('end', () => {
+        if (status >= 400) {
+          let payload: unknown = null;
+          let message = `GitHub API returned status ${status}`;
+
+          try {
+            payload = JSON.parse(data);
+            if (
+              payload &&
+              typeof payload === 'object' &&
+              'message' in payload &&
+              typeof (payload as { message?: string }).message === 'string'
+            ) {
+              message = (payload as { message: string }).message;
+            }
+          } catch {
+            // Ignore JSON parse errors for error payloads.
+          }
+
+          const rateLimitResetAt = getRateLimitResetAt(headers);
+          const isRateLimited = isRateLimitResponse(status, message, headers);
+          const apiError = new GitHubApiError(
+            message,
+            status,
+            url,
+            payload,
+            headers,
+            rateLimitResetAt,
+            isRateLimited,
+          );
+
+          if (isRateLimited) {
+            setRateLimitCooldown(rateLimitResetAt);
+            logRateLimit(apiError);
+          }
+
+          reject(apiError);
+          return;
+        }
+
         try {
           resolve(JSON.parse(data) as T);
         } catch (error) {
@@ -112,6 +295,10 @@ const fetchTagCommitSha = async (
   repo: string,
   tag: string,
 ): Promise<string | null> => {
+  if (isRateLimitCooldownActive()) {
+    return null;
+  }
+
   try {
     const refUrl = `https://api.github.com/repos/${repo}/git/ref/tags/${encodeURIComponent(tag)}`;
     const ref = await fetchJson<GitHubRef>(refUrl);
@@ -211,6 +398,32 @@ const selectLatestRelease = (
   return sorted[sorted.length - 1];
 };
 
+const buildFallbackUpdateResult = (
+  installedVersion: string,
+  platform: string,
+  options?: {
+    error?: string;
+    errorCode?: ReleaseUpdateCheckResult['errorCode'];
+    rateLimitResetAt?: string | null;
+  },
+): ReleaseUpdateCheckResult => {
+  const latest = readReleaseUpdateCache();
+  const updateAvailable = latest
+    ? compareSemver(latest.latestVersion, installedVersion) > 0
+    : false;
+
+  return {
+    success: false,
+    updateAvailable,
+    installedVersion,
+    installedTag: getInstalledTag(installedVersion, platform),
+    latest: latest ?? undefined,
+    error: options?.error,
+    errorCode: options?.errorCode,
+    rateLimitResetAt: options?.rateLimitResetAt,
+  };
+};
+
 export const checkForReleaseUpdates =
   async (): Promise<ReleaseUpdateCheckResult> => {
     const installedVersion = app.getVersion();
@@ -224,6 +437,14 @@ export const checkForReleaseUpdates =
         installedTag: 'unknown',
         error: `Unsupported platform ${formatPlatformLabel(process.platform)}`,
       };
+    }
+
+    if (isRateLimitCooldownActive()) {
+      return buildFallbackUpdateResult(installedVersion, platform, {
+        error: 'GitHub API rate limit exceeded',
+        errorCode: 'rate_limited',
+        rateLimitResetAt: lastRateLimitResetAt,
+      });
     }
 
     try {
@@ -264,20 +485,45 @@ export const checkForReleaseUpdates =
         latest: cache,
       };
     } catch (error) {
+      const info = getErrorInfo(error);
+      if (info.code === 'rate_limited') {
+        return buildFallbackUpdateResult(installedVersion, platform, {
+          error: info.message,
+          errorCode: info.code,
+          rateLimitResetAt: info.rateLimitResetAt,
+        });
+      }
+
       return {
         success: false,
         updateAvailable: false,
         installedVersion,
         installedTag: getInstalledTag(installedVersion, platform ?? 'unknown'),
-        error: error instanceof Error ? error.message : 'Update check failed',
+        error: info.message,
+        errorCode: info.code,
       };
     }
   };
 
 export const getInstalledReleaseDetails =
-  async (): Promise<ReleaseDetails | null> => {
+  async (): Promise<ReleaseDetailsResult> => {
     const platform = getPlatform();
-    if (!platform) return null;
+    if (!platform) {
+      return {
+        success: false,
+        error: `Unsupported platform ${formatPlatformLabel(process.platform)}`,
+        errorCode: 'api_error',
+      };
+    }
+
+    if (isRateLimitCooldownActive()) {
+      return {
+        success: false,
+        error: 'GitHub API rate limit exceeded',
+        errorCode: 'rate_limited',
+        rateLimitResetAt: lastRateLimitResetAt,
+      };
+    }
 
     const version = app.getVersion();
     const tag = getInstalledTag(version, platform);
@@ -288,13 +534,22 @@ export const getInstalledReleaseDetails =
       const commit = await fetchTagCommitSha(repo, tag);
 
       return {
-        tag,
-        title: release.name || release.tag_name || tag,
-        notes: release.body || '',
-        publishedAt: release.published_at || release.created_at || null,
-        commit,
+        success: true,
+        release: {
+          tag,
+          title: release.name || release.tag_name || tag,
+          notes: release.body || '',
+          publishedAt: release.published_at || release.created_at || null,
+          commit,
+        },
       };
-    } catch {
-      return null;
+    } catch (error) {
+      const info = getErrorInfo(error);
+      return {
+        success: false,
+        error: info.message,
+        errorCode: info.code,
+        rateLimitResetAt: info.rateLimitResetAt,
+      };
     }
   };

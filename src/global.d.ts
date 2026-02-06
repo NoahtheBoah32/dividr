@@ -546,6 +546,8 @@ declare global {
           checkedAt: string;
         };
         error?: string;
+        errorCode?: 'rate_limited' | 'network' | 'api_error';
+        rateLimitResetAt?: string | null;
       }>;
 
       /**
@@ -571,6 +573,8 @@ declare global {
           commit: string | null;
         };
         error?: string;
+        errorCode?: 'rate_limited' | 'network' | 'api_error';
+        rateLimitResetAt?: string | null;
       }>;
 
       /**
