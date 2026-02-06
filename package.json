@@ -1,7 +1,7 @@
 {
   "name": "dividr",
   "productName": "Dividr",
-  "version": "1.0.0-stable",
+  "version": "1.0.1-exp",
   "description": "A powerful video editing application built with Electron and FFmpeg",
   "main": ".vite/build/main.js",
   "scripts": {
