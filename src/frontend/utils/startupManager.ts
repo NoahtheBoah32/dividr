@@ -63,21 +63,23 @@ class StartupManager {
     const progress = this.calculateProgress(stage);
     this.listeners.forEach((listener) => listener(stage, progress));
 
-    if (this.isDev()) {
-      if (typeof window !== 'undefined') {
-        const electronAPI = (window as any).electronAPI;
-        if (electronAPI?.invoke) {
-          void electronAPI
-            .invoke('startup:mark', stage, {
-              duration,
-              delta,
-            })
-            .catch((error: unknown) => {
+    if (typeof window !== 'undefined') {
+      const electronAPI = (window as any).electronAPI;
+      if (electronAPI?.invoke) {
+        void electronAPI
+          .invoke('startup:mark', stage, {
+            duration,
+            delta,
+          })
+          .catch((error: unknown) => {
+            if (this.isDev()) {
               console.warn('⚠️ Startup mark failed:', error);
-            });
-        }
+            }
+          });
       }
+    }
 
+    if (this.isDev()) {
       const formatted = `[startup] ${stage} +${delta}ms (${duration}ms)`;
       if (stage === 'app-ready' && duration > 5000) {
         console.warn(`${formatted} ⚠️ exceeded 5s startup budget`);

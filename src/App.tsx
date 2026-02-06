@@ -24,38 +24,50 @@ function App() {
   const [showStartupStatus, setShowStartupStatus] = useState(true);
   const hasRequestedMediaServer = useRef(false);
   const startupHideTimer = useRef<number | null>(null);
+  const htmlLoaderRemoved = useRef(false);
 
   // Get project store actions
   const { importProjectFromPath, openProject, initializeProjects } =
     useProjectStore();
 
   useEffect(() => {
+    const removeHtmlLoader = () => {
+      if (htmlLoaderRemoved.current) return;
+      const htmlLoader = document.getElementById('startup-loader');
+      if (htmlLoader) {
+        htmlLoader.remove();
+      }
+      htmlLoaderRemoved.current = true;
+    };
+
+    const scheduleStartupDismiss = (delayMs: number) => {
+      if (startupHideTimer.current !== null) {
+        window.clearTimeout(startupHideTimer.current);
+        startupHideTimer.current = null;
+      }
+
+      startupHideTimer.current = window.setTimeout(() => {
+        setShowStartupStatus(false);
+        removeHtmlLoader();
+        startupHideTimer.current = null;
+      }, delayMs);
+    };
+
     const unsubscribe = startupManager.subscribe((stage, progress) => {
       setStartupStage(stage);
       setStartupProgress(progress);
 
-      if (stage === 'projects-loaded') {
-        if (startupHideTimer.current !== null) {
-          window.clearTimeout(startupHideTimer.current);
-          startupHideTimer.current = null;
-        }
-        window.setTimeout(() => setShowStartupStatus(false), 400);
+      if (stage === 'projects-loaded' || stage === 'editor-ready') {
+        scheduleStartupDismiss(250);
       } else if (stage === 'app-ready' && startupHideTimer.current === null) {
-        startupHideTimer.current = window.setTimeout(() => {
-          setShowStartupStatus(false);
-          startupHideTimer.current = null;
-        }, 2500);
+        // Safety valve: never let the startup screen stick forever.
+        scheduleStartupDismiss(8000);
       }
     });
 
     const frame = requestAnimationFrame(() => {
       startupManager.logStage('app-ready');
       startupManager.printSummary();
-
-      const htmlLoader = document.getElementById('startup-loader');
-      if (htmlLoader) {
-        htmlLoader.remove();
-      }
 
       if (!hasRequestedMediaServer.current) {
         hasRequestedMediaServer.current = true;

@@ -85,6 +85,28 @@ const shouldLogStartup =
 const startupMarks = new Map<string, number>();
 let lastStartupMark = startupStart;
 let startupCheckpointCounter = 0;
+let latestStartupPhase = 'process-start';
+
+const broadcastStartupPhase = (
+  phase: string,
+  sinceStart: number,
+  sinceLast: number,
+  meta?: Record<string, unknown>,
+): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.webContents.isDestroyed()) return;
+
+  try {
+    mainWindow.webContents.send('startup:phase', {
+      phase,
+      sinceStart,
+      sinceLast,
+      meta: meta || null,
+    });
+  } catch {
+    // Ignore broadcast errors during early startup / shutdown
+  }
+};
 
 const markStartupPhase = (
   phase: string,
@@ -95,6 +117,8 @@ const markStartupPhase = (
   const sinceStart = Math.round(now - startupStart);
   const sinceLast = Math.round(now - lastStartupMark);
   lastStartupMark = now;
+  latestStartupPhase = phase;
+  broadcastStartupPhase(phase, sinceStart, sinceLast, meta);
 
   if (!shouldLogStartup) return;
 
@@ -4719,6 +4743,20 @@ ipcMain.handle(
     return { success: true };
   },
 );
+
+ipcMain.handle('startup:get-state', async () => {
+  const phases: Record<string, number> = {};
+  for (const [phase, ts] of startupMarks.entries()) {
+    phases[phase] = Math.round(ts - startupStart);
+  }
+
+  return {
+    success: true,
+    latestPhase: latestStartupPhase,
+    elapsedMs: Math.round(performance.now() - startupStart),
+    phases,
+  };
+});
 
 // Helper function to get run in background setting
 async function getRunInBackgroundSetting(): Promise<boolean> {
