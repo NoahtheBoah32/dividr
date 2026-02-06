@@ -32,6 +32,23 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Ensure GitHub release exists
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists."
+            exit 0
+          fi
+          PRERELEASE=false
+          if [[ "$TAG" == *alpha* || "$TAG" == *beta* || "$TAG" == *rc* || "$TAG" == *exp* ]]; then
+            PRERELEASE=true
+          fi
+          gh release create "$TAG" --title "$TAG" --notes "" --draft $( [ "$PRERELEASE" = true ] && echo "--prerelease" )
+
       - name: Generate release metadata
         if: startsWith(github.ref, 'refs/tags/')
         run: yarn generate:release-meta
