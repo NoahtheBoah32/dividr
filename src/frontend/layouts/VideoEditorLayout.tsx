@@ -5,7 +5,8 @@ import { FullscreenPreview } from '@/frontend/features/editor/preview/Fullscreen
 import { ToolsPanel } from '@/frontend/features/editor/preview/ToolsPanel';
 import { useIsPanelVisible } from '@/frontend/features/editor/stores/PanelStore';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
-import React, { useCallback } from 'react';
+import { startupManager } from '@/frontend/utils/startupManager';
+import React, { useCallback, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Timeline } from '../features/editor/timeline/timeline';
 import Toolbar from '../features/editor/Toolbar';
@@ -19,6 +20,19 @@ const VideoEditorLayoutComponent = () => {
   const setPreviewInteractionMode = useVideoEditorStore(
     (state) => state.setPreviewInteractionMode,
   );
+
+  useEffect(() => {
+    startupManager.logStage('editor-init');
+    const frame = requestAnimationFrame(() => {
+      startupManager.logStage('editor-ready');
+    });
+
+    if (window.electronAPI?.ensureMediaServer) {
+      void window.electronAPI.ensureMediaServer();
+    }
+
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   // Reset preview interaction mode when clicking outside the preview canvas
   // This ensures preview cursor modes (text-edit, pan) are scoped to the preview only

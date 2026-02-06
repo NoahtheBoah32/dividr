@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('create-preview-url', filePath),
   getFileStream: (filePath: string, start?: number, end?: number) =>
     ipcRenderer.invoke('get-file-stream', filePath, start, end),
+  ensureMediaServer: () => ipcRenderer.invoke('media:ensure-server'),
 
   // Media cache helpers
   getMediaCacheDir: () => ipcRenderer.invoke('get-media-cache-dir'),

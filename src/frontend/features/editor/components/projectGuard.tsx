@@ -1,3 +1,4 @@
+import StartupLoader from '@/frontend/components/custom/StartupLoader';
 import { useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useProjectStore } from '../../projects/store/projectStore';
@@ -24,13 +25,7 @@ export const ProjectGuard: React.FC<ProjectGuardProps> = ({ children }) => {
 
   // Show loading while initializing
   if (!isInitialized) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-600 dark:text-zinc-400">
-          Loading project system...
-        </div>
-      </div>
-    );
+    return <StartupLoader stage="projects-loading" />;
   }
 
   // Redirect to projects page if no project is loaded

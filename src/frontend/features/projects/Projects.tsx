@@ -82,9 +82,6 @@ const Projects = () => {
         startupManager.logStage('projects-loaded');
       } catch (error) {
         // Silent fail
-      } finally {
-        // Mark app as ready after projects are loaded (or failed)
-        startupManager.logStage('app-ready');
       }
     };
 
@@ -331,25 +328,11 @@ const Projects = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Show loading state during initialization
-  if (!isInitialized && isLoading) {
-    return (
-      <div className="flex flex-col flex-1 min-h-0 p-6 lg:p-12">
-        <Header />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
-            <p className="text-zinc-600 dark:text-zinc-400">
-              Loading projects...
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const isInitialLoading = !isInitialized && isLoading;
+  const showSkeleton = isInitialLoading && projects.length === 0;
 
   // Show empty state when no projects exist
-  if (projects.length === 0) {
+  if (!showSkeleton && projects.length === 0) {
     return (
       <div className="flex flex-col flex-1 min-h-0 p-6 lg:p-12">
         <Header />
@@ -451,7 +434,26 @@ const Projects = () => {
             )}
           </div>
 
-          {projects.length === 0 ? (
+          {showSkeleton ? (
+            <div
+              className={
+                isGridView
+                  ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4'
+                  : 'flex flex-col gap-3'
+              }
+            >
+              {Array.from({ length: isGridView ? 10 : 8 }).map((_, idx) => (
+                <div
+                  key={`skeleton-${idx}`}
+                  className={
+                    isGridView
+                      ? 'h-40 rounded-lg bg-zinc-100 dark:bg-zinc-900 animate-pulse'
+                      : 'h-12 rounded-lg bg-zinc-100 dark:bg-zinc-900 animate-pulse'
+                  }
+                />
+              ))}
+            </div>
+          ) : projects.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Search className="h-12 w-12 text-zinc-400 mb-4" />
               <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 mb-2">

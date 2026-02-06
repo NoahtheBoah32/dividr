@@ -9,6 +9,8 @@
 export type StartupStage =
   | 'app-start'
   | 'renderer-mount'
+  | 'editor-init'
+  | 'editor-ready'
   | 'indexeddb-init'
   | 'indexeddb-ready'
   | 'projects-loading'
@@ -26,6 +28,15 @@ class StartupManager {
   private startTime: number = Date.now();
   private listeners: Set<(stage: StartupStage, progress: number) => void> =
     new Set();
+  private lastLoggedAt: number = this.startTime;
+
+  private isDev(): boolean {
+    try {
+      return (import.meta as any)?.env?.DEV === true;
+    } catch {
+      return false;
+    }
+  }
 
   constructor() {
     // Mark app start
@@ -43,12 +54,37 @@ class StartupManager {
   logStage(stage: StartupStage): void {
     const timestamp = Date.now();
     const duration = timestamp - this.startTime;
+    const delta = timestamp - this.lastLoggedAt;
 
     this.metrics.push({ stage, timestamp, duration });
+    this.lastLoggedAt = timestamp;
 
     // Notify listeners
     const progress = this.calculateProgress(stage);
     this.listeners.forEach((listener) => listener(stage, progress));
+
+    if (this.isDev()) {
+      if (typeof window !== 'undefined') {
+        const electronAPI = (window as any).electronAPI;
+        if (electronAPI?.invoke) {
+          void electronAPI
+            .invoke('startup:mark', stage, {
+              duration,
+              delta,
+            })
+            .catch((error: unknown) => {
+              console.warn('⚠️ Startup mark failed:', error);
+            });
+        }
+      }
+
+      const formatted = `[startup] ${stage} +${delta}ms (${duration}ms)`;
+      if (stage === 'app-ready' && duration > 5000) {
+        console.warn(`${formatted} ⚠️ exceeded 5s startup budget`);
+      } else {
+        console.log(formatted);
+      }
+    }
   }
 
   /**
@@ -58,6 +94,8 @@ class StartupManager {
     const stageProgress: Record<StartupStage, number> = {
       'app-start': 0,
       'renderer-mount': 20,
+      'editor-init': 45,
+      'editor-ready': 55,
       'indexeddb-init': 40,
       'indexeddb-ready': 60,
       'projects-loading': 75,
@@ -97,7 +135,14 @@ class StartupManager {
    * Print performance summary (console logging removed for production cleanliness)
    */
   printSummary(): void {
-    // Intentionally no-op
+    if (!this.isDev()) return;
+
+    const entries = this.metrics.map((metric) => ({
+      stage: metric.stage,
+      ms: metric.duration ?? 0,
+    }));
+
+    console.log('[startup] summary', entries);
   }
 
   /**

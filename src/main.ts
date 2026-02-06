@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-var-requires */
-import { spawn, spawnSync } from 'child_process';
+import { exec, spawn, spawnSync } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import started from 'electron-squirrel-startup';
 import crypto from 'node:crypto';
@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import {
   runFfmpeg,
   runFfmpegWithProgress,
@@ -75,6 +76,55 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 let mainWindow: BrowserWindow | null = null;
 const forceQuit = false;
 let isWindowFocused = true;
+const STARTUP_BUDGET_MS = 5000;
+const startupStart = performance.now();
+const shouldLogStartup =
+  process.env.NODE_ENV === 'development' ||
+  process.env.STARTUP_DEBUG === 'true' ||
+  !app.isPackaged;
+const startupMarks = new Map<string, number>();
+let lastStartupMark = startupStart;
+let startupCheckpointCounter = 0;
+
+const markStartupPhase = (
+  phase: string,
+  meta?: Record<string, unknown>,
+): void => {
+  const now = performance.now();
+  startupMarks.set(phase, now);
+  const sinceStart = Math.round(now - startupStart);
+  const sinceLast = Math.round(now - lastStartupMark);
+  lastStartupMark = now;
+
+  if (!shouldLogStartup) return;
+
+  const baseMessage = `⏱️ [startup] ${phase} +${sinceLast}ms (${sinceStart}ms)`;
+  if (meta && Object.keys(meta).length > 0) {
+    console.log(baseMessage, meta);
+  } else {
+    console.log(baseMessage);
+  }
+
+  if (
+    (phase === 'app-ready' || phase === 'ui-interactive') &&
+    sinceStart > STARTUP_BUDGET_MS
+  ) {
+    console.warn(
+      `⚠️ [startup] interactive exceeded ${STARTUP_BUDGET_MS}ms budget (${sinceStart}ms)`,
+    );
+  }
+};
+
+const execCommand = (command: string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    exec(command, { encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(`${stdout || ''}${stderr || ''}`);
+    });
+  });
 const titlebarOverlayState: {
   color: string;
   symbolColor: string;
@@ -474,6 +524,7 @@ function runQueuedFfmpeg(
 
 // Initialize ffmpeg paths dynamically with fallbacks
 async function initializeFfmpegPaths() {
+  markStartupPhase('ffmpeg-init-start');
   console.log('🔍 Initializing FFmpeg paths...');
   console.log('📦 Is packaged:', app.isPackaged);
   console.log('🌍 Environment:', process.env.NODE_ENV || 'production');
@@ -494,10 +545,9 @@ async function initializeFfmpegPaths() {
 
           // Check version to confirm it's modern
           try {
-            const { execSync } = require('child_process');
-            const versionOutput = execSync(`"${ffmpegStatic}" -version`, {
-              encoding: 'utf8',
-            });
+            const versionOutput = await execCommand(
+              `"${ffmpegStatic}" -version`,
+            );
             const versionMatch = versionOutput.match(
               /ffmpeg version (\d+)\.(\d+)/,
             );
@@ -573,10 +623,7 @@ async function initializeFfmpegPaths() {
       // Check version
       if (ffmpegPath) {
         try {
-          const { execSync } = require('child_process');
-          const versionOutput = execSync(`"${ffmpegPath}" -version`, {
-            encoding: 'utf8',
-          });
+          const versionOutput = await execCommand(`"${ffmpegPath}" -version`);
           const versionMatch = versionOutput.match(
             /ffmpeg version (\d+)\.(\d+)/,
           );
@@ -840,11 +887,7 @@ async function initializeFfmpegPaths() {
   if (!ffmpegPath) {
     try {
       console.log('🔄 Attempting system FFmpeg fallback...');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-      const { execSync } = require('child_process');
-      const systemFfmpeg = execSync('where ffmpeg', {
-        encoding: 'utf8',
-      }).trim();
+      const systemFfmpeg = (await execCommand('where ffmpeg')).trim();
       ffmpegPath = systemFfmpeg.split('\n')[0];
       console.log('✅ Using system FFmpeg:', ffmpegPath);
     } catch (systemError) {
@@ -854,11 +897,7 @@ async function initializeFfmpegPaths() {
 
   if (!ffprobePath) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-      const { execSync } = require('child_process');
-      const systemFfprobe = execSync('where ffprobe', {
-        encoding: 'utf8',
-      }).trim();
+      const systemFfprobe = (await execCommand('where ffprobe')).trim();
       ffprobePath = { path: systemFfprobe.split('\n')[0] };
       console.log('✅ Using system FFprobe:', ffprobePath.path);
     } catch (systemError) {
@@ -892,23 +931,62 @@ if (started) {
   app.quit();
 }
 
-// Startup timing logs removed for production cleanliness
-const logStartupPerf = (..._args: unknown[]): void => {
-  // no-op
+const logStartupPerf = (label?: string): void => {
+  if (!shouldLogStartup) return;
+  const phase = label ?? `checkpoint-${++startupCheckpointCounter}`;
+  markStartupPhase(phase);
 };
 
 let deferredInitStarted = false;
-const kickoffDeferredInitialization = () => {
+let deferredInitScheduled = false;
+let deferredInitTimer: NodeJS.Timeout | null = null;
+
+const runDeferredInitialization = (reason: string): void => {
   if (deferredInitStarted) return;
   deferredInitStarted = true;
+  markStartupPhase('deferred-init-start', { reason });
 
-  setTimeout(() => {
+  const tasks: Array<Promise<unknown>> = [
     initializeFfmpegPaths()
-      .then(() => logStartupPerf())
+      .then(() => markStartupPhase('ffmpeg-ready'))
       .catch((error) => {
         console.error('⚠️ FFmpeg init failed (non-blocking):', error);
-      });
-  }, 0);
+      }),
+    ensureMediaServer().catch((error) => {
+      console.error('⚠️ Media server init failed (non-blocking):', error);
+    }),
+    startMediaCacheCleanup().catch((error) => {
+      console.error(
+        '⚠️ Media cache cleanup init failed (non-blocking):',
+        error,
+      );
+    }),
+  ];
+
+  void Promise.allSettled(tasks).then(() => {
+    markStartupPhase('deferred-init-complete');
+  });
+};
+
+const kickoffDeferredInitialization = (reason = 'window-visible') => {
+  if (deferredInitScheduled || deferredInitStarted) return;
+  deferredInitScheduled = true;
+
+  const elapsed = performance.now() - startupStart;
+  const delay = Math.max(0, STARTUP_BUDGET_MS - elapsed);
+
+  if (shouldLogStartup) {
+    console.log(
+      `⏳ [startup] scheduling deferred init in ${Math.round(delay)}ms`,
+      {
+        reason,
+      },
+    );
+  }
+
+  deferredInitTimer = setTimeout(() => {
+    runDeferredInitialization(reason);
+  }, delay);
 };
 
 const ensurePythonInitialized = async (_reason: string): Promise<void> => {
@@ -924,6 +1002,7 @@ const ensurePythonInitialized = async (_reason: string): Promise<void> => {
 
 // Create a simple HTTP server to serve media files
 let mediaServer: http.Server | null = null;
+let mediaServerReadyPromise: Promise<void> | null = null;
 const MEDIA_SERVER_PORT = 3001;
 const MEDIA_CACHE_DIR_NAME = 'media-cache';
 const MEDIA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -991,16 +1070,29 @@ function setCorsHeaders(res: http.ServerResponse) {
   res.setHeader('Access-Control-Allow-Headers', '*');
 }
 
-function cleanupMediaCache(): void {
+let mediaCacheCleanupInProgress = false;
+
+async function cleanupMediaCache(): Promise<void> {
   const baseDir = getMediaCacheDir();
-  if (!fs.existsSync(baseDir)) return;
+  try {
+    await fs.promises.access(baseDir);
+  } catch {
+    return;
+  }
 
   const now = Date.now();
+  let processed = 0;
 
-  const pruneDir = (dirPath: string, ttlMs: number): void => {
+  const yieldIfNeeded = async (): Promise<void> => {
+    if (processed > 0 && processed % 50 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  const pruneDir = async (dirPath: string, ttlMs: number): Promise<void> => {
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
     } catch {
       return;
     }
@@ -1008,29 +1100,32 @@ function cleanupMediaCache(): void {
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
-        pruneDir(fullPath, ttlMs);
-        // Remove empty directories
+        await pruneDir(fullPath, ttlMs);
         try {
-          if (fs.readdirSync(fullPath).length === 0) {
-            fs.rmdirSync(fullPath);
+          const remaining = await fs.promises.readdir(fullPath);
+          if (remaining.length === 0) {
+            await fs.promises.rm(fullPath, { recursive: false, force: true });
           }
         } catch {
           // Ignore cleanup errors
         }
       } else {
         try {
-          const stats = fs.statSync(fullPath);
+          const stats = await fs.promises.stat(fullPath);
           if (now - stats.mtimeMs > ttlMs) {
-            fs.unlinkSync(fullPath);
+            await fs.promises.unlink(fullPath);
           }
         } catch {
           // Ignore cleanup errors
         }
       }
+
+      processed += 1;
+      await yieldIfNeeded();
     }
   };
 
-  pruneDir(baseDir, MEDIA_CACHE_TTL_MS);
+  await pruneDir(baseDir, MEDIA_CACHE_TTL_MS);
 
   const tempDirs = [
     path.join(os.tmpdir(), 'dividr-audio-extracts'),
@@ -1038,169 +1133,194 @@ function cleanupMediaCache(): void {
   ];
 
   for (const tempDir of tempDirs) {
-    if (fs.existsSync(tempDir)) {
-      pruneDir(tempDir, TEMP_CACHE_TTL_MS);
+    try {
+      await fs.promises.access(tempDir);
+      await pruneDir(tempDir, TEMP_CACHE_TTL_MS);
+    } catch {
+      // Ignore missing temp dirs
     }
   }
 }
 
-function startMediaCacheCleanup(): void {
+const runMediaCacheCleanup = async (reason: string): Promise<void> => {
+  if (mediaCacheCleanupInProgress) return;
+  mediaCacheCleanupInProgress = true;
+  markStartupPhase('media-cache-cleanup-start', { reason });
+  try {
+    await cleanupMediaCache();
+  } catch (error) {
+    console.warn('⚠️ Media cache cleanup failed:', error);
+  } finally {
+    mediaCacheCleanupInProgress = false;
+    markStartupPhase('media-cache-cleanup-complete', { reason });
+  }
+};
+
+async function startMediaCacheCleanup(): Promise<void> {
   if (mediaCacheCleanupTimer) return;
-  cleanupMediaCache();
-  mediaCacheCleanupTimer = setInterval(
-    cleanupMediaCache,
-    MEDIA_CACHE_CLEANUP_INTERVAL_MS,
-  );
+  await runMediaCacheCleanup('startup');
+  mediaCacheCleanupTimer = setInterval(() => {
+    void runMediaCacheCleanup('interval');
+  }, MEDIA_CACHE_CLEANUP_INTERVAL_MS);
 }
 
-function createMediaServer() {
-  mediaServer = http.createServer((req, res) => {
-    if (!req.url) {
-      setCorsHeaders(res);
-      res.writeHead(404);
-      res.end();
-      return;
-    }
+function ensureMediaServer(): Promise<void> {
+  if (mediaServer && mediaServer.listening) {
+    return Promise.resolve();
+  }
 
-    if (req.method === 'OPTIONS') {
-      setCorsHeaders(res);
-      res.writeHead(204);
-      res.end();
-      return;
-    }
+  if (mediaServerReadyPromise) {
+    return mediaServerReadyPromise;
+  }
 
-    let urlPath = '';
-    try {
-      const parsedUrl = new URL(req.url, 'http://localhost');
-      if (
-        parsedUrl.pathname === '/media-file' &&
-        parsedUrl.searchParams.has('path')
-      ) {
-        const paramPath = parsedUrl.searchParams.get('path') || '';
-        urlPath = decodeURIComponent(paramPath);
-      } else {
-        urlPath = decodeURIComponent(parsedUrl.pathname.slice(1));
-      }
-    } catch (error) {
-      console.error('Error parsing media server URL:', error);
-      setCorsHeaders(res);
-      res.writeHead(400);
-      res.end('Invalid URL');
-      return;
-    }
-
-    const resolvedPath = resolveMediaPath(urlPath);
-    if (!resolvedPath) {
-      setCorsHeaders(res);
-      res.writeHead(400);
-      res.end('Invalid media path');
-      return;
-    }
-
-    try {
-      if (!fs.existsSync(resolvedPath)) {
+  mediaServerReadyPromise = new Promise((resolve, reject) => {
+    mediaServer = http.createServer((req, res) => {
+      if (!req.url) {
         setCorsHeaders(res);
         res.writeHead(404);
-        res.end('File not found');
+        res.end();
         return;
       }
 
-      const stats = fs.statSync(resolvedPath);
-      const ext = path.extname(resolvedPath).toLowerCase();
-
-      // Set appropriate MIME type
-      let mimeType = 'application/octet-stream';
-      if (['.mp4', '.webm', '.ogg'].includes(ext)) {
-        mimeType = `video/${ext.slice(1)}`;
-      } else if (['.mp3', '.wav', '.aac'].includes(ext)) {
-        mimeType = `audio/${ext.slice(1)}`;
-      } else if (['.jpg', '.jpeg'].includes(ext)) {
-        mimeType = 'image/jpeg';
-      } else if (ext === '.png') {
-        mimeType = 'image/png';
-      } else if (ext === '.gif') {
-        mimeType = 'image/gif';
+      if (req.method === 'OPTIONS') {
+        setCorsHeaders(res);
+        res.writeHead(204);
+        res.end();
+        return;
       }
 
-      // Handle range requests for video streaming
-      const range = req.headers.range;
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
-        const chunksize = end - start + 1;
-
-        const stream = fs.createReadStream(resolvedPath, { start, end });
+      let urlPath = '';
+      try {
+        const parsedUrl = new URL(req.url, 'http://localhost');
+        if (
+          parsedUrl.pathname === '/media-file' &&
+          parsedUrl.searchParams.has('path')
+        ) {
+          const paramPath = parsedUrl.searchParams.get('path') || '';
+          urlPath = decodeURIComponent(paramPath);
+        } else {
+          urlPath = decodeURIComponent(parsedUrl.pathname.slice(1));
+        }
+      } catch (error) {
+        console.error('Error parsing media server URL:', error);
         setCorsHeaders(res);
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${stats.size}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunksize,
-          'Content-Type': mimeType,
-        });
-
-        stream.on('error', (streamError) => {
-          console.error('Error streaming file:', streamError);
-          if (!res.headersSent) {
-            setCorsHeaders(res);
-            res.writeHead(500);
-          }
-          res.end('Stream error');
-        });
-
-        res.on('close', () => {
-          stream.destroy();
-        });
-
-        stream.pipe(res);
-      } else {
-        setCorsHeaders(res);
-        res.writeHead(200, {
-          'Content-Length': stats.size,
-          'Content-Type': mimeType,
-        });
-
-        const stream = fs.createReadStream(resolvedPath);
-        stream.on('error', (streamError) => {
-          console.error('Error streaming file:', streamError);
-          if (!res.headersSent) {
-            setCorsHeaders(res);
-            res.writeHead(500);
-          }
-          res.end('Stream error');
-        });
-
-        res.on('close', () => {
-          stream.destroy();
-        });
-
-        stream.pipe(res);
+        res.writeHead(400);
+        res.end('Invalid URL');
+        return;
       }
-    } catch (error) {
-      console.error('Error serving file:', error);
-      setCorsHeaders(res);
-      res.writeHead(500);
-      res.end('Internal server error');
-    }
+
+      const resolvedPath = resolveMediaPath(urlPath);
+      if (!resolvedPath) {
+        setCorsHeaders(res);
+        res.writeHead(400);
+        res.end('Invalid media path');
+        return;
+      }
+
+      try {
+        if (!fs.existsSync(resolvedPath)) {
+          setCorsHeaders(res);
+          res.writeHead(404);
+          res.end('File not found');
+          return;
+        }
+
+        const stats = fs.statSync(resolvedPath);
+        const ext = path.extname(resolvedPath).toLowerCase();
+
+        // Set appropriate MIME type
+        let mimeType = 'application/octet-stream';
+        if (['.mp4', '.webm', '.ogg'].includes(ext)) {
+          mimeType = `video/${ext.slice(1)}`;
+        } else if (['.mp3', '.wav', '.aac'].includes(ext)) {
+          mimeType = `audio/${ext.slice(1)}`;
+        } else if (['.jpg', '.jpeg'].includes(ext)) {
+          mimeType = 'image/jpeg';
+        } else if (ext === '.png') {
+          mimeType = 'image/png';
+        } else if (ext === '.gif') {
+          mimeType = 'image/gif';
+        }
+
+        // Handle range requests for video streaming
+        const range = req.headers.range;
+        if (range) {
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+          const chunksize = end - start + 1;
+
+          const stream = fs.createReadStream(resolvedPath, { start, end });
+          setCorsHeaders(res);
+          res.writeHead(206, {
+            'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunksize,
+            'Content-Type': mimeType,
+          });
+
+          stream.on('error', (streamError) => {
+            console.error('Error streaming file:', streamError);
+            if (!res.headersSent) {
+              setCorsHeaders(res);
+              res.writeHead(500);
+            }
+            res.end('Stream error');
+          });
+
+          res.on('close', () => {
+            stream.destroy();
+          });
+
+          stream.pipe(res);
+        } else {
+          setCorsHeaders(res);
+          res.writeHead(200, {
+            'Content-Length': stats.size,
+            'Content-Type': mimeType,
+          });
+
+          const stream = fs.createReadStream(resolvedPath);
+          stream.on('error', (streamError) => {
+            console.error('Error streaming file:', streamError);
+            if (!res.headersSent) {
+              setCorsHeaders(res);
+              res.writeHead(500);
+            }
+            res.end('Stream error');
+          });
+
+          res.on('close', () => {
+            stream.destroy();
+          });
+
+          stream.pipe(res);
+        }
+      } catch (error) {
+        console.error('Error serving file:', error);
+        setCorsHeaders(res);
+        res.writeHead(500);
+        res.end('Internal server error');
+      }
+    });
+
+    mediaServer.listen(MEDIA_SERVER_PORT, 'localhost', () => {
+      console.log(
+        `📁 Media server started on http://localhost:${MEDIA_SERVER_PORT}`,
+      );
+      markStartupPhase('media-server-ready');
+      resolve();
+    });
+
+    mediaServer.on('error', (error) => {
+      console.error('Media server error:', error);
+      mediaServerReadyPromise = null;
+      reject(error);
+    });
   });
 
-  mediaServer.listen(MEDIA_SERVER_PORT, 'localhost', () => {
-    console.log(
-      `📁 Media server started on http://localhost:${MEDIA_SERVER_PORT}`,
-    );
-    logStartupPerf();
-  });
-
-  mediaServer.on('error', (error) => {
-    console.error('Media server error:', error);
-  });
+  return mediaServerReadyPromise;
 }
-
-// Start media server when app is ready
-app.whenReady().then(() => {
-  createMediaServer();
-  startMediaCacheCleanup();
-});
 
 // IPC Handler for opening file dialog
 ipcMain.handle(
@@ -2390,6 +2510,7 @@ ipcMain.handle('create-preview-url', async (event, filePath: string) => {
         ext,
       )
     ) {
+      await ensureMediaServer();
       // URL encode the file path for the media server
       const encodedPath = encodeURIComponent(filePath);
       const serverUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodedPath}`;
@@ -4388,24 +4509,24 @@ const createWindow = () => {
 
   applyTitlebarOverlay();
 
-  logStartupPerf();
+  logStartupPerf('window-created');
 
   if (mainWindow) {
     const fallbackShow = setTimeout(() => {
       if (!mainWindow) return;
       if (!mainWindow.isVisible()) {
-        logStartupPerf();
+        logStartupPerf('window-show-fallback');
         mainWindow.show();
       }
       kickoffDeferredInitialization();
     }, 1200);
 
     mainWindow.webContents.once('did-start-loading', () => {
-      logStartupPerf();
+      logStartupPerf('renderer-start-loading');
     });
 
     mainWindow.webContents.once('dom-ready', () => {
-      logStartupPerf();
+      logStartupPerf('renderer-dom-ready');
       // DOM is ready, loader HTML is already visible from index.html
       // Show window immediately since loader is in HTML
       if (mainWindow && !mainWindow.isVisible()) {
@@ -4416,7 +4537,7 @@ const createWindow = () => {
     });
 
     mainWindow.webContents.once('did-finish-load', () => {
-      logStartupPerf();
+      logStartupPerf('renderer-did-finish-load');
 
       // Send pending file path to renderer if app was opened with a .dividr file
       if (pendingFilePath && mainWindow) {
@@ -4428,7 +4549,7 @@ const createWindow = () => {
     // Show window when ready (fallback)
     mainWindow.once('ready-to-show', () => {
       clearTimeout(fallbackShow);
-      logStartupPerf();
+      logStartupPerf('window-ready-to-show');
       if (!mainWindow?.isVisible()) {
         mainWindow?.show();
         kickoffDeferredInitialization();
@@ -4577,6 +4698,32 @@ ipcMain.handle('set-window-fullscreen', (_event, isFullscreen: boolean) => {
   return true;
 });
 
+ipcMain.handle('media:ensure-server', async () => {
+  try {
+    await ensureMediaServer();
+    return { success: true, port: MEDIA_SERVER_PORT };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to start server',
+    };
+  }
+});
+
+ipcMain.handle(
+  'startup:mark',
+  async (_event, phase: string, meta?: Record<string, unknown>) => {
+    if (typeof phase === 'string' && phase.length > 0) {
+      markStartupPhase(phase, meta);
+      if (phase === 'app-ready' || phase === 'ui-interactive') {
+        kickoffDeferredInitialization('ui-interactive');
+      }
+    }
+
+    return { success: true };
+  },
+);
+
 // Helper function to get run in background setting
 async function getRunInBackgroundSetting(): Promise<boolean> {
   // This would typically read from a settings file or store
@@ -4586,8 +4733,13 @@ async function getRunInBackgroundSetting(): Promise<boolean> {
 
 app.on('ready', async () => {
   // Create window first to show loader immediately
-  logStartupPerf();
+  logStartupPerf('app-bootstrap');
   createWindow();
+  void ensureMediaServer();
+
+  setTimeout(() => {
+    kickoffDeferredInitialization('budget-fallback');
+  }, STARTUP_BUDGET_MS + 2000);
 });
 
 app.on('window-all-closed', () => {

@@ -75,6 +75,11 @@ declare global {
         total?: number;
         error?: string;
       }>;
+      ensureMediaServer: () => Promise<{
+        success: boolean;
+        port?: number;
+        error?: string;
+      }>;
 
       // Media cache helpers
       getMediaCacheDir: () => Promise<{

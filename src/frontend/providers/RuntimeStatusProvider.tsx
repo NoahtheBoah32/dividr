@@ -118,7 +118,11 @@ export function RuntimeStatusProvider({
 
   // Initial check on mount
   useEffect(() => {
-    refresh();
+    const timeout = setTimeout(() => {
+      refresh();
+    }, 1500);
+
+    return () => clearTimeout(timeout);
   }, [refresh]);
 
   // Start download with progress tracking

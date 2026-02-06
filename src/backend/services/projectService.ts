@@ -166,17 +166,27 @@ export class ProjectService {
       const projects = await this.executeTransaction('readonly', (store) =>
         store.getAll(),
       );
+      const results: ProjectSummary[] = [];
+      let processed = 0;
 
-      return projects
-        .filter(isValidProject)
-        .map((project) => ({
+      for (const project of projects) {
+        if (!isValidProject(project)) continue;
+
+        results.push({
           ...projectToSummary(project),
           sizeInfo: this.calculateProjectSizeFromData(project),
-        }))
-        .sort(
-          (a, b) =>
-            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-        );
+        });
+
+        processed += 1;
+        if (processed % 25 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
+      return results.sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      );
     } catch (error) {
       return [];
     }

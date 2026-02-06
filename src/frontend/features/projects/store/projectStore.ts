@@ -10,6 +10,46 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { useVideoEditorStore } from '../../editor/stores/videoEditor/index';
 
+const PROJECTS_CACHE_KEY = 'dividr-projects-cache-v1';
+const PROJECTS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type ProjectsCachePayload = {
+  cachedAt: string;
+  projects: ProjectSummary[];
+};
+
+const readProjectsCache = (): ProjectSummary[] | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PROJECTS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ProjectsCachePayload;
+    if (!parsed?.cachedAt || !Array.isArray(parsed.projects)) return null;
+
+    const ageMs = Date.now() - new Date(parsed.cachedAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs > PROJECTS_CACHE_TTL_MS) {
+      return null;
+    }
+
+    return parsed.projects;
+  } catch {
+    return null;
+  }
+};
+
+const writeProjectsCache = (projects: ProjectSummary[]): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: ProjectsCachePayload = {
+      cachedAt: new Date().toISOString(),
+      projects,
+    };
+    window.localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore cache write errors
+  }
+};
+
 // Current project state
 interface ProjectStore {
   // Current project being edited
@@ -106,6 +146,13 @@ export const useProjectStore = create<ProjectStore>()(
       const state = get();
       if (state.isInitialized) return;
 
+      if (state.projects.length === 0) {
+        const cachedProjects = readProjectsCache();
+        if (cachedProjects && cachedProjects.length > 0) {
+          set({ projects: cachedProjects });
+        }
+      }
+
       set({ isLoading: true });
 
       try {
@@ -130,6 +177,7 @@ export const useProjectStore = create<ProjectStore>()(
       try {
         const projects = await projectService.getAllProjects();
         set({ projects });
+        writeProjectsCache(projects);
       } catch (error) {
         set({ projects: [] }); // Set empty array on error
       } finally {
