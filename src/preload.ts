@@ -405,6 +405,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
       error?: string;
     }>,
 
+  // =========================================================================
+  // Release Update APIs
+  // =========================================================================
+
+  releaseCheckForUpdates: () =>
+    ipcRenderer.invoke('release:check-updates') as Promise<{
+      success: boolean;
+      updateAvailable: boolean;
+      installedVersion: string;
+      installedTag: string;
+      latest?: {
+        latestVersion: string;
+        latestTag: string;
+        latestTitle: string;
+        checkedAt: string;
+      };
+      error?: string;
+    }>,
+
+  releaseGetUpdateCache: () =>
+    ipcRenderer.invoke('release:get-update-cache') as Promise<{
+      latestVersion: string;
+      latestTag: string;
+      latestTitle: string;
+      checkedAt: string;
+    } | null>,
+
   // Listen for runtime download progress
   onRuntimeDownloadProgress: (
     callback: (progress: {

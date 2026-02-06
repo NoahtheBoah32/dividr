@@ -13,6 +13,7 @@ import {
   MenubarSubTrigger,
   MenubarTrigger,
 } from '@/frontend/components/ui/menubar';
+import AboutDialog from '@/frontend/features/about/About';
 import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
 import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
 import { normalizeKeyList } from '@/frontend/features/editor/shortcuts/shortcutUtils';
@@ -39,10 +40,12 @@ import { useProjectStore } from '@/frontend/features/projects/store/projectStore
 import { Check } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { HotkeysDialog } from './HotkeysDialog';
 
 const AppMenuBarComponent = () => {
   const [showHotkeys, setShowHotkeys] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const navigate = useNavigate();
   const importMediaFromDialog = useVideoEditorStore(
     (state) => state.importMediaFromDialog,
@@ -211,6 +214,26 @@ const AppMenuBarComponent = () => {
     }
     removeSelectedTracks();
   }, [selectedTrackIds.length, removeSelectedTracks]);
+
+  const handleOpenAbout = useCallback(() => {
+    setShowAbout(true);
+  }, [navigate]);
+
+  const handleCheckUpdates = useCallback(async () => {
+    try {
+      toast.promise(window.electronAPI.releaseCheckForUpdates(), {
+        loading: 'Checking for updates...',
+        success: (result) =>
+          result.updateAvailable
+            ? `Update available: v${result.latest?.latestVersion}`
+            : 'DiviDr is up to date',
+        error: (error) =>
+          error instanceof Error ? error.message : 'Update check failed',
+      });
+    } catch (error) {
+      console.warn('Update check failed:', error);
+    }
+  }, []);
 
   return (
     <div className="flex items-center">
@@ -414,13 +437,16 @@ const AppMenuBarComponent = () => {
             <MenubarItem disabled>Report Bug</MenubarItem>
             <MenubarItem disabled>Feature Request</MenubarItem>
             <MenubarSeparator />
-            <MenubarItem disabled>About Dividr</MenubarItem>
-            <MenubarItem disabled>Check for Updates</MenubarItem>
+            <MenubarItem onClick={handleOpenAbout}>About DiviDr</MenubarItem>
+            <MenubarItem onClick={handleCheckUpdates}>
+              Check for Updates
+            </MenubarItem>
           </MenubarContent>
         </MenubarMenu>
       </Menubar>
 
       <HotkeysDialog open={showHotkeys} onOpenChange={handleCloseHotkeys} />
+      <AboutDialog open={showAbout} onOpenChange={setShowAbout} />
       <ConfirmationDialog />
     </div>
   );

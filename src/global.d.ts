@@ -522,6 +522,37 @@ declare global {
         error?: string;
       }>;
 
+      // ========================================================================
+      // Release Update APIs
+      // ========================================================================
+
+      /**
+       * Check GitHub for newer releases (platform-specific)
+       */
+      releaseCheckForUpdates: () => Promise<{
+        success: boolean;
+        updateAvailable: boolean;
+        installedVersion: string;
+        installedTag: string;
+        latest?: {
+          latestVersion: string;
+          latestTag: string;
+          latestTitle: string;
+          checkedAt: string;
+        };
+        error?: string;
+      }>;
+
+      /**
+       * Read cached update metadata (if available)
+       */
+      releaseGetUpdateCache: () => Promise<{
+        latestVersion: string;
+        latestTag: string;
+        latestTitle: string;
+        checkedAt: string;
+      } | null>;
+
       /**
        * Listen for runtime download progress
        */

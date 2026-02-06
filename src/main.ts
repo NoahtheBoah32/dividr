@@ -33,6 +33,10 @@ import {
 
 // Import runtime download manager for on-demand installation
 import {
+  checkForReleaseUpdates,
+  readReleaseUpdateCache,
+} from './backend/release/releaseUpdateService';
+import {
   cancelDownload,
   checkRuntimeStatus,
   downloadRuntime,
@@ -3704,6 +3708,20 @@ ipcMain.handle('runtime:remove', async () => {
 
   const result = await removeRuntime();
   return result;
+});
+
+// ============================================================================
+// Release Update IPC Handlers
+// ============================================================================
+
+ipcMain.handle('release:check-updates', async () => {
+  console.log('🔎 MAIN PROCESS: release:check-updates handler called');
+  return checkForReleaseUpdates();
+});
+
+ipcMain.handle('release:get-update-cache', async () => {
+  console.log('📦 MAIN PROCESS: release:get-update-cache handler called');
+  return readReleaseUpdateCache();
 });
 
 // IPC Handler to check if a media file has audio

@@ -37,6 +37,12 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Generate release metadata
+        if: startsWith(github.ref, 'refs/tags/')
+        run: yarn generate:release-meta
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Linux app
         run: yarn make --platform linux
         env:
