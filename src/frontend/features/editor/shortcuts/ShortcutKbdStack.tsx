@@ -23,6 +23,8 @@ export const ShortcutKbdStack: React.FC<ShortcutKbdStackProps> = ({
     ? displayGroups.slice(0, Math.max(0, maxCombos))
     : displayGroups;
 
+  console.log('groups', groups);
+
   if (groups.length === 0) return null;
 
   return (

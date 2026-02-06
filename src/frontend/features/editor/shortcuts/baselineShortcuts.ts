@@ -187,7 +187,7 @@ export const baselineShortcuts: BaselineShortcut[] = [
     action: 'Split at Playhead',
     category: 'Timeline Tools',
     scope: 'timeline',
-    keys: ['k'],
+    keys: ['k', 'ctrl+k', 'cmd+k'],
   },
   {
     id: 'timeline-exit-split-mode',

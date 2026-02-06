@@ -38,6 +38,8 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
 
     const splitToolKeys = useShortcutKeys('timeline-split-playhead-k', ['k']);
 
+    console.log('spliteToolKeys', splitToolKeys);
+
     // Check if playhead is snapping (magneticSnapFrame matches currentFrame)
     const isSnapping =
       magneticSnapFrame !== null && magneticSnapFrame === currentFrame;
