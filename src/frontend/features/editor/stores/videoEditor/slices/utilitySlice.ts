@@ -16,8 +16,12 @@ export const createUtilitySlice: StateCreator<
   [],
   [],
   UtilitySlice
-> = (set) => ({
-  reset: () =>
+> = (set, get) => ({
+  reset: () => {
+    const state = get() as any;
+    state.cancelPendingAutoSave?.();
+    state.setCurrentProjectId?.(null);
+
     set({
       tracks: [],
       mediaLibrary: [],
@@ -55,8 +59,9 @@ export const createUtilitySlice: StateCreator<
       },
       textStyle: getDefaultTextStyleState(), // Reset text styles to defaults
       currentProjectId: null,
-      isAutoSaveEnabled: true,
+      autoSavePreferences: state.autoSavePreferences,
       lastSavedAt: null,
       hasUnsavedChanges: false,
-    } as any),
+    } as any);
+  },
 });

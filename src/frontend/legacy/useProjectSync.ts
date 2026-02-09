@@ -14,8 +14,8 @@ export const useProjectSync = () => {
   const hasUnsavedChanges = useVideoEditorStore(
     (state) => state.hasUnsavedChanges,
   );
-  const isAutoSaveEnabled = useVideoEditorStore(
-    (state) => state.isAutoSaveEnabled,
+  const autoSavePreferences = useVideoEditorStore(
+    (state) => state.autoSavePreferences,
   );
   const saveProjectData = useVideoEditorStore((state) => state.saveProjectData);
   const setCurrentProjectId = useVideoEditorStore(
@@ -57,22 +57,28 @@ export const useProjectSync = () => {
 
   // Periodic auto-save for extra safety
   useEffect(() => {
-    if (!isAutoSaveEnabled || !currentProjectId) return;
+    if (!autoSavePreferences.enabled || !currentProjectId) return;
 
     const interval = setInterval(() => {
       if (hasUnsavedChanges) {
         console.log('🔄 Periodic auto-save triggered');
         saveProjectData().catch(console.error);
       }
-    }, 30000); // Save every 30 seconds if there are changes
+    }, autoSavePreferences.intervalMs);
 
     return () => clearInterval(interval);
-  }, [isAutoSaveEnabled, currentProjectId, hasUnsavedChanges, saveProjectData]);
+  }, [
+    autoSavePreferences.enabled,
+    autoSavePreferences.intervalMs,
+    currentProjectId,
+    hasUnsavedChanges,
+    saveProjectData,
+  ]);
 
   return {
     currentProject,
     hasUnsavedChanges,
-    isAutoSaveEnabled,
+    isAutoSaveEnabled: autoSavePreferences.enabled,
     saveProjectData,
   };
 };

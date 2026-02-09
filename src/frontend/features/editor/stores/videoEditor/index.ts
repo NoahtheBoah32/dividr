@@ -16,7 +16,11 @@ import {
 } from './slices/mediaLibrarySlice';
 import { createPlaybackSlice, PlaybackSlice } from './slices/playbackSlice';
 import { createPreviewSlice, PreviewSlice } from './slices/previewSlice';
-import { createProjectSlice, ProjectSlice } from './slices/projectSlice';
+import {
+  createProjectSlice,
+  normalizeAutoSavePreferences,
+  ProjectSlice,
+} from './slices/projectSlice';
 import { createRenderSlice, RenderSlice } from './slices/renderSlice';
 import { createTextClipsSlice, TextClipsSlice } from './slices/textClipsSlice';
 import { createTextStyleSlice, TextStyleSlice } from './slices/textStyleSlice';
@@ -100,7 +104,7 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
           // It will be saved/loaded per project via projectSlice
           colorHistory: state.colorHistory,
           recentFonts: state.recentFonts, // Keep recent fonts global for convenience
-          isAutoSaveEnabled: state.isAutoSaveEnabled,
+          autoSavePreferences: state.autoSavePreferences,
           // Don't persist undo/redo history - it should reset on app restart
           // undoStack: [],
           // redoStack: [],
@@ -133,8 +137,12 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
           recentFonts: persistedState?.recentFonts || currentState.recentFonts,
           colorHistory:
             persistedState?.colorHistory || currentState.colorHistory,
-          isAutoSaveEnabled:
-            persistedState?.isAutoSaveEnabled ?? currentState.isAutoSaveEnabled,
+          autoSavePreferences: normalizeAutoSavePreferences({
+            enabled:
+              persistedState?.autoSavePreferences?.enabled ??
+              (persistedState as any)?.isAutoSaveEnabled,
+            intervalMs: persistedState?.autoSavePreferences?.intervalMs,
+          }),
         }),
       },
     ),

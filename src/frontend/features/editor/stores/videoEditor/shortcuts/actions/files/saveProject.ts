@@ -1,20 +1,47 @@
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
+import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
 import { toast } from 'sonner';
 
 export const saveProjectAction = async () => {
   try {
     const videoEditorStore = useVideoEditorStore.getState();
-    const { currentProjectId, lastSavedAt, saveProjectData } = videoEditorStore;
+    const {
+      currentProjectId,
+      hasUnsavedChanges,
+      isSaving,
+      lastSavedAt,
+      saveProjectData,
+    } = videoEditorStore;
+    const currentProject = useProjectStore.getState().currentProject;
 
     if (!currentProjectId) {
       toast.info('No project open to save');
       return;
     }
 
-    // Check if already saved recently (within 2 seconds)
-    if (lastSavedAt) {
-      const timeSinceLastSave = Date.now() - new Date(lastSavedAt).getTime();
-      if (timeSinceLastSave < 2000) {
+    if (isSaving) {
+      toast.info('Save already in progress');
+      return;
+    }
+
+    if (
+      currentProject &&
+      currentProject.id === currentProjectId &&
+      !hasUnsavedChanges
+    ) {
+      const editorSavedAtMs = lastSavedAt
+        ? new Date(lastSavedAt).getTime()
+        : Number.NaN;
+      const metadataUpdatedAtMs = currentProject.metadata?.updatedAt
+        ? new Date(currentProject.metadata.updatedAt).getTime()
+        : Number.NaN;
+
+      const isMetadataAligned =
+        !Number.isFinite(metadataUpdatedAtMs) ||
+        (Number.isFinite(editorSavedAtMs) &&
+          editorSavedAtMs >= metadataUpdatedAtMs);
+
+      if (isMetadataAligned) {
         toast.success('💾 Project already saved', {
           duration: 1500,
         });
