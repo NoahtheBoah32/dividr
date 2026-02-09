@@ -459,12 +459,17 @@ export const createTracksSlice: StateCreator<
 
       set((state: any) => ({
         tracks: [...state.tracks, videoTrack, audioTrack],
+        timeline: {
+          ...state.timeline,
+          selectedTrackIds: [id, audioId],
+        },
       }));
 
       // Refresh state reference after set
       state = get() as any;
       state.markUnsavedChanges?.();
       state.updateProjectThumbnailFromTimeline?.();
+      state.triggerTrackInsertionFeedback?.([id, audioId], id);
 
       // Auto-update canvas size if this is the first video track
       if (
@@ -580,6 +585,10 @@ export const createTracksSlice: StateCreator<
 
       set((state: any) => ({
         tracks: [...state.tracks, track],
+        timeline: {
+          ...state.timeline,
+          selectedTrackIds: [id],
+        },
       }));
 
       // Auto-create track row for subtitle and image types
@@ -599,6 +608,7 @@ export const createTracksSlice: StateCreator<
       // Refresh state reference after set
       state = get() as any;
       state.markUnsavedChanges?.();
+      state.triggerTrackInsertionFeedback?.([id], id);
       return id;
     }
   },
@@ -606,6 +616,7 @@ export const createTracksSlice: StateCreator<
   addTracks: async (tracksData) => {
     const state = get() as any;
     const trackIds: string[] = [];
+    let lastInsertedSelection: string[] = [];
 
     // Begin grouped transaction for batch track addition
     state.beginGroup?.('Add Multiple Tracks');
@@ -716,6 +727,7 @@ export const createTracksSlice: StateCreator<
           newTracks.push(videoTrack);
           newTracks.push(audioTrack);
           trackIds.push(id, audioId);
+          lastInsertedSelection = [id, audioId];
         } else {
           // For non-video tracks - calculate row index for TOP placement
           const allTracksForRow = [
@@ -741,6 +753,7 @@ export const createTracksSlice: StateCreator<
 
           newTracks.push(newTrack);
           trackIds.push(id);
+          lastInsertedSelection = [id];
 
           // Track which types need their track rows to be visible
           if (trackData.type === 'subtitle' || trackData.type === 'image') {
@@ -752,11 +765,21 @@ export const createTracksSlice: StateCreator<
       // Single state update for all tracks
       set((state) => ({
         tracks: [...state.tracks, ...newTracks],
+        timeline: {
+          ...state.timeline,
+          selectedTrackIds: lastInsertedSelection,
+        },
       }));
 
       // Refresh state reference
       const currentState = get() as any;
       currentState.markUnsavedChanges?.();
+      if (trackIds.length > 0) {
+        currentState.triggerTrackInsertionFeedback?.(
+          trackIds,
+          lastInsertedSelection[0] || trackIds[0],
+        );
+      }
 
       // Auto-update canvas size if this batch contains the first video track
       const existingVideoTracks = state.tracks.filter(

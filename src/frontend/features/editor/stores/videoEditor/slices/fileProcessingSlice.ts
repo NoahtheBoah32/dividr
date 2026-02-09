@@ -5,7 +5,6 @@ import { FileIntegrityValidator } from '@/frontend/utils/fileValidator';
 import { showImportLimitationToast } from '@/frontend/utils/mediaLimitations';
 import { toast } from 'sonner';
 import { StateCreator } from 'zustand';
-import { getNextAvailableRowIndex } from '../../../timeline/utils/dynamicTrackRows';
 import {
   FileProcessingSlice,
   ImportResult,
@@ -1295,30 +1294,12 @@ export const createFileProcessingSlice: StateCreator<
           }),
         );
 
-        // STEP 2: If duplicates found, show batch dialog
-        let duplicateChoices = new Map<string, DuplicateChoice>();
-        if (duplicatesToHandle.length > 0) {
-          console.log(
-            `🔄 Found ${duplicatesToHandle.length} duplicate(s), showing batch dialog...`,
-          );
-
-          duplicateChoices = await new Promise<Map<string, DuplicateChoice>>(
-            (resolve) => {
-              storeState.showBatchDuplicateDialog(duplicatesToHandle, resolve);
-            },
-          );
-
-          storeState.hideBatchDuplicateDialog();
-        }
-
-        // Create a map of file path -> choice
+        // STEP 2: Enforce dedupe by reusing existing media entries
+        // (single source of truth: no duplicate registry entries).
         const pathToChoice = new Map<string, DuplicateChoice>();
         duplicatesToHandle.forEach((dup) => {
           if (dup.pendingFilePath) {
-            pathToChoice.set(
-              dup.pendingFilePath,
-              duplicateChoices.get(dup.id) || 'use-existing',
-            );
+            pathToChoice.set(dup.pendingFilePath, 'use-existing');
           }
         });
 
@@ -1405,126 +1386,14 @@ export const createFileProcessingSlice: StateCreator<
   },
 
   importMediaFromFiles: async (files: File[]): Promise<void> => {
-    // Validate files before processing
-    const validationResults = await FileIntegrityValidator.validateFiles(files);
-    const validFiles: File[] = [];
-    const rejectedFiles: Array<{ name: string; reason: string }> = [];
-
-    validationResults.forEach((result, file) => {
-      if (result.isValid) {
-        validFiles.push(file);
-      } else {
-        rejectedFiles.push({
-          name: file.name,
-          reason: result.error || 'File validation failed',
-        });
-      }
-    });
-
-    if (rejectedFiles.length > 0) {
-      console.warn('🚫 Rejected corrupted/invalid files:', rejectedFiles);
-    }
-
-    if (validFiles.length === 0) {
-      console.warn('No valid files to import');
+    if (!files || files.length === 0) {
       return;
     }
 
-    // Determine target subtitle row index so all imported cues stay on one row
-    const existingTracks = (get() as any).tracks as VideoTrack[];
-    const subtitleRowIndex =
-      existingTracks.find((t) => t.type === 'subtitle')?.trackRowIndex ??
-      Math.max(1, getNextAvailableRowIndex(existingTracks, 'subtitle'));
-
-    // Continue with existing implementation for valid files only
-    const newTracks = await Promise.all(
-      validFiles.map(async (file, index) => {
-        // Check if this is a subtitle file
-        if (isSubtitleFile(file.name)) {
-          try {
-            // Read subtitle file content
-            const fileContent = await file.text();
-
-            // Create file info object for the helper
-            const fileInfo = {
-              name: file.name,
-              path: URL.createObjectURL(file), // Use blob URL as path for legacy support
-              type: 'subtitle',
-              extension: file.name.split('.').pop() || '',
-              size: file.size,
-            };
-
-            // Process subtitle file using helper
-            const subtitleTracks = await processSubtitleFile(
-              fileInfo,
-              fileContent,
-              (get() as any).tracks.length + index,
-              (get() as any).timeline.fps,
-              subtitleRowIndex,
-              undefined,
-            );
-
-            return subtitleTracks;
-          } catch (error) {
-            console.error(
-              `❌ Error processing subtitle file ${file.name}:`,
-              error,
-            );
-            // Fallback to single subtitle track
-            return {
-              type: 'subtitle' as const,
-              name: file.name,
-              source: URL.createObjectURL(file),
-              originalFile: file,
-              duration: 150,
-              startFrame: index * 150,
-              endFrame: index * 150 + 150,
-              visible: true,
-              locked: false,
-              color: getTrackColor((get() as any).tracks.length + index),
-              subtitleText: `Subtitle: ${file.name}`,
-              subtitleType: 'regular' as const, // Mark as regular imported subtitle
-              trackRowIndex: subtitleRowIndex,
-            };
-          }
-        }
-
-        // For regular File objects, we'll create blob URLs for preview
-        // but log a warning that this won't work with FFmpeg
-        const blobUrl = URL.createObjectURL(file);
-
-        const type = file.type.startsWith('video/')
-          ? ('video' as const)
-          : file.type.startsWith('audio/')
-            ? ('audio' as const)
-            : ('image' as const);
-
-        const estimatedDuration = type === 'image' ? 150 : 1500;
-
-        return {
-          type,
-          name: file.name,
-          source: blobUrl, // This will be a blob URL - won't work with FFmpeg
-          originalFile: file,
-          duration: estimatedDuration,
-          startFrame: index * 150,
-          endFrame: index * 150 + estimatedDuration,
-          visible: true,
-          locked: false,
-          color: getTrackColor((get() as any).tracks.length + index),
-        };
-      }),
-    );
-
-    // Flatten tracks array (subtitle files return arrays of tracks) and filter out null/undefined
-    const validTracks = newTracks.flat().filter(Boolean);
-
-    // Use batch addTracks for better performance when adding multiple tracks
-    if (validTracks.length > 1) {
-      console.log(`🚀 Adding ${validTracks.length} tracks in batch...`);
-      await (get() as any).addTracks(validTracks);
-    } else if (validTracks.length === 1) {
-      await (get() as any).addTrack(validTracks[0]);
+    // Legacy external-drop entry point now uses the centralized registry-first flow.
+    const result = await (get() as any).importMediaToTimeline(files);
+    if (!result.success) {
+      console.warn('Failed to import media from files:', result.error);
     }
   },
 
@@ -1683,33 +1552,12 @@ export const createFileProcessingSlice: StateCreator<
               }),
             );
 
-            // STEP 2: If duplicates found, show batch dialog
-            let duplicateChoices = new Map<string, DuplicateChoice>();
-            if (duplicatesToHandle.length > 0) {
-              console.log(
-                `🔄 Found ${duplicatesToHandle.length} duplicate(s), showing batch dialog...`,
-              );
-
-              duplicateChoices = await new Promise<
-                Map<string, DuplicateChoice>
-              >((resolve) => {
-                storeState.showBatchDuplicateDialog(
-                  duplicatesToHandle,
-                  resolve,
-                );
-              });
-
-              storeState.hideBatchDuplicateDialog();
-            }
-
-            // Create a map of file path -> choice
+            // STEP 2: Enforce dedupe by reusing existing media entries
+            // (single source of truth: no duplicate registry entries).
             const pathToChoice = new Map<string, DuplicateChoice>();
             duplicatesToHandle.forEach((dup) => {
               if (dup.pendingFilePath) {
-                pathToChoice.set(
-                  dup.pendingFilePath,
-                  duplicateChoices.get(dup.id) || 'use-existing',
-                );
+                pathToChoice.set(dup.pendingFilePath, 'use-existing');
               }
             });
 
@@ -1973,33 +1821,12 @@ export const createFileProcessingSlice: StateCreator<
               }
             }
 
-            // STEP 2: If duplicates found, show batch dialog and get all choices at once
-            let duplicateChoices = new Map<string, DuplicateChoice>();
-            if (duplicatesToHandle.length > 0) {
-              console.log(
-                `🔄 Found ${duplicatesToHandle.length} duplicate(s), showing batch dialog...`,
-              );
-
-              duplicateChoices = await new Promise<
-                Map<string, DuplicateChoice>
-              >((resolve) => {
-                storeState.showBatchDuplicateDialog(
-                  duplicatesToHandle,
-                  resolve,
-                );
-              });
-
-              storeState.hideBatchDuplicateDialog();
-            }
-
-            // Create a map of file path -> choice for quick lookup
+            // STEP 2: Enforce dedupe by reusing existing media entries
+            // (single source of truth: no duplicate registry entries).
             const pathToChoice = new Map<string, DuplicateChoice>();
             duplicatesToHandle.forEach((dup) => {
               if (dup.pendingFilePath) {
-                pathToChoice.set(
-                  dup.pendingFilePath,
-                  duplicateChoices.get(dup.id) || 'use-existing',
-                );
+                pathToChoice.set(dup.pendingFilePath, 'use-existing');
               }
             });
 
@@ -2031,7 +1858,8 @@ export const createFileProcessingSlice: StateCreator<
                       sigInfo.existingMedia.source,
                     isDuplicate: true,
                   });
-                  // Don't add to timeline - user chose to skip
+                  // Reuse existing media entry and still create a timeline clip.
+                  mediaIdsToAddToTimeline.push(sigInfo.existingMedia.id);
                   continue;
                 }
 

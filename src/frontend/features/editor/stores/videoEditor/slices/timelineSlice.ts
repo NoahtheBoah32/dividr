@@ -43,6 +43,16 @@ export interface TimelineSlice {
   triggerDuplicationFeedback: (trackId: string) => void;
   clearDuplicationFeedback: (trackId: string) => void;
 
+  // Visual feedback for newly inserted tracks
+  insertionFeedbackTrackIds: Set<string>;
+  lastInsertedTrackId: string | null;
+  trackInsertionSequence: number;
+  triggerTrackInsertionFeedback: (
+    trackIds: string | string[],
+    primaryTrackId?: string,
+  ) => void;
+  clearTrackInsertionFeedback: (trackId: string) => void;
+
   // State management helpers
   markUnsavedChanges?: () => void;
 }
@@ -67,6 +77,9 @@ export const createTimelineSlice: StateCreator<
     visibleTrackRows: ['video', 'audio'], // Default: only Media and Audio tracks visible
   },
   duplicationFeedbackTrackIds: new Set(),
+  insertionFeedbackTrackIds: new Set(),
+  lastInsertedTrackId: null,
+  trackInsertionSequence: 0,
 
   setCurrentFrame: (frame) =>
     set((state: any) => {
@@ -317,6 +330,53 @@ export const createTimelineSlice: StateCreator<
       const newSet = new Set(state.duplicationFeedbackTrackIds);
       newSet.delete(trackId);
       return { duplicationFeedbackTrackIds: newSet };
+    });
+  },
+
+  // Visual feedback for newly inserted tracks
+  triggerTrackInsertionFeedback: (trackIds, primaryTrackId) => {
+    const normalizedIds = Array.isArray(trackIds) ? trackIds : [trackIds];
+    const sanitizedIds = Array.from(
+      new Set(
+        normalizedIds.filter(
+          (id): id is string => typeof id === 'string' && id.length > 0,
+        ),
+      ),
+    );
+
+    if (sanitizedIds.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const newSet = new Set(state.insertionFeedbackTrackIds);
+      sanitizedIds.forEach((id) => newSet.add(id));
+
+      const targetTrackId =
+        primaryTrackId && sanitizedIds.includes(primaryTrackId)
+          ? primaryTrackId
+          : sanitizedIds[0];
+
+      return {
+        insertionFeedbackTrackIds: newSet,
+        lastInsertedTrackId: targetTrackId,
+        trackInsertionSequence: state.trackInsertionSequence + 1,
+      };
+    });
+
+    setTimeout(() => {
+      const currentState = get();
+      sanitizedIds.forEach((id) =>
+        currentState.clearTrackInsertionFeedback(id),
+      );
+    }, 1000);
+  },
+
+  clearTrackInsertionFeedback: (trackId: string) => {
+    set((state) => {
+      const newSet = new Set(state.insertionFeedbackTrackIds);
+      newSet.delete(trackId);
+      return { insertionFeedbackTrackIds: newSet };
     });
   },
 });

@@ -69,6 +69,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const autoFollowTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const playbackIntervalRef = useRef<number | null>(null);
     const lastFrameUpdateRef = useRef<number>(0);
+    const lastHandledInsertionSequenceRef = useRef<number>(0);
     const isManualScrollingRef = useRef<boolean>(false);
     const marqueeStartRef = useRef<{
       x: number;
@@ -137,6 +138,14 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const transcribingSubtitleRowIndex = useVideoEditorStore(
       (state) => state.transcribingSubtitleRowIndex,
     );
+    const lastInsertedTrackId = useVideoEditorStore(
+      (state) => state.lastInsertedTrackId,
+    );
+    const trackInsertionSequence = useVideoEditorStore(
+      (state) => state.trackInsertionSequence,
+    );
+    // Calculate frame width based on zoom - memoized
+    const frameWidth = useMemo(() => 2 * timeline.zoom, [timeline.zoom]);
 
     // Generate dynamic rows for vertical drag detection
     const migratedTracks = useMemo(
@@ -321,6 +330,199 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         interactionRowBounds.find((row) => row.rowId === rowId) || null,
       [interactionRowBounds],
     );
+
+    // Keep newly inserted tracks visible in the viewport.
+    useEffect(() => {
+      if (
+        !tracksRef.current ||
+        !lastInsertedTrackId ||
+        trackInsertionSequence < 1 ||
+        trackInsertionSequence <= lastHandledInsertionSequenceRef.current
+      ) {
+        return;
+      }
+
+      const insertedTrack = tracks.find(
+        (track) => track.id === lastInsertedTrackId,
+      );
+      if (!insertedTrack) return;
+
+      const linkedTrack = insertedTrack.linkedTrackId
+        ? tracks.find((track) => track.id === insertedTrack.linkedTrackId)
+        : null;
+      const verticalFocusTrack =
+        insertedTrack.type === 'video'
+          ? insertedTrack
+          : linkedTrack?.type === 'video'
+            ? linkedTrack
+            : insertedTrack;
+      const horizontalFocusTrack = insertedTrack;
+
+      const container = tracksRef.current;
+      const insertedRowId = getTrackRowId(verticalFocusTrack);
+
+      const scrollRowIntoView = (): boolean => {
+        const rowElement = Array.from(
+          container.querySelectorAll<HTMLElement>('[data-timeline-row-id]'),
+        ).find((element) => element.dataset.timelineRowId === insertedRowId);
+        const insertedTrackElement = container.querySelector<HTMLElement>(
+          `[data-track-id="${horizontalFocusTrack.id}"]`,
+        );
+
+        // Fall back to computed row bounds if the row element is not mounted yet.
+        const rowTopFromBounds = getRowBoundsById(insertedRowId)?.top;
+        const rowBottomFromBounds = getRowBoundsById(insertedRowId)?.bottom;
+
+        const rowTop =
+          rowElement?.offsetTop ??
+          (typeof rowTopFromBounds === 'number' ? rowTopFromBounds : null);
+        const rowBottom =
+          rowElement != null
+            ? rowElement.offsetTop + rowElement.offsetHeight
+            : typeof rowBottomFromBounds === 'number'
+              ? rowBottomFromBounds
+              : null;
+
+        const currentScrollTop = container.scrollTop;
+        const currentScrollLeft = container.scrollLeft;
+        const viewportBottom = currentScrollTop + container.clientHeight;
+        const viewportRight = currentScrollLeft + container.clientWidth;
+
+        let targetScrollTop = currentScrollTop;
+        const hasVerticalTarget = rowTop != null && rowBottom != null;
+
+        if (rowTop != null && rowBottom != null) {
+          const isFullyVisible =
+            rowTop >= currentScrollTop && rowBottom <= viewportBottom;
+
+          if (!isFullyVisible) {
+            targetScrollTop =
+              rowTop < currentScrollTop
+                ? rowTop
+                : rowBottom - container.clientHeight;
+          }
+        }
+
+        const horizontalPadding = 24;
+        const containerRect = container.getBoundingClientRect();
+        const clipLeftFromFrames = horizontalFocusTrack.startFrame * frameWidth;
+        const clipRightFromFrames = horizontalFocusTrack.endFrame * frameWidth;
+        const clipLeft =
+          insertedTrackElement != null
+            ? insertedTrackElement.getBoundingClientRect().left -
+              containerRect.left +
+              currentScrollLeft
+            : clipLeftFromFrames;
+        const clipRight =
+          insertedTrackElement != null
+            ? insertedTrackElement.getBoundingClientRect().right -
+              containerRect.left +
+              currentScrollLeft
+            : clipRightFromFrames;
+        const clipWidth = clipRight - clipLeft;
+        let targetScrollLeft = currentScrollLeft;
+
+        if (clipLeft < currentScrollLeft + horizontalPadding) {
+          targetScrollLeft = Math.max(0, clipLeft - horizontalPadding);
+        } else if (clipRight > viewportRight - horizontalPadding) {
+          targetScrollLeft =
+            clipWidth + horizontalPadding * 2 <= container.clientWidth
+              ? clipRight - container.clientWidth + horizontalPadding
+              : Math.max(0, clipLeft - horizontalPadding);
+        }
+
+        const clampedScrollTop = Math.max(
+          0,
+          Math.min(
+            targetScrollTop,
+            container.scrollHeight - container.clientHeight,
+          ),
+        );
+        const clampedScrollLeft = Math.max(
+          0,
+          Math.min(
+            targetScrollLeft,
+            container.scrollWidth - container.clientWidth,
+          ),
+        );
+
+        const shouldScrollVertically =
+          Math.abs(clampedScrollTop - currentScrollTop) > 1;
+        const shouldScrollHorizontally =
+          Math.abs(clampedScrollLeft - currentScrollLeft) > 1;
+
+        if (!shouldScrollVertically && !shouldScrollHorizontally) {
+          if (!hasVerticalTarget) {
+            return false;
+          }
+
+          const finalViewportLeft = currentScrollLeft;
+          const finalViewportRight = finalViewportLeft + container.clientWidth;
+          const horizontalVisible =
+            clipWidth + horizontalPadding * 2 <= container.clientWidth
+              ? clipLeft >= finalViewportLeft + horizontalPadding &&
+                clipRight <= finalViewportRight - horizontalPadding
+              : clipLeft >= finalViewportLeft + horizontalPadding &&
+                clipLeft <= finalViewportRight - horizontalPadding;
+
+          return horizontalVisible;
+        }
+
+        container.scrollTo({
+          top: clampedScrollTop,
+          left: clampedScrollLeft,
+          behavior: 'smooth',
+        });
+        setVerticalScrollY(clampedScrollTop);
+
+        if (!hasVerticalTarget) {
+          return false;
+        }
+
+        const finalViewportLeft = clampedScrollLeft;
+        const finalViewportRight = finalViewportLeft + container.clientWidth;
+        const horizontalVisible =
+          clipWidth + horizontalPadding * 2 <= container.clientWidth
+            ? clipLeft >= finalViewportLeft + horizontalPadding &&
+              clipRight <= finalViewportRight - horizontalPadding
+            : clipLeft >= finalViewportLeft + horizontalPadding &&
+              clipLeft <= finalViewportRight - horizontalPadding;
+
+        return horizontalVisible;
+      };
+
+      let frameId: number | null = null;
+      let attempts = 0;
+      const maxAttempts = 16;
+
+      const runInsertionScrollAttempt = () => {
+        attempts += 1;
+        const insertionTargetSettled = scrollRowIntoView();
+        if (insertionTargetSettled || attempts >= maxAttempts) {
+          lastHandledInsertionSequenceRef.current = trackInsertionSequence;
+          return;
+        }
+
+        frameId = requestAnimationFrame(runInsertionScrollAttempt);
+      };
+
+      frameId = requestAnimationFrame(() => {
+        frameId = requestAnimationFrame(runInsertionScrollAttempt);
+      });
+
+      return () => {
+        if (frameId !== null) {
+          cancelAnimationFrame(frameId);
+        }
+      };
+    }, [
+      tracks,
+      lastInsertedTrackId,
+      trackInsertionSequence,
+      getRowBoundsById,
+      setVerticalScrollY,
+      frameWidth,
+    ]);
 
     // Animation loop for playback
     useEffect(() => {
@@ -661,9 +863,6 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         tracksElement.removeEventListener('scroll', handleTracksScroll);
       };
     }, []);
-
-    // Calculate frame width based on zoom - memoized
-    const frameWidth = useMemo(() => 2 * timeline.zoom, [timeline.zoom]);
 
     const [subtitleImportConfirmation, setSubtitleImportConfirmation] =
       useState<{

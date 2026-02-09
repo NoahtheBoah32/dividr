@@ -191,6 +191,7 @@ const TrackItemWrapper: React.FC<{
 
     return (
       <div
+        data-track-id={track.id}
         className={cn(
           'absolute rounded flex items-center select-none transition-opacity duration-150',
           getTrackItemHeightClasses(track.type),
@@ -2101,6 +2102,7 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
             return (
               <div
                 key={rowDef.id}
+                data-timeline-row-id={rowDef.id}
                 className={cn(
                   isVideoZero && 'sticky bottom-0 z-30 bg-background',
                 )}
