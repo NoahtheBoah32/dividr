@@ -17,6 +17,10 @@ interface TimelinePlayheadProps {
   visible: boolean;
   timelineScrollElement?: HTMLElement | null;
   onStartDrag?: (e: React.MouseEvent) => void;
+  onCutMarkerMouseDown?: (
+    rowId: string,
+    e: React.MouseEvent<HTMLDivElement>,
+  ) => void;
   magneticSnapFrame?: number | null;
   isInteractive?: boolean;
   cutMarkers?: Array<{ key: string; top: number; height: number }>;
@@ -30,6 +34,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
     visible,
     timelineScrollElement,
     onStartDrag,
+    onCutMarkerMouseDown,
     magneticSnapFrame,
     isInteractive = true,
     cutMarkers,
@@ -125,7 +130,10 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
               >
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <div className="bg-background rounded-sm p-1">
+                    <div
+                      className="bg-background rounded-sm p-1"
+                      onMouseDown={(e) => onCutMarkerMouseDown?.(marker.key, e)}
+                    >
                       <SquareSplitHorizontal size={18} />
                     </div>
                   </TooltipTrigger>
@@ -184,6 +192,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
       prevProps.visible === nextProps.visible &&
       prevProps.timelineScrollElement === nextProps.timelineScrollElement &&
       prevProps.onStartDrag === nextProps.onStartDrag &&
+      prevProps.onCutMarkerMouseDown === nextProps.onCutMarkerMouseDown &&
       prevProps.magneticSnapFrame === nextProps.magneticSnapFrame &&
       prevProps.isInteractive === nextProps.isInteractive &&
       areCutMarkersEqual(prevProps.cutMarkers, nextProps.cutMarkers)

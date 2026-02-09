@@ -1920,6 +1920,34 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       return markers.length > 0 ? markers : null;
     })();
 
+    const handleCutMarkerMouseDown = useCallback(
+      (rowId: string, e: React.MouseEvent<HTMLDivElement>) => {
+        // Marker clicks should execute split directly and never seek/drag.
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!isSplitModeActive) return;
+        if (e.button !== 0) return;
+
+        const parsed = parseRowId(rowId);
+        if (!parsed) return;
+
+        const frame = timeline.currentFrame;
+        const trackToSplit = tracks.find(
+          (track) =>
+            track.type === parsed.type &&
+            (track.trackRowIndex ?? 0) === parsed.rowIndex &&
+            frame > track.startFrame &&
+            frame < track.endFrame,
+        );
+
+        if (!trackToSplit) return;
+
+        splitAtPosition(frame, trackToSplit.id);
+      },
+      [isSplitModeActive, timeline.currentFrame, tracks, splitAtPosition],
+    );
+
     return (
       <div
         ref={timelineRef}
@@ -2096,6 +2124,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   visible={timeline.playheadVisible}
                   timelineScrollElement={tracksRef.current}
                   onStartDrag={handlePlayheadDragStart}
+                  onCutMarkerMouseDown={handleCutMarkerMouseDown}
                   magneticSnapFrame={magneticSnapFrame}
                   isInteractive={!isSplitModeActive}
                   cutMarkers={cutMarkers ?? undefined}
