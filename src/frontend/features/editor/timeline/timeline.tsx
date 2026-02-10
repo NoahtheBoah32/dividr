@@ -144,6 +144,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const trackInsertionSequence = useVideoEditorStore(
       (state) => state.trackInsertionSequence,
     );
+    const currentProjectId = useVideoEditorStore(
+      (state) => state.currentProjectId,
+    );
     // Calculate frame width based on zoom - memoized
     const frameWidth = useMemo(() => 2 * timeline.zoom, [timeline.zoom]);
 
@@ -331,6 +334,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       [interactionRowBounds],
     );
 
+    // Reset insertion handling cursor when switching projects.
+    useEffect(() => {
+      lastHandledInsertionSequenceRef.current = 0;
+    }, [currentProjectId]);
+
     // Keep newly inserted tracks visible in the viewport.
     useEffect(() => {
       if (
@@ -493,13 +501,17 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
       let frameId: number | null = null;
       let attempts = 0;
-      const maxAttempts = 16;
+      const maxAttempts = 120;
 
       const runInsertionScrollAttempt = () => {
         attempts += 1;
         const insertionTargetSettled = scrollRowIntoView();
-        if (insertionTargetSettled || attempts >= maxAttempts) {
+        if (insertionTargetSettled) {
           lastHandledInsertionSequenceRef.current = trackInsertionSequence;
+          return;
+        }
+
+        if (attempts >= maxAttempts) {
           return;
         }
 

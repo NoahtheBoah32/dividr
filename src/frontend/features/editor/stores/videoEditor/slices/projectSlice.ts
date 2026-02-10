@@ -358,6 +358,10 @@ export const createProjectSlice: StateCreator<
         tracks: loadedTracks,
         mediaLibrary: normalizedMediaLibrary,
         timeline: { ...state.timeline, ...videoEditor.timeline },
+        duplicationFeedbackTrackIds: new Set(),
+        insertionFeedbackTrackIds: new Set(),
+        lastInsertedTrackId: null,
+        trackInsertionSequence: 0,
         playback: {
           ...state.playback,
           ...videoEditor.playback,
