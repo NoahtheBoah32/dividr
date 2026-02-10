@@ -57,7 +57,7 @@ export const TextToolsPanel: React.FC<CustomPanelProps> = ({ className }) => {
     try {
       await addTextClip('heading', currentFrame);
     } catch (error) {
-      console.error('❌ Error adding heading text clip:', error);
+      console.error('[TextToolsPanel] Error adding heading text clip', error);
     } finally {
       endGroup();
     }
@@ -68,7 +68,7 @@ export const TextToolsPanel: React.FC<CustomPanelProps> = ({ className }) => {
     try {
       await addTextClip('body', currentFrame);
     } catch (error) {
-      console.error('❌ Error adding body text clip:', error);
+      console.error('[TextToolsPanel] Error adding body text clip', error);
     } finally {
       endGroup();
     }

@@ -99,7 +99,7 @@ export function useTranscodeListener() {
         });
       } else {
         console.error(
-          `❌ Transcode failed for ${mediaItem.name}: ${event.error}`,
+          `[UseTranscodeListener] Transcode failed for${mediaItem.name}: ${event.error}`,
         );
 
         updateMediaLibraryItem(event.mediaId, {

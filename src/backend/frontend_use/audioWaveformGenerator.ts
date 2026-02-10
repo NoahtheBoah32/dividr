@@ -113,7 +113,9 @@ class AudioWaveformGenerator {
     // Check cache first
     const cachedResult = this.getCachedResult(cacheKey);
     if (cachedResult) {
-      console.log(`🎵 Using cached waveform for: ${audioPath}`);
+      console.log(
+        `[AudioWaveformGenerator] Using cached waveform for${audioPath}`,
+      );
       onProgress?.({
         phase: 'complete',
         progress: 100,
@@ -130,20 +132,22 @@ class AudioWaveformGenerator {
     );
     const existingJob = this.activeJobs.get(jobKey);
     if (existingJob) {
-      console.log(`🎵 Waveform job already in progress for: ${audioPath}`);
+      console.log(
+        `[AudioWaveformGenerator] Waveform job already in progress for${audioPath}`,
+      );
       return existingJob.promise;
     }
 
-    console.log(`🎵 Generating waveform for: ${audioPath}`);
+    console.log(`[AudioWaveformGenerator] Generating waveform for${audioPath}`);
     console.log(
-      `📊 Parameters: ${peaksPerSecond} peaks/sec, ${sampleRate}Hz sample rate`,
+      `[AudioWaveformGenerator] Parameters${peaksPerSecond} peaks/sec, ${sampleRate}Hz sample rate`,
     );
 
     // Check if this is a segment request
     const isSegment = startTime > 0 || endTime < duration;
     if (isSegment) {
       console.log(
-        `✂️ Generating waveform segment: ${startTime}s - ${endTime}s`,
+        `[AudioWaveformGenerator] Generating waveform segment${startTime}s - ${endTime}s`,
       );
     }
 
@@ -170,7 +174,9 @@ class AudioWaveformGenerator {
 
     // Set timeout watchdog
     job.timeoutId = setTimeout(() => {
-      console.warn(`⚠️ Waveform job timed out for: ${audioPath}`);
+      console.warn(
+        `[AudioWaveformGenerator] Waveform job timed out for${audioPath}`,
+      );
       this.activeJobs.delete(jobKey);
     }, this.JOB_TIMEOUT_MS);
 
@@ -221,7 +227,7 @@ class AudioWaveformGenerator {
         );
       } catch (ffmpegError) {
         console.warn(
-          '⚠️ FFmpeg extraction failed, falling back to Web Audio API:',
+          '[AudioWaveformGenerator] FFmpeg extraction failed, falling back to Web Audio API',
           ffmpegError,
         );
         // Fallback to Web Audio API for unsupported formats
@@ -268,14 +274,19 @@ class AudioWaveformGenerator {
         progress: 100,
       });
 
-      console.log(`✅ Waveform generated successfully for: ${audioPath}`);
       console.log(
-        `📈 Generated ${peaks.length} peaks with ${lodTiers.length} LOD tiers for ${result.duration}s audio`,
+        `[AudioWaveformGenerator] Waveform generated successfully for${audioPath}`,
+      );
+      console.log(
+        `[AudioWaveformGenerator] Generated${peaks.length} peaks with ${lodTiers.length} LOD tiers for ${result.duration}s audio`,
       );
 
       return result;
     } catch (error) {
-      console.error(`❌ Failed to generate waveform for: ${audioPath}`, error);
+      console.error(
+        `[AudioWaveformGenerator] Failed to generate waveform for${audioPath}`,
+        error,
+      );
       return {
         success: false,
         peaks: [],
@@ -413,7 +424,7 @@ class AudioWaveformGenerator {
       return this.normalizePeaks(peaks);
     } catch (error) {
       console.warn(
-        'FFmpeg astats extraction failed, trying simple method:',
+        '[AudioWaveformGenerator] FFmpeg astats extraction failed, trying simple method',
         error,
       );
       return this.extractPeaksWithSimpleFFmpeg(
@@ -504,7 +515,10 @@ class AudioWaveformGenerator {
         onProgress,
       );
     } catch (error) {
-      console.error('Simple FFmpeg extraction failed:', error);
+      console.error(
+        '[AudioWaveformGenerator] Simple FFmpeg extraction failed',
+        error,
+      );
       throw error;
     }
   }
@@ -810,7 +824,9 @@ class AudioWaveformGenerator {
         clearTimeout(job.timeoutId);
       }
       this.activeJobs.delete(jobKey);
-      console.log(`🛑 Cancelled waveform job for: ${audioPath}`);
+      console.log(
+        `[AudioWaveformGenerator] Cancelled waveform job for${audioPath}`,
+      );
       return true;
     }
     return false;
@@ -940,14 +956,19 @@ class AudioWaveformGenerator {
         const data = JSON.parse(cached);
         const entries = data.entries || [];
 
-        console.log(`📦 Loaded ${entries.length} waveform cache entries`);
+        console.log(
+          `[AudioWaveformGenerator] Loaded${entries.length} waveform cache entries`,
+        );
 
         for (const [key, entry] of entries) {
           this.cache.set(key, entry);
         }
       }
     } catch (error) {
-      console.warn('Failed to load waveform cache:', error);
+      console.warn(
+        '[AudioWaveformGenerator] Failed to load waveform cache',
+        error,
+      );
     }
   }
 
@@ -965,7 +986,10 @@ class AudioWaveformGenerator {
 
       localStorage.setItem('dividr_waveform_cache', JSON.stringify(data));
     } catch (error) {
-      console.warn('Failed to save waveform cache:', error);
+      console.warn(
+        '[AudioWaveformGenerator] Failed to save waveform cache',
+        error,
+      );
     }
   }
 
@@ -1003,7 +1027,7 @@ class AudioWaveformGenerator {
 
     if (entriesToDelete.length > 0) {
       console.log(
-        `🧹 Cleaned up ${entriesToDelete.length} waveform cache entries`,
+        `[AudioWaveformGenerator] Cleaned up${entriesToDelete.length} waveform cache entries`,
       );
       this.saveCache();
     }
@@ -1096,7 +1120,7 @@ class AudioWaveformGenerator {
     toleranceSeconds = 1.0,
   ): WaveformGenerationResult | null {
     console.log(
-      `🔍 Searching cache for waveform with duration ~${duration}s (±${toleranceSeconds}s)`,
+      `[AudioWaveformGenerator] Searching cache for waveform with duration ~${duration}s (±${toleranceSeconds}s)`,
     );
 
     for (const [cacheKey, entry] of this.cache) {
@@ -1107,7 +1131,7 @@ class AudioWaveformGenerator {
         Math.abs(result.duration - duration) <= toleranceSeconds
       ) {
         console.log(
-          `🎯 Found cached waveform with matching duration: ${result.duration}s (key: ${cacheKey})`,
+          `[AudioWaveformGenerator] Found cached waveform with matching duration${result.duration}s (key: ${cacheKey})`,
         );
 
         // Update access statistics
@@ -1118,7 +1142,9 @@ class AudioWaveformGenerator {
       }
     }
 
-    console.log(`❌ No cached waveform found for duration ~${duration}s`);
+    console.log(
+      `[AudioWaveformGenerator] No cached waveform found for duration ~${duration}s`,
+    );
     return null;
   }
 
@@ -1128,7 +1154,7 @@ class AudioWaveformGenerator {
   clearCache(): void {
     this.cache.clear();
     localStorage.removeItem('dividr_waveform_cache');
-    console.log('🧹 Cleared all waveform cache');
+    console.log('[AudioWaveformGenerator] Cleared all waveform cache');
   }
 
   /**

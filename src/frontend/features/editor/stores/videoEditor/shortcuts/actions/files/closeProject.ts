@@ -45,13 +45,13 @@ export const closeProjectAction = async (
 
           toast.success('Project closed');
         } catch (error) {
-          console.error('[Close Project] Failed to reset:', error);
+          console.error('[CloseProject] Failed to reset', error);
           toast.error('Failed to close project properly');
         }
       },
     });
   } catch (error) {
-    console.error('[Close Project] Failed:', error);
+    console.error('[CloseProject] Failed', error);
     toast.error('Failed to close project');
   }
 };

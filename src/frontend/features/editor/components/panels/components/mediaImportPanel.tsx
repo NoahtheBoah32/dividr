@@ -654,7 +654,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
   const removeFile = (id: string) => {
     const mediaItem = mediaLibrary.find((item) => item.id === id);
     if (!mediaItem) {
-      console.warn(`Media item ${id} not found`);
+      console.warn(`[MediaImportPanel] Media item${id} not found`);
       return;
     }
     const affectedTracks = tracks.filter(
@@ -681,7 +681,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     try {
       removeFromMediaLibrary(deleteConfirmation.mediaId, true);
     } catch (error) {
-      console.error('Failed to remove media:', error);
+      console.error('[MediaImportPanel] Failed to remove media', error);
     }
   }, [deleteConfirmation, removeFromMediaLibrary]);
 
@@ -992,7 +992,10 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           toast.error(result.error || 'Failed to generate karaoke subtitles');
         }
       } catch (error) {
-        console.error('Error generating karaoke subtitles:', error);
+        console.error(
+          '[MediaImportPanel] Error generating karaoke subtitles',
+          error,
+        );
         toast.error(
           error instanceof Error
             ? error.message

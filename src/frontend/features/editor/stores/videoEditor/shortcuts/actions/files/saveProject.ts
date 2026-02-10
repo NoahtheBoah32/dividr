@@ -57,7 +57,7 @@ export const saveProjectAction = async () => {
       duration: 2000,
     });
   } catch (error) {
-    console.error('[Save Project] Failed:', error);
+    console.error('[SaveProject] Failed', error);
     toast.error('Failed to save project');
   }
 };

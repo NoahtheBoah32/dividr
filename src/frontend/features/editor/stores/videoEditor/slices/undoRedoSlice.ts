@@ -237,7 +237,7 @@ export const createUndoRedoSlice: StateCreator<
     // This can happen if a component unmounts during a drag operation
     if (state.isGrouping) {
       console.warn(
-        `⚠️ Already grouping (${state.groupActionName}), forcing end before starting new group: ${actionName}`,
+        `[UndoRedoSlice] Already grouping (${state.groupActionName}), forcing end before starting new group: ${actionName}`,
       );
       // Force end the previous group without recording (cleanup only)
       set({
@@ -249,7 +249,7 @@ export const createUndoRedoSlice: StateCreator<
 
     // Don't start a group if not recording
     if (!state.isRecording) {
-      console.warn('⚠️ Cannot begin group: not recording');
+      console.warn('[UndoRedoSlice] Cannot begin group: not recording');
       return;
     }
 
@@ -268,7 +268,7 @@ export const createUndoRedoSlice: StateCreator<
 
     // Don't end a group if we're not in one
     if (!state.isGrouping) {
-      console.warn('⚠️ Cannot end group: not currently grouping');
+      console.warn('[UndoRedoSlice] Cannot end group: not currently grouping');
       return;
     }
 
@@ -320,7 +320,7 @@ export const createUndoRedoSlice: StateCreator<
     }
 
     console.warn(
-      `⚠️ Force ending group: ${state.groupActionName} (cleanup from stuck state)`,
+      `[UndoRedoSlice] Force ending group${state.groupActionName} (cleanup from stuck state)`,
     );
 
     set({

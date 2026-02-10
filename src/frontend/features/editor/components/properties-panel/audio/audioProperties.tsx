@@ -371,7 +371,9 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   const executeNoiseReduction = useCallback(
     async (engine: NoiseReductionEngine) => {
       if (!sourceUrl) {
-        console.error('No source URL available for noise reduction');
+        console.error(
+          '[AudioProperties] No source URL available for noise reduction',
+        );
         return;
       }
 
@@ -405,7 +407,10 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
         });
         // Processing complete - track already has correct state
       } catch (error) {
-        console.error('Noise reduction processing failed:', error);
+        console.error(
+          '[AudioProperties] Noise reduction processing failed',
+          error,
+        );
 
         // On error, disable the feature on the track
         beginAudioUpdate();
@@ -453,7 +458,10 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
             return;
           }
         } catch (error) {
-          console.error('Failed to check runtime status:', error);
+          console.error(
+            '[AudioProperties] Failed to check runtime status',
+            error,
+          );
           const errorMessage =
             error instanceof Error
               ? `${error.name}: ${error.message}`

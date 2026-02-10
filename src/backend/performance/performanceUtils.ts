@@ -65,7 +65,7 @@ export class PerformanceMonitor {
  * GPU error recovery strategies
  */
 export const handleGpuError = (error: Error, context: string): boolean => {
-  console.warn(`🚨 GPU Error in ${context}:`, error.message);
+  console.warn(`[PerformanceUtils] GPU Error in${context}:`, error.message);
 
   // Check if it's a recoverable GPU error
   const recoverableErrors = [
@@ -79,7 +79,7 @@ export const handleGpuError = (error: Error, context: string): boolean => {
   );
 
   if (isRecoverable) {
-    console.log('🔄 Attempting GPU error recovery...');
+    console.log('[PerformanceUtils] Attempting GPU error recovery');
     // Force garbage collection if available
     if (window.gc) {
       window.gc();
@@ -104,7 +104,7 @@ export const cleanupVideoElement = (video: HTMLVideoElement): void => {
       video.srcObject = null;
     }
   } catch (error) {
-    console.warn('Error during video cleanup:', error);
+    console.warn('[PerformanceUtils] Error during video cleanup', error);
   }
 };
 

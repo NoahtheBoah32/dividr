@@ -282,7 +282,7 @@ export const createMediaLibrarySlice: StateCreator<
     );
 
     if (!mediaItem) {
-      console.warn(`Media item ${mediaId} not found`);
+      console.warn(`[MediaLibrarySlice] Media item${mediaId} not found`);
       return;
     }
 
@@ -296,7 +296,10 @@ export const createMediaLibrarySlice: StateCreator<
         window.electronAPI
           .transcodeCancelForMedia(mediaId)
           .catch((error: Error) => {
-            console.warn('Failed to cancel transcoding:', error);
+            console.warn(
+              '[MediaLibrarySlice] Failed to cancel transcoding',
+              error,
+            );
           });
       }
     }
@@ -495,7 +498,7 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) => item.id === mediaId,
     );
     if (!mediaItem) {
-      console.error('Media item not found:', mediaId);
+      console.error('[MediaLibrarySlice] Media item not found', mediaId);
       return false;
     }
 
@@ -589,14 +592,16 @@ export const createMediaLibrarySlice: StateCreator<
 
       return false; // Return false to allow retry logic
     } else {
-      console.warn(`No suitable audio source found for: ${mediaItem.name}`);
+      console.warn(
+        `[MediaLibrarySlice] No suitable audio source found for${mediaItem.name}`,
+      );
       return false;
     }
 
     // Skip blob URLs if they are local file paths (Web Audio API requires proper URLs)
     if (audioPath.startsWith('blob:') && !audioPath.includes('localhost')) {
       console.warn(
-        `Skipping waveform generation for blob URL: ${mediaItem.name}`,
+        `[MediaLibrarySlice] Skipping waveform generation for blob URL${mediaItem.name}`,
       );
       return true; // Skip but don't error
     }
@@ -685,7 +690,7 @@ export const createMediaLibrarySlice: StateCreator<
           ),
         }));
         console.error(
-          `❌ Failed to generate waveform for ${mediaItem.name}:`,
+          `[MediaLibrarySlice] Failed to generate waveform for${mediaItem.name}:`,
           result.error,
         );
         return false;
@@ -706,7 +711,7 @@ export const createMediaLibrarySlice: StateCreator<
         ),
       }));
       console.error(
-        `❌ Error generating waveform for ${mediaItem.name}:`,
+        `[MediaLibrarySlice] Error generating waveform for${mediaItem.name}:`,
         error,
       );
       return false;
@@ -722,7 +727,7 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) => item.id === mediaId,
     );
     if (!mediaItem) {
-      console.error('Media item not found:', mediaId);
+      console.error('[MediaLibrarySlice] Media item not found', mediaId);
       return false;
     }
 
@@ -822,7 +827,7 @@ export const createMediaLibrarySlice: StateCreator<
     // Skip blob URLs (they won't work with FFmpeg)
     if (videoPath.startsWith('blob:')) {
       console.warn(
-        `Cannot generate sprite sheets from blob URL: ${mediaItem.name}`,
+        `[MediaLibrarySlice] Cannot generate sprite sheets from blob URL${mediaItem.name}`,
       );
       return false;
     }
@@ -934,7 +939,7 @@ export const createMediaLibrarySlice: StateCreator<
 
         if (processingMedia.length === 0) {
           console.warn(
-            '⚠️ Received sprite sheet ready event but no media is processing',
+            '[MediaLibrarySlice] Received sprite sheet ready event but no media is processing',
           );
           return;
         }
@@ -1125,7 +1130,7 @@ export const createMediaLibrarySlice: StateCreator<
           ),
         }));
         console.error(
-          `❌ Failed to generate sprite sheets for ${mediaItem.name}:`,
+          `[MediaLibrarySlice] Failed to generate sprite sheets for${mediaItem.name}:`,
           result.error,
         );
         return false;
@@ -1146,7 +1151,7 @@ export const createMediaLibrarySlice: StateCreator<
         ),
       }));
       console.error(
-        `❌ Error generating sprite sheets for ${mediaItem.name}:`,
+        `[MediaLibrarySlice] Error generating sprite sheets for${mediaItem.name}:`,
         error,
       );
       return false;
@@ -1270,7 +1275,7 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) => item.id === mediaId,
     );
     if (!mediaItem) {
-      console.error('Media item not found:', mediaId);
+      console.error('[MediaLibrarySlice] Media item not found', mediaId);
       return false;
     }
 
@@ -1362,7 +1367,7 @@ export const createMediaLibrarySlice: StateCreator<
     // Skip blob URLs (they won't work with FFmpeg)
     if (videoPath.startsWith('blob:')) {
       console.warn(
-        `Cannot generate thumbnail from blob URL: ${mediaItem.name}`,
+        `[MediaLibrarySlice] Cannot generate thumbnail from blob URL${mediaItem.name}`,
       );
       return false;
     }
@@ -1433,7 +1438,7 @@ export const createMediaLibrarySlice: StateCreator<
           ),
         }));
         console.error(
-          `❌ Failed to generate thumbnail for ${mediaItem.name}:`,
+          `[MediaLibrarySlice] Failed to generate thumbnail for${mediaItem.name}:`,
           result.error,
         );
         return false;
@@ -1453,7 +1458,7 @@ export const createMediaLibrarySlice: StateCreator<
         ),
       }));
       console.error(
-        `❌ Error generating thumbnail for ${mediaItem.name}:`,
+        `[MediaLibrarySlice] Error generating thumbnail for${mediaItem.name}:`,
         error,
       );
       return false;
@@ -1490,7 +1495,10 @@ export const createMediaLibrarySlice: StateCreator<
             fullState.syncWithProjectStore();
           }
         } catch (error) {
-          console.error('Failed to clear project thumbnail:', error);
+          console.error(
+            '[MediaLibrarySlice] Failed to clear project thumbnail',
+            error,
+          );
         }
       }
       return;
@@ -1504,7 +1512,9 @@ export const createMediaLibrarySlice: StateCreator<
     );
 
     if (!mediaItem) {
-      console.error('Media library item not found for first video track');
+      console.error(
+        '[MediaLibrarySlice] Media library item not found for first video track',
+      );
       return;
     }
 
@@ -1512,7 +1522,9 @@ export const createMediaLibrarySlice: StateCreator<
     if (!mediaItem.thumbnail) {
       const success = await get().generateThumbnailForMedia(mediaItem.id);
       if (!success) {
-        console.error('Failed to generate thumbnail for project');
+        console.error(
+          '[MediaLibrarySlice] Failed to generate thumbnail for project',
+        );
         return;
       }
     }
@@ -1538,7 +1550,10 @@ export const createMediaLibrarySlice: StateCreator<
           fullState.syncWithProjectStore();
         }
       } catch (error) {
-        console.error('Failed to update project thumbnail:', error);
+        console.error(
+          '[MediaLibrarySlice] Failed to update project thumbnail',
+          error,
+        );
       }
     }
   },
@@ -1588,7 +1603,10 @@ export const createMediaLibrarySlice: StateCreator<
       try {
         await window.electronAPI.transcodeCancel(mediaItem.transcoding.jobId);
       } catch (error) {
-        console.error(`Failed to cancel transcoding for ${mediaId}:`, error);
+        console.error(
+          `[MediaLibrarySlice] Failed to cancel transcoding for${mediaId}:`,
+          error,
+        );
       }
     }
   },

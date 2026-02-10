@@ -62,7 +62,10 @@ export const VideoPreviewWrapper: React.FC<VideoPreviewWrapperProps> = ({
         </React.Suspense>
       );
     } catch (error) {
-      console.warn('Direct preview failed, falling back to canvas:', error);
+      console.warn(
+        '[VideoPreviewWrapper] Direct preview failed, falling back to canvas',
+        error,
+      );
       setDirectError(true);
     }
   }
@@ -88,7 +91,7 @@ const VideoDirectErrorBoundary: React.FC<{
         error.message?.includes('ReferenceError')
       ) {
         console.warn(
-          'Critical direct preview error detected, falling back to canvas:',
+          '[VideoPreviewWrapper] Critical direct preview error detected, falling back to canvas',
           error.message,
         );
         setHasError(true);

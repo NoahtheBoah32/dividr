@@ -121,7 +121,7 @@ const StatusPanel = () => {
       const statusResult = await window.electronAPI.mediaToolsStatus();
       setStatus(statusResult);
     } catch (err) {
-      console.error('Failed to get status:', err);
+      console.error('[MediaToolsTest] Failed to get status', err);
       setError(err instanceof Error ? err.message : 'Failed to get status');
     }
   };
@@ -263,7 +263,7 @@ const TranscriptionPanel = () => {
       setIsTranscribing(false);
       setProgressMessage('Cancelled');
     } catch (err) {
-      console.error('Failed to cancel:', err);
+      console.error('[MediaToolsTest] Failed to cancel', err);
     }
   };
 
@@ -486,7 +486,7 @@ const NoiseReductionPanel = () => {
       setIsProcessing(false);
       setProgressMessage('Cancelled');
     } catch (err) {
-      console.error('Failed to cancel:', err);
+      console.error('[MediaToolsTest] Failed to cancel', err);
     }
   };
 

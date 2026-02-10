@@ -73,7 +73,7 @@ class StartupManager {
           })
           .catch((error: unknown) => {
             if (this.isDev()) {
-              console.warn('⚠️ Startup mark failed:', error);
+              console.warn('[StartupManager] Startup mark failed', error);
             }
           });
       }
@@ -82,7 +82,9 @@ class StartupManager {
     if (this.isDev()) {
       const formatted = `[startup] ${stage} +${delta}ms (${duration}ms)`;
       if (stage === 'app-ready' && duration > 5000) {
-        console.warn(`${formatted} ⚠️ exceeded 5s startup budget`);
+        console.warn(
+          `[StartupManager] Warning${formatted} exceeded 5s startup budget`,
+        );
       } else {
         // Non-critical startup marks are intentionally quiet.
       }

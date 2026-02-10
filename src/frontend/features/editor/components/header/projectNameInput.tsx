@@ -66,7 +66,10 @@ const ProjectNameInput: React.FC<ProjectNameInputProps> = ({
         try {
           await saveCurrentProject();
         } catch (error) {
-          console.error('Failed to auto-save project:', error);
+          console.error(
+            '[ProjectNameInput] Failed to auto-save project',
+            error,
+          );
           toast.error('Failed to save project');
         } finally {
           setIsSaving(false);

@@ -37,7 +37,9 @@ export const duplicateTracksAction = (
 
     const track = tracks.find((t) => t.id === trackId);
     if (!track) {
-      console.error(`❌ Track ${trackId} not found in tracks array, skipping`);
+      console.error(
+        `[DuplicateTracks] Track${trackId} not found in tracks array, skipping`,
+      );
       return;
     }
 
@@ -72,6 +74,6 @@ export const duplicateTracksAction = (
     const trackText = newlyCreatedIds.length === 1 ? 'track' : 'tracks';
     toast.success(`Duplicated ${newlyCreatedIds.length} ${trackText}`);
   } else {
-    console.error('❌ Duplication produced no new tracks');
+    console.error('[DuplicateTracks] Duplication produced no new tracks');
   }
 };

@@ -28,7 +28,9 @@ const isElectron = () => {
 // Detect video frame rate using IPC
 export async function detectVideoFrameRate(videoPath: string): Promise<number> {
   if (!isElectron()) {
-    console.warn('FFmpeg operations require Electron main process');
+    console.warn(
+      '[FfmpegRunner] FFmpeg operations require Electron main process',
+    );
     return 30; // Fallback
   }
 
@@ -38,7 +40,7 @@ export async function detectVideoFrameRate(videoPath: string): Promise<number> {
       videoPath,
     );
   } catch (error) {
-    console.error('Failed to detect video frame rate:', error);
+    console.error('[FfmpegRunner] Failed to detect video frame rate', error);
     return 30; // Fallback
   }
 }
@@ -52,7 +54,7 @@ export async function suggestConcatFrameRate(
       videoPaths.map((path) => detectVideoFrameRate(path)),
     );
 
-    console.log('Detected frame rates:', frameRates);
+    console.log('[FfmpegRunner] Detected frame rates', frameRates);
 
     // Use the highest frame rate to avoid quality loss
     const maxFrameRate = Math.max(...frameRates);
@@ -65,7 +67,10 @@ export async function suggestConcatFrameRate(
 
     return Math.round(maxFrameRate);
   } catch (err) {
-    console.warn('Failed to detect frame rates, using default 30fps:', err);
+    console.warn(
+      '[FfmpegRunner] Failed to detect frame rates, using default 30fps',
+      err,
+    );
     return 30;
   }
 }
@@ -73,7 +78,9 @@ export async function suggestConcatFrameRate(
 // Cancel current FFmpeg process via IPC
 export function cancelCurrentFfmpeg(): Promise<boolean> {
   if (!isElectron()) {
-    console.warn('FFmpeg operations require Electron main process');
+    console.warn(
+      '[FfmpegRunner] FFmpeg operations require Electron main process',
+    );
     return Promise.resolve(false);
   }
 
@@ -83,7 +90,9 @@ export function cancelCurrentFfmpeg(): Promise<boolean> {
 // Check if FFmpeg is currently running
 export function isFfmpegRunning(): boolean {
   // This would need to be tracked via IPC or state management
-  console.warn('isFfmpegRunning not implemented for IPC version');
+  console.warn(
+    '[FfmpegRunner] isFfmpegRunning not implemented for IPC version',
+  );
   return false;
 }
 
@@ -124,16 +133,16 @@ export async function runFfmpegWithProgress(
   cancelled?: boolean;
   message?: string;
 }> {
-  console.log('🔍 runFfmpegWithProgress called with job:', job);
+  console.log('[FfmpegRunner] runFfmpegWithProgress called with job', job);
 
   if (!isElectron()) {
-    console.error('❌ Not in Electron environment!');
+    console.error('[FfmpegRunner] Not in Electron environment!');
     throw new Error('FFmpeg operations require Electron main process');
   }
-  console.log('✅ Electron environment confirmed');
+  console.log('[FfmpegRunner] Electron environment confirmed');
 
   return new Promise((resolve, reject) => {
-    console.log('📡 Setting up IPC communication...');
+    console.log('[FfmpegRunner] Setting up IPC communication');
     // Set up progress listener
     const handleProgress = (
       event: any,
@@ -165,15 +174,18 @@ export async function runFfmpegWithProgress(
     };
 
     // Register progress listener
-    console.log('👂 Registering progress listener...');
+    console.log('[FfmpegRunner] Registering progress listener');
     window.electronAPI.on('ffmpeg:progress', handleProgress);
 
     // Start FFmpeg process
-    console.log('🚀 Invoking ffmpegRun in main process...');
+    console.log('[FfmpegRunner] Invoking ffmpegRun in main process');
     window.electronAPI
       .invoke('ffmpegRun', job)
       .then((result: any) => {
-        console.log('✅ FFmpeg process completed successfully:', result);
+        console.log(
+          '[FfmpegRunner] FFmpeg process completed successfully',
+          result,
+        );
         // Clean up listener
         window.electronAPI.removeListener('ffmpeg:progress', handleProgress);
         resolve({
@@ -184,7 +196,7 @@ export async function runFfmpegWithProgress(
         });
       })
       .catch((error: any) => {
-        console.error('❌ FFmpeg process failed:', error);
+        console.error('[FfmpegRunner] FFmpeg process failed', error);
         // Clean up listener
         window.electronAPI.removeListener('ffmpeg:progress', handleProgress);
         reject(error);
@@ -210,14 +222,16 @@ export async function generateProxy(
   inputPath: string,
 ): Promise<{ success: boolean; proxyPath: string }> {
   if (!isElectron()) {
-    console.warn('FFmpeg operations require Electron main process');
+    console.warn(
+      '[FfmpegRunner] FFmpeg operations require Electron main process',
+    );
     throw new Error('FFmpeg operations require Electron main process');
   }
 
   try {
     return await window.electronAPI.invoke('generate-proxy', inputPath);
   } catch (error) {
-    console.error('Failed to generate proxy:', error);
+    console.error('[FfmpegRunner] Failed to generate proxy', error);
     throw error;
   }
 }

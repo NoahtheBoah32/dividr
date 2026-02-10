@@ -276,7 +276,10 @@ export const createTranscriptionSlice: StateCreator<
         };
       }
     } catch (error) {
-      console.error('Failed to check runtime status:', error);
+      console.error(
+        '[TranscriptionSlice] Failed to check runtime status',
+        error,
+      );
       // Continue anyway - the actual transcription will fail with a clearer error
     }
 
@@ -341,7 +344,10 @@ export const createTranscriptionSlice: StateCreator<
             });
           }
         } catch (error) {
-          console.error('Error checking/extracting audio:', error);
+          console.error(
+            '[TranscriptionSlice] Error checking/extracting audio',
+            error,
+          );
           return {
             success: false,
             error:
@@ -706,7 +712,10 @@ export const createTranscriptionSlice: StateCreator<
         transcriptionResult, // Include full transcription result
       };
     } catch (error) {
-      console.error('❌ Karaoke subtitle generation failed:', error);
+      console.error(
+        '[TranscriptionSlice] Karaoke subtitle generation failed',
+        error,
+      );
       window.electronAPI.removeWhisperProgressListener();
       set({
         isTranscribing: false,
@@ -736,7 +745,10 @@ export const createTranscriptionSlice: StateCreator<
         transcriptionProgress: null,
       });
     } catch (error) {
-      console.error('Failed to cancel transcription:', error);
+      console.error(
+        '[TranscriptionSlice] Failed to cancel transcription',
+        error,
+      );
     }
   },
 });

@@ -15,7 +15,7 @@ export async function convertImageToBase64(imageUrl: string): Promise<string> {
       reader.readAsDataURL(blob);
     });
   } catch (error) {
-    console.error('Error converting image to base64:', error);
+    console.error('[ImageUtils] Error converting image to base64', error);
     throw error;
   }
 }

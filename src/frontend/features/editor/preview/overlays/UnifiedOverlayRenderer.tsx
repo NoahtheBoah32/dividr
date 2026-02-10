@@ -1180,7 +1180,10 @@ const ImageTrackLayer: React.FC<{
           setFrozenSrc(canvas.toDataURL());
         }
       } catch (e) {
-        console.warn('Failed to freeze image for render', e);
+        console.warn(
+          '[UnifiedOverlayRenderer] Failed to freeze image for render',
+          e,
+        );
       }
     } else if (!isRendering) {
       setFrozenSrc(null);

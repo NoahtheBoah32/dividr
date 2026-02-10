@@ -213,7 +213,10 @@ const processSubtitleFile = async (
       return subtitleTracks;
     }
   } catch (error) {
-    console.error(`❌ Error parsing subtitle file ${fileInfo.name}:`, error);
+    console.error(
+      `[FileProcessingSlice] Error parsing subtitle file${fileInfo.name}:`,
+      error,
+    );
   }
 
   return [
@@ -293,7 +296,7 @@ const processImportedFile = async (
       );
     } catch (error) {
       console.warn(
-        `⚠️ Failed to get duration for ${fileInfo.name}, using fallback:`,
+        `[FileProcessingSlice] Failed to get duration for${fileInfo.name}, using fallback:`,
         error,
       );
       actualDurationSeconds = fileInfo.type === 'audio' ? 30 : 30;
@@ -319,7 +322,7 @@ const processImportedFile = async (
       );
     } catch (error) {
       console.warn(
-        `⚠️ Failed to get dimensions for ${fileInfo.name}, using fallback:`,
+        `[FileProcessingSlice] Failed to get dimensions for${fileInfo.name}, using fallback:`,
         error,
       );
       videoDimensions = { width: 1920, height: 1080 }; // sensible default
@@ -348,7 +351,7 @@ const processImportedFile = async (
       }
     } catch (error) {
       console.warn(
-        `⚠️ Error creating preview URL for ${fileInfo.name}:`,
+        `[FileProcessingSlice] Error creating preview URL for${fileInfo.name}:`,
         error,
       );
     }
@@ -410,7 +413,7 @@ const processImportedFile = async (
     }
   } catch (error) {
     console.warn(
-      `⚠️ Failed to generate content signature for ${fileInfo.name}:`,
+      `[FileProcessingSlice] Failed to generate content signature for${fileInfo.name}:`,
       error,
     );
   }
@@ -554,19 +557,28 @@ const processImportedFile = async (
                 // Trigger deferred background jobs now that proxy is ready
                 if (generateSpriteFn && !spriteSheetDisabled) {
                   generateSpriteFn(mediaId).catch((err) =>
-                    console.warn('Deferred sprite gen failed:', err),
+                    console.warn(
+                      '[FileProcessingSlice] Deferred sprite gen failed',
+                      err,
+                    ),
                   );
                 } else if (spriteSheetDisabled) {
                   // Sprite generation intentionally skipped for this media item.
                 }
                 if (generateThumbnailFn) {
                   generateThumbnailFn(mediaId).catch((err) =>
-                    console.warn('Deferred thumbnail gen failed:', err),
+                    console.warn(
+                      '[FileProcessingSlice] Deferred thumbnail gen failed',
+                      err,
+                    ),
                   );
                 }
               }
             } else {
-              console.warn('❌ Proxy generation failed:', result.error);
+              console.warn(
+                '[FileProcessingSlice] Proxy generation failed',
+                result.error,
+              );
               updateMediaLibraryFn(mediaId, {
                 proxy: { status: 'failed' },
               });
@@ -576,19 +588,25 @@ const processImportedFile = async (
 
               if (generateSpriteFn) {
                 generateSpriteFn(mediaId).catch((err) =>
-                  console.warn('Fallback sprite gen failed:', err),
+                  console.warn(
+                    '[FileProcessingSlice] Fallback sprite gen failed',
+                    err,
+                  ),
                 );
               }
               if (generateThumbnailFn) {
                 generateThumbnailFn(mediaId).catch((err) =>
-                  console.warn('Fallback thumbnail gen failed:', err),
+                  console.warn(
+                    '[FileProcessingSlice] Fallback thumbnail gen failed',
+                    err,
+                  ),
                 );
               }
             }
           },
         )
         .catch((err: any) => {
-          console.error('❌ Proxy generation error:', err);
+          console.error('[FileProcessingSlice] Proxy generation error', err);
           updateMediaLibraryFn(mediaId, {
             proxy: { status: 'failed' },
           });
@@ -639,7 +657,7 @@ const processImportedFile = async (
               }
             } else {
               console.error(
-                `❌ Failed to start transcode for ${fileInfo.name}:`,
+                `[FileProcessingSlice] Failed to start transcode for${fileInfo.name}:`,
                 result.error,
               );
 
@@ -656,7 +674,10 @@ const processImportedFile = async (
               }
             }
           } catch (error) {
-            console.error(`❌ Transcode error for ${fileInfo.name}:`, error);
+            console.error(
+              `[FileProcessingSlice] Transcode error for${fileInfo.name}:`,
+              error,
+            );
 
             if (updateMediaLibraryFn) {
               updateMediaLibraryFn(mediaId, {
@@ -677,7 +698,7 @@ const processImportedFile = async (
       }
     } catch (error) {
       console.warn(
-        `⚠️ Could not check transcoding requirements for ${fileInfo.name}:`,
+        `[FileProcessingSlice] Could not check transcoding requirements for${fileInfo.name}:`,
         error,
       );
     } // End try/catch for transcoding check
@@ -726,24 +747,24 @@ const processImportedFile = async (
               continue; // Retry
             } else {
               console.warn(
-                `⚠️ Audio extraction failed after ${retries} attempts for ${fileInfo.name}: ${result.error}`,
+                `[FileProcessingSlice] Audio extraction failed after${retries} attempts for ${fileInfo.name}: ${result.error}`,
               );
             }
           } else {
             console.warn(
-              `⚠️ Audio extraction failed for ${fileInfo.name}:`,
+              `[FileProcessingSlice] Audio extraction failed for${fileInfo.name}:`,
               result.error,
             );
             return; // Non-retry error, exit
           }
         } catch (error) {
           console.warn(
-            `⚠️ Audio extraction error for ${fileInfo.name} (attempt ${attempt}):`,
+            `[FileProcessingSlice] Audio extraction error for${fileInfo.name} (attempt ${attempt}):`,
             error,
           );
           if (attempt === retries) {
             console.warn(
-              `⚠️ Audio extraction failed after ${retries} attempts for ${fileInfo.name}`,
+              `[FileProcessingSlice] Audio extraction failed after${retries} attempts for ${fileInfo.name}`,
             );
           }
         }
@@ -753,7 +774,7 @@ const processImportedFile = async (
     // Start audio extraction immediately (non-blocking but tracked)
     audioExtractionPromise = extractAudioWithRetry().catch((error) => {
       console.warn(
-        `⚠️ Audio extraction retry handler failed for ${fileInfo.name}:`,
+        `[FileProcessingSlice] Audio extraction retry handler failed for${fileInfo.name}:`,
         error,
       );
     });
@@ -769,7 +790,7 @@ const processImportedFile = async (
           }
         } catch (error) {
           console.warn(
-            `⚠️ Immediate waveform cache check failed for ${fileInfo.name}:`,
+            `[FileProcessingSlice] Immediate waveform cache check failed for${fileInfo.name}:`,
             error,
           );
         }
@@ -792,7 +813,7 @@ const processImportedFile = async (
             }
           } catch (error) {
             console.warn(
-              `⚠️ Waveform generation attempt ${attempt}/${maxRetries} failed for ${fileInfo.name}:`,
+              `[FileProcessingSlice] Waveform generation attempt${attempt}/${maxRetries} failed for ${fileInfo.name}:`,
               error,
             );
           }
@@ -807,7 +828,7 @@ const processImportedFile = async (
         }
 
         console.warn(
-          `⚠️ Waveform generation failed after ${maxRetries} retries for ${fileInfo.name}`,
+          `[FileProcessingSlice] Waveform generation failed after${maxRetries} retries for ${fileInfo.name}`,
         );
         if (updateMediaLibraryFn) {
           updateMediaLibraryFn(mediaId, {
@@ -826,7 +847,7 @@ const processImportedFile = async (
       // Start waveform generation (will wait for audio extraction internally)
       generateWaveformWithRetry().catch((error) => {
         console.warn(
-          `⚠️ Waveform generation retry handler failed for ${fileInfo.name}:`,
+          `[FileProcessingSlice] Waveform generation retry handler failed for${fileInfo.name}:`,
           error,
         );
       });
@@ -841,7 +862,7 @@ const processImportedFile = async (
         setTimeout(() => {
           generateSpriteFn(mediaId).catch((error) => {
             console.warn(
-              `⚠️ Sprite sheet generation failed for ${fileInfo.name}:`,
+              `[FileProcessingSlice] Sprite sheet generation failed for${fileInfo.name}:`,
               error,
             );
             if (updateMediaLibraryFn) {
@@ -865,7 +886,7 @@ const processImportedFile = async (
         setTimeout(() => {
           generateThumbnailFn(mediaId).catch((error) => {
             console.warn(
-              `⚠️ Thumbnail generation failed for ${fileInfo.name}:`,
+              `[FileProcessingSlice] Thumbnail generation failed for${fileInfo.name}:`,
               error,
             );
           });
@@ -891,7 +912,7 @@ const processImportedFile = async (
           }
         } catch (error) {
           console.warn(
-            `⚠️ Waveform generation attempt ${attempt}/${maxRetries} failed for ${fileInfo.name}:`,
+            `[FileProcessingSlice] Waveform generation attempt${attempt}/${maxRetries} failed for ${fileInfo.name}:`,
             error,
           );
         }
@@ -907,7 +928,7 @@ const processImportedFile = async (
       }
 
       console.warn(
-        `⚠️ Waveform generation failed after ${maxRetries} retries for ${fileInfo.name}`,
+        `[FileProcessingSlice] Waveform generation failed after${maxRetries} retries for ${fileInfo.name}`,
       );
       if (updateMediaLibraryFn) {
         updateMediaLibraryFn(mediaId, {
@@ -927,7 +948,7 @@ const processImportedFile = async (
     setTimeout(() => {
       generateWaveformWithRetry().catch((error) => {
         console.warn(
-          `⚠️ Waveform generation retry handler failed for ${fileInfo.name}:`,
+          `[FileProcessingSlice] Waveform generation retry handler failed for${fileInfo.name}:`,
           error,
         );
       });
@@ -961,7 +982,10 @@ const processImportedFile = async (
           }
         }
       } catch (error) {
-        console.error(`❌ Error processing subtitle file:`, error);
+        console.error(
+          '[FileProcessingSlice] Error processing subtitle file',
+          error,
+        );
         // Add single fallback track - Use precise duration calculation
         const duration = Math.floor(actualDurationSeconds * fps);
         await addToTimelineFn({
@@ -1080,7 +1104,7 @@ export const createFileProcessingSlice: StateCreator<
             });
           } catch (error) {
             console.error(
-              `❌ Failed to read file ${fileInfo.name} for validation:`,
+              `[FileProcessingSlice] Failed to read file${fileInfo.name} for validation:`,
               error,
             );
             return null;
@@ -1094,7 +1118,9 @@ export const createFileProcessingSlice: StateCreator<
       );
 
       if (validFileObjects.length === 0) {
-        console.error('❌ No files could be read for validation');
+        console.error(
+          '[FileProcessingSlice] No files could be read for validation',
+        );
         return {
           success: false,
           importedFiles: [],
@@ -1127,13 +1153,17 @@ export const createFileProcessingSlice: StateCreator<
             reason,
             error: reason,
           });
-          console.warn(`🚫 Rejected: ${file.name} - ${reason}`);
+          console.warn(
+            `[FileProcessingSlice] Rejected${file.name} - ${reason}`,
+          );
         }
       });
 
       // If no valid files, return early with rejection info
       if (validFileIndices.length === 0) {
-        console.warn('❌ No valid files to import (all rejected)');
+        console.warn(
+          '[FileProcessingSlice] No valid files to import (all rejected)',
+        );
         return {
           success: false,
           importedFiles: [],
@@ -1191,7 +1221,7 @@ export const createFileProcessingSlice: StateCreator<
               }
             } catch (error) {
               console.warn(
-                `⚠️ Failed to check duplicate for ${fileInfo.name}:`,
+                `[FileProcessingSlice] Failed to check duplicate for${fileInfo.name}:`,
                 error,
               );
             }
@@ -1250,7 +1280,10 @@ export const createFileProcessingSlice: StateCreator<
                 importedFiles.push(fileData);
               }
             } catch (error: any) {
-              console.error(`❌ Failed to import ${fileInfo.name}:`, error);
+              console.error(
+                `[FileProcessingSlice] Failed to import${fileInfo.name}:`,
+                error,
+              );
               rejectedFiles.push({
                 name: fileInfo.name,
                 reason: error.message || 'Failed to process file',
@@ -1261,7 +1294,9 @@ export const createFileProcessingSlice: StateCreator<
         );
 
         if (rejectedFiles.length > 0) {
-          console.warn(`⚠️ Rejected ${rejectedFiles.length} files`);
+          console.warn(
+            `[FileProcessingSlice] Rejected${rejectedFiles.length} files`,
+          );
         }
 
         return {
@@ -1274,7 +1309,10 @@ export const createFileProcessingSlice: StateCreator<
         state.endGroup?.();
       }
     } catch (error: any) {
-      console.error('Failed to import media from dialog:', error);
+      console.error(
+        '[FileProcessingSlice] Failed to import media from dialog',
+        error,
+      );
       return {
         success: false,
         importedFiles: [],
@@ -1291,7 +1329,10 @@ export const createFileProcessingSlice: StateCreator<
     // Legacy external-drop entry point now uses the centralized registry-first flow.
     const result = await (get() as any).importMediaToTimeline(files);
     if (!result.success) {
-      console.warn('Failed to import media from files:', result.error);
+      console.warn(
+        '[FileProcessingSlice] Failed to import media from files',
+        result.error,
+      );
     }
   },
 
@@ -1339,13 +1380,17 @@ export const createFileProcessingSlice: StateCreator<
                 reason,
                 error: reason,
               });
-              console.warn(`🚫 Rejected: ${file.name} - ${reason}`);
+              console.warn(
+                `[FileProcessingSlice] Rejected${file.name} - ${reason}`,
+              );
             }
           });
 
           // If no valid files, return early with rejection info
           if (validFiles.length === 0) {
-            console.warn('❌ No valid files to import (all rejected)');
+            console.warn(
+              '[FileProcessingSlice] No valid files to import (all rejected)',
+            );
             return {
               success: false,
               importedFiles: [],
@@ -1376,7 +1421,7 @@ export const createFileProcessingSlice: StateCreator<
 
           if (!result.success) {
             console.error(
-              '❌ Failed to process files in main process:',
+              '[FileProcessingSlice] Failed to process files in main process',
               result.error,
             );
             return {
@@ -1434,7 +1479,7 @@ export const createFileProcessingSlice: StateCreator<
                   }
                 } catch (error) {
                   console.warn(
-                    `⚠️ Failed to check duplicate for ${fileInfo.name}:`,
+                    `[FileProcessingSlice] Failed to check duplicate for${fileInfo.name}:`,
                     error,
                   );
                 }
@@ -1495,7 +1540,10 @@ export const createFileProcessingSlice: StateCreator<
                     importedFiles.push(fileData);
                   }
                 } catch (error: any) {
-                  console.error(`❌ Failed to import ${fileInfo.name}:`, error);
+                  console.error(
+                    `[FileProcessingSlice] Failed to import${fileInfo.name}:`,
+                    error,
+                  );
                   rejectedFiles.push({
                     name: fileInfo.name,
                     reason: error.message || 'Failed to process file',
@@ -1506,7 +1554,9 @@ export const createFileProcessingSlice: StateCreator<
             );
 
             if (rejectedFiles.length > 0) {
-              console.warn(`⚠️ Rejected ${rejectedFiles.length} files`);
+              console.warn(
+                `[FileProcessingSlice] Rejected${rejectedFiles.length} files`,
+              );
             }
 
             return {
@@ -1520,7 +1570,10 @@ export const createFileProcessingSlice: StateCreator<
             state.endGroup?.();
           }
         } catch (error: any) {
-          console.error('Failed to import media from drop:', error);
+          console.error(
+            '[FileProcessingSlice] Failed to import media from drop',
+            error,
+          );
           return {
             success: false,
             importedFiles: [],
@@ -1538,7 +1591,10 @@ export const createFileProcessingSlice: StateCreator<
       // Return the promise result
       return await importPromise;
     } catch (error: any) {
-      console.error('Failed to import media from drop (outer catch):', error);
+      console.error(
+        '[FileProcessingSlice] Failed to import media from drop (outer catch)',
+        error,
+      );
       return {
         success: false,
         importedFiles: [],
@@ -1591,13 +1647,17 @@ export const createFileProcessingSlice: StateCreator<
                 reason,
                 error: reason,
               });
-              console.warn(`🚫 Rejected: ${file.name} - ${reason}`);
+              console.warn(
+                `[FileProcessingSlice] Rejected${file.name} - ${reason}`,
+              );
             }
           });
 
           // If no valid files, return early
           if (validFiles.length === 0) {
-            console.warn('❌ No valid files to import (all rejected)');
+            console.warn(
+              '[FileProcessingSlice] No valid files to import (all rejected)',
+            );
             return {
               success: false,
               importedFiles: [],
@@ -1628,7 +1688,7 @@ export const createFileProcessingSlice: StateCreator<
 
           if (!result.success) {
             console.error(
-              '❌ Failed to process files in main process:',
+              '[FileProcessingSlice] Failed to process files in main process',
               result.error,
             );
             return {
@@ -1687,7 +1747,7 @@ export const createFileProcessingSlice: StateCreator<
                 }
               } catch (error) {
                 console.warn(
-                  `⚠️ Failed to check duplicate for ${fileInfo.name}:`,
+                  `[FileProcessingSlice] Failed to check duplicate for${fileInfo.name}:`,
                   error,
                 );
               }
@@ -1755,7 +1815,10 @@ export const createFileProcessingSlice: StateCreator<
                 importedFiles.push(fileData);
                 mediaIdsToAddToTimeline.push(fileData.id);
               } catch (error: any) {
-                console.error(`❌ Failed to import ${fileInfo.name}:`, error);
+                console.error(
+                  `[FileProcessingSlice] Failed to import${fileInfo.name}:`,
+                  error,
+                );
                 rejectedFiles.push({
                   name: fileInfo.name,
                   reason: error.message || 'Failed to process file',
@@ -1796,7 +1859,7 @@ export const createFileProcessingSlice: StateCreator<
                   timelineResults.push({ success: true, mediaId });
                 } catch (error: any) {
                   console.error(
-                    `❌ Failed to add to timeline: ${mediaId}:`,
+                    `[FileProcessingSlice] Failed to add to timeline${mediaId}:`,
                     error,
                   );
                   timelineResults.push({
@@ -1811,13 +1874,15 @@ export const createFileProcessingSlice: StateCreator<
               timelineResults.forEach((result) => {
                 if (!result.success) {
                   console.warn(
-                    `⚠️ Media imported to library but failed to add to timeline: ${result.mediaId}`,
+                    `[FileProcessingSlice] Media imported to library but failed to add to timeline${result.mediaId}`,
                   );
                 }
               });
             }
             if (rejectedFiles.length > 0) {
-              console.warn(`⚠️ Rejected ${rejectedFiles.length} files`);
+              console.warn(
+                `[FileProcessingSlice] Rejected${rejectedFiles.length} files`,
+              );
             }
 
             return {
@@ -1831,7 +1896,10 @@ export const createFileProcessingSlice: StateCreator<
             state.endGroup?.();
           }
         } catch (error: any) {
-          console.error('Failed to import media to timeline:', error);
+          console.error(
+            '[FileProcessingSlice] Failed to import media to timeline',
+            error,
+          );
           return {
             success: false,
             importedFiles: [],
@@ -1849,7 +1917,10 @@ export const createFileProcessingSlice: StateCreator<
       // Return the promise result
       return await importPromise;
     } catch (error: any) {
-      console.error('Failed to import media to timeline (outer catch):', error);
+      console.error(
+        '[FileProcessingSlice] Failed to import media to timeline (outer catch)',
+        error,
+      );
       return {
         success: false,
         importedFiles: [],

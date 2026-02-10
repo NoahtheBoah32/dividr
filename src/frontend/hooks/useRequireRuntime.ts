@@ -99,7 +99,10 @@ export function useRequireRuntime({
       try {
         await pendingAction();
       } catch (error) {
-        console.error('Failed to execute pending action:', error);
+        console.error(
+          '[UseRequireRuntime] Failed to execute pending action',
+          error,
+        );
       }
       setPendingAction(null);
     }

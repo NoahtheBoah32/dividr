@@ -312,7 +312,9 @@ export function getFontPathsForFamilies(fontFamilies: string[]): string[] {
     const mapping = FONT_MAPPINGS[cleanFamily];
 
     if (!mapping) {
-      console.warn(`⚠️  Font family not found in mappings: ${cleanFamily}`);
+      console.warn(
+        `[FontMapper] Font family not found in mappings${cleanFamily}`,
+      );
       continue;
     }
 

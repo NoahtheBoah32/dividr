@@ -171,7 +171,9 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
       );
 
       if (videoTracksInRow.length === 0) {
-        console.warn('No video track with linked audio found in this row');
+        console.warn(
+          '[TimelineTrackControllers] No video track with linked audio found in this row',
+        );
         return;
       }
 
@@ -246,13 +248,13 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
               return; // Exit early, will retry after download
             } else {
               console.error(
-                `Failed to generate karaoke subtitles for ${track.name}:`,
+                `[TimelineTrackControllers] Failed to generate karaoke subtitles for${track.name}:`,
                 result.error,
               );
             }
           } catch (error) {
             console.error(
-              `Error generating karaoke subtitles for ${track.name}:`,
+              `[TimelineTrackControllers] Error generating karaoke subtitles for${track.name}:`,
               error,
             );
           }

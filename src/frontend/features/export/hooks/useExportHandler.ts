@@ -188,7 +188,10 @@ export const useExportHandler = () => {
       cancelRender();
       setRenderDialogState('cancelled');
     } catch (error) {
-      console.error('❌ Failed to cancel FFmpeg process:', error);
+      console.error(
+        '[UseExportHandler] Failed to cancel FFmpeg process',
+        error,
+      );
       // Still update UI even if IPC fails
       cancelRender();
       setRenderDialogState('cancelled');

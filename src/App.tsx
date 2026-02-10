@@ -105,7 +105,7 @@ function App() {
 
         toast.success('Project opened successfully!');
       } catch (error) {
-        console.error('Failed to open project file:', error);
+        console.error('[App] Failed to open project file', error);
         toast.error('Failed to open project file');
       }
     };

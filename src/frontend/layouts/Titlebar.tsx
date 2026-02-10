@@ -56,7 +56,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
       // Navigate to video editor with the new project
       navigate('/video-editor');
     } catch (error) {
-      console.error('Failed to create project:', error);
+      console.error('[Titlebar] Failed to create project', error);
       // Could add toast notification here if needed
     }
   };
@@ -71,7 +71,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
       await importProject(file);
       toast.success('Project imported successfully!');
     } catch (error) {
-      console.error('Failed to import project:', error);
+      console.error('[Titlebar] Failed to import project', error);
       toast.error('Failed to import project');
     }
 

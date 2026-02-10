@@ -29,7 +29,7 @@ export const importMediaAction = async (
     }
     // If canceled, do nothing (user cancelled the dialog)
   } catch (error) {
-    console.error('[Import Media] Failed:', error);
+    console.error('[ImportMedia] Failed', error);
     toast.error('Failed to import media');
   }
 };

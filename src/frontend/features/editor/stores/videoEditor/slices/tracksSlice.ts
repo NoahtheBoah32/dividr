@@ -885,7 +885,7 @@ export const createTracksSlice: StateCreator<
         }
       } catch (error) {
         console.error(
-          `❌ Error processing subtitle file ${mediaItem.name}:`,
+          `[TracksSlice] Error processing subtitle file${mediaItem.name}:`,
           error,
         );
         // Fall through to single track creation
@@ -1075,7 +1075,7 @@ export const createTracksSlice: StateCreator<
     let safeUpdates = updates;
     if ('sourceFps' in updates) {
       console.warn(
-        `⚠️ Attempted to mutate sourceFps on track ${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
+        `[TracksSlice] Attempted to mutate sourceFps on track${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
       );
       // Remove sourceFps from updates to prevent mutation
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1289,7 +1289,7 @@ export const createTracksSlice: StateCreator<
       // If the dragged track is not in selection, fall back to single track move
       if (!selectedTrackIds.includes(draggedTrackId)) {
         console.warn(
-          '⚠️ Dragged track not in selection, falling back to single move',
+          '[TracksSlice] Dragged track not in selection, falling back to single move',
         );
         return state;
       }
@@ -1454,7 +1454,7 @@ export const createTracksSlice: StateCreator<
 
     const trackToMove = state.tracks.find((t: VideoTrack) => t.id === trackId);
     if (!trackToMove) {
-      console.warn(`⚠️ Track ${trackId} not found`);
+      console.warn(`[TracksSlice] Track${trackId} not found`);
       return;
     }
 
@@ -1664,7 +1664,9 @@ export const createTracksSlice: StateCreator<
       (t: VideoTrack) => t.id === trackId,
     );
     if (!originalTrack) {
-      console.error(`❌ Cannot duplicate: track ${trackId} not found`);
+      console.error(
+        `[TracksSlice] Cannot duplicate: track${trackId} not found`,
+      );
       if (!skipGrouping) {
         state.endGroup?.(); // End group even on error
       }
@@ -2353,7 +2355,7 @@ export const createTracksSlice: StateCreator<
     let safeUpdates = updates;
     if ('sourceFps' in updates) {
       console.warn(
-        `⚠️ Attempted to mutate sourceFps on track ${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
+        `[TracksSlice] Attempted to mutate sourceFps on track${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
       );
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sourceFps: _removed, ...rest } = updates as any;

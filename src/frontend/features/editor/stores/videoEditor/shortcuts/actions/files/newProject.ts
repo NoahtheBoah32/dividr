@@ -25,7 +25,7 @@ export const newProjectAction = async (navigate: (path: string) => void) => {
 
     toast.success('New project created');
   } catch (error) {
-    console.error('[New Project] Failed:', error);
+    console.error('[NewProject] Failed', error);
     toast.error('Failed to create new project');
   }
 };

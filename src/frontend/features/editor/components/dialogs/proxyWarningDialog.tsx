@@ -64,7 +64,9 @@ export const ProxyWarningDialog: React.FC<ProxyWarningDialogProps> = ({
             setHardwareInfo(result.capabilities);
           }
         })
-        .catch(console.error);
+        .catch((error) =>
+          console.error('[ProxyWarningDialog] Operation failed', error),
+        );
     }
   }, [open, hardwareInfo]);
 

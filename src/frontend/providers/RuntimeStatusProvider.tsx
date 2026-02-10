@@ -107,7 +107,10 @@ export function RuntimeStatusProvider({
         lastChecked: new Date(),
       });
     } catch (error) {
-      console.error('Failed to check runtime status:', error);
+      console.error(
+        '[RuntimeStatusProvider] Failed to check runtime status',
+        error,
+      );
       setStatus((prev) => ({
         ...prev,
         isChecking: false,

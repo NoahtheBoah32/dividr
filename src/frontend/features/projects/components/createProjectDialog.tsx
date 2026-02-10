@@ -41,7 +41,7 @@ const CreateProjectDialog = ({
       setDescription('');
       setIsOpen(false);
     } catch (error) {
-      console.error('Failed to create project:', error);
+      console.error('[CreateProjectDialog] Failed to create project', error);
     } finally {
       setIsSubmitting(false);
     }

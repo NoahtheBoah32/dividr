@@ -73,7 +73,10 @@ export class VideoThumbnailGenerator {
         }
       }
     } catch (error) {
-      console.warn('⚠️ Failed to load thumbnail cache from storage:', error);
+      console.warn(
+        '[VideoThumbnailGenerator] Failed to load thumbnail cache from storage',
+        error,
+      );
     }
 
     this.cacheInitialized = true;
@@ -107,7 +110,10 @@ export class VideoThumbnailGenerator {
         return result.path;
       }
     } catch (error) {
-      console.warn('⚠️ Failed to get media cache directory:', error);
+      console.warn(
+        '[VideoThumbnailGenerator] Failed to get media cache directory',
+        error,
+      );
     }
 
     return 'public';
@@ -189,7 +195,10 @@ export class VideoThumbnailGenerator {
         );
       }
     } catch (error) {
-      console.warn('⚠️ Failed to save thumbnail cache to storage:', error);
+      console.warn(
+        '[VideoThumbnailGenerator] Failed to save thumbnail cache to storage',
+        error,
+      );
     }
   }
 
@@ -365,7 +374,7 @@ export class VideoThumbnailGenerator {
       const totalThumbnails = Math.ceil(duration / intervalSeconds);
 
       console.log(
-        `🎬 Generating ${totalThumbnails} thumbnails for ${options.videoPath} starting at ${sourceStartTime}s (duration: ${duration}s)`,
+        `[VideoThumbnailGenerator] Generating${totalThumbnails} thumbnails for ${options.videoPath} starting at ${sourceStartTime}s (duration: ${duration}s)`,
       );
 
       // Generate output directory path
@@ -377,12 +386,17 @@ export class VideoThumbnailGenerator {
       );
 
       // Note: Output directory will be created by the thumbnail generation process
-      console.log(`📁 Thumbnails will be stored in: ${outputDir}`);
+      console.log(
+        `[VideoThumbnailGenerator] Thumbnails will be stored in${outputDir}`,
+      );
 
       // Extract thumbnails using FFmpeg
       return await this.extractWithFFmpeg(options, cacheKey, outputDir);
     } catch (error) {
-      console.error('Error generating video thumbnails:', error);
+      console.error(
+        '[VideoThumbnailGenerator] Error generating video thumbnails',
+        error,
+      );
       try {
         return await this.generatePlaceholderThumbnails(options, cacheKey);
       } catch (placeholderError) {
@@ -470,11 +484,13 @@ export class VideoThumbnailGenerator {
   ): Promise<VideoThumbnail[] | null> {
     const entry = await this.getCachedThumbnailEntry(options);
     if (entry?.thumbnails) {
-      console.log(`✅ Cache HIT for ${entry.cacheKey}`);
+      console.log(`[VideoThumbnailGenerator] Cache HIT for${entry.cacheKey}`);
       return entry.thumbnails;
     }
 
-    console.log(`❌ Cache MISS for ${this.createCacheKey(options)}`);
+    console.log(
+      `[VideoThumbnailGenerator] Cache MISS for${this.createCacheKey(options)}`,
+    );
     return null;
   }
 
@@ -485,7 +501,7 @@ export class VideoThumbnailGenerator {
     if (this.thumbnailCache.size <= this.MAX_CACHE_SIZE) return;
 
     console.log(
-      `🧹 Cleaning up cache (current size: ${this.thumbnailCache.size})`,
+      `[VideoThumbnailGenerator] Cleaning up cache (current size${this.thumbnailCache.size})`,
     );
 
     // Sort by access time and remove oldest entries
@@ -498,7 +514,9 @@ export class VideoThumbnailGenerator {
       this.cacheAccessTimes.delete(key);
     }
 
-    console.log(`✅ Cache cleaned up (new size: ${this.thumbnailCache.size})`);
+    console.log(
+      `[VideoThumbnailGenerator] Cache cleaned up (new size${this.thumbnailCache.size})`,
+    );
   }
 
   /**
@@ -528,13 +546,15 @@ export class VideoThumbnailGenerator {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (!(window.electronAPI as any).runCustomFFmpeg) {
       console.warn(
-        'FFmpeg thumbnail extraction not available, using placeholders',
+        '[VideoThumbnailGenerator] FFmpeg thumbnail extraction not available, using placeholders',
       );
       return this.generatePlaceholderThumbnails(options, cacheKey);
     }
 
     const totalThumbnails = Math.ceil(duration / intervalSeconds);
-    console.log(`🎬 Extracting ${totalThumbnails} thumbnails using FFmpeg`);
+    console.log(
+      `[VideoThumbnailGenerator] Extracting${totalThumbnails} thumbnails using FFmpeg`,
+    );
 
     // Create a custom FFmpeg command for thumbnail extraction
     // This command will extract frames at specific intervals while preserving aspect ratio
@@ -568,12 +588,14 @@ export class VideoThumbnailGenerator {
         throw new Error(result.error || 'FFmpeg command failed');
       }
 
-      console.log('✅ FFmpeg thumbnail extraction successful');
+      console.log(
+        '[VideoThumbnailGenerator] FFmpeg thumbnail extraction successful',
+      );
 
       const outputFiles = (result.output || []).slice().sort();
       if (outputFiles.length === 0) {
         console.warn(
-          '⚠️ No thumbnail files were generated, using placeholders',
+          '[VideoThumbnailGenerator] No thumbnail files were generated, using placeholders',
         );
         return this.generatePlaceholderThumbnails(options, cacheKey);
       }
@@ -590,7 +612,9 @@ export class VideoThumbnailGenerator {
         const filePath = this.joinPath(outputDir, file);
         const exists = await this.mediaPathExists(filePath);
         if (!exists) {
-          console.warn(`⚠️ Thumbnail file missing on disk: ${filePath}`);
+          console.warn(
+            `[VideoThumbnailGenerator] Thumbnail file missing on disk${filePath}`,
+          );
           continue;
         }
 
@@ -608,7 +632,9 @@ export class VideoThumbnailGenerator {
       }
 
       if (thumbnails.length === 0) {
-        console.warn('⚠️ No valid thumbnails found, using placeholders');
+        console.warn(
+          '[VideoThumbnailGenerator] No valid thumbnails found, using placeholders',
+        );
         return this.generatePlaceholderThumbnails(options, cacheKey);
       }
 
@@ -620,7 +646,10 @@ export class VideoThumbnailGenerator {
         thumbnails,
       };
     } catch (error) {
-      console.error('❌ Custom FFmpeg execution failed:', error);
+      console.error(
+        '[VideoThumbnailGenerator] Custom FFmpeg execution failed',
+        error,
+      );
       throw error;
     }
   }
@@ -641,7 +670,9 @@ export class VideoThumbnailGenerator {
       sourceStartTime = 0,
     } = options;
 
-    console.log('📸 Falling back to placeholder thumbnail generation');
+    console.log(
+      '[VideoThumbnailGenerator] Falling back to placeholder thumbnail generation',
+    );
 
     const thumbnails: VideoThumbnail[] = [];
     const totalThumbnails = Math.ceil(duration / intervalSeconds);

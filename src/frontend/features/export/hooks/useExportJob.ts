@@ -217,7 +217,7 @@ function getCustomDimensions(
 
   // Fallback to original track dimensions
   console.warn(
-    `⚠️ Custom dimensions invalid (${canvasWidth}x${canvasHeight}), falling back to track dimensions`,
+    `[UseExportJob] Custom dimensions invalid (${canvasWidth}x${canvasHeight}), falling back to track dimensions`,
   );
 
   // Find first visible video track with valid dimensions
@@ -228,7 +228,9 @@ function getCustomDimensions(
   }
 
   // Final fallback to default dimensions
-  console.warn(`⚠️ No valid track dimensions found, using default: 1920x1080`);
+  console.warn(
+    '[UseExportJob] No valid track dimensions found, using default: 1920x1080',
+  );
   return { width: 1920, height: 1080 };
 }
 
@@ -248,7 +250,7 @@ function getSourceVideoDimensions(videoTracks: VideoTrack[]): {
 
   // Fallback to default dimensions
   console.warn(
-    `⚠️ No valid video track dimensions found, using default: 1920x1080`,
+    '[UseExportJob] No valid video track dimensions found, using default: 1920x1080',
   );
   return { width: 1920, height: 1080 };
 }
@@ -269,7 +271,9 @@ function calculateIntermediateDimensions(
   // Parse aspect ratio (e.g., "9:16" -> 0.5625)
   const parts = targetAspectRatio.split(':');
   if (parts.length !== 2) {
-    console.warn(`Invalid aspect ratio format: ${targetAspectRatio}`);
+    console.warn(
+      `[UseExportJob] Invalid aspect ratio format${targetAspectRatio}`,
+    );
     return sourceDimensions;
   }
 
@@ -423,7 +427,7 @@ function convertTracksToFFmpegInputs(
         resolvedPath = processedPath;
       } else {
         console.warn(
-          `⚠️ Noise reduction enabled for "${track.name}" but no processed file found - using original`,
+          `[UseExportJob] Noise reduction enabled for "${track.name}" but no processed file found - using original`,
         );
       }
     }

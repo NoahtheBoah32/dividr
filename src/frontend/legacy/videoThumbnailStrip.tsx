@@ -94,7 +94,10 @@ export const VideoThumbnailStrip: React.FC<VideoThumbnailStripProps> =
 
         // Handle blob URLs (won't work with FFmpeg, but avoid errors)
         if (videoPath.startsWith('blob:')) {
-          console.warn('Cannot generate thumbnails from blob URL:', track.name);
+          console.warn(
+            '[VideoThumbnailStrip] Cannot generate thumbnails from blob URL',
+            track.name,
+          );
           setState((prev) => ({
             ...prev,
             isLoading: false,

@@ -61,7 +61,7 @@ export const createClipboardSlice: StateCreator<
 
       const track = state.tracks.find((t: VideoTrack) => t.id === trackId);
       if (!track) {
-        console.error(`[Clipboard] Track ${trackId} not found, skipping`);
+        console.error(`[Clipboard] Track${trackId} not found, skipping`);
         return;
       }
 
@@ -123,7 +123,7 @@ export const createClipboardSlice: StateCreator<
 
       const track = state.tracks.find((t: VideoTrack) => t.id === trackId);
       if (!track) {
-        console.error(`[Clipboard] Track ${trackId} not found, skipping`);
+        console.error(`[Clipboard] Track${trackId} not found, skipping`);
         return;
       }
 
@@ -417,7 +417,7 @@ export const createClipboardSlice: StateCreator<
 
       const newId = linkedPairs.get(track.id);
       if (!newId) {
-        console.error(`[Clipboard] Failed to get new ID for track ${track.id}`);
+        console.error(`[Clipboard] Failed to get new ID for track${track.id}`);
         return;
       }
 
@@ -449,7 +449,7 @@ export const createClipboardSlice: StateCreator<
           const newLinkedId = linkedPairs.get(linkedTrack.id);
           if (!newLinkedId) {
             console.error(
-              `[Clipboard] Failed to get new ID for linked track ${linkedTrack.id}`,
+              `[Clipboard] Failed to get new ID for linked track${linkedTrack.id}`,
             );
             return;
           }

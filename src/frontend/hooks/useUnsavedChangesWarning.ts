@@ -39,7 +39,10 @@ export const useUnsavedChangesWarning = () => {
           try {
             await saveProjectData();
           } catch (error) {
-            console.error('Failed to save before quit:', error);
+            console.error(
+              '[UseUnsavedChangesWarning] Failed to save before quit',
+              error,
+            );
           }
         }
 

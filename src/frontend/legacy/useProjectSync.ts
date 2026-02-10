@@ -28,7 +28,9 @@ export const useProjectSync = () => {
     if (currentProject?.id !== currentProjectId) {
       if (currentProject) {
         setCurrentProjectId(currentProject.id);
-        loadProjectData(currentProject.id).catch(console.error);
+        loadProjectData(currentProject.id).catch((error) =>
+          console.error('[UseProjectSync] Operation failed', error),
+        );
       } else {
         setCurrentProjectId(null);
       }
@@ -44,7 +46,9 @@ export const useProjectSync = () => {
           'You have unsaved changes. Are you sure you want to leave?';
 
         // Try to save before leaving
-        saveProjectData().catch(console.error);
+        saveProjectData().catch((error) =>
+          console.error('[UseProjectSync] Operation failed', error),
+        );
 
         return event.returnValue;
       }
@@ -60,7 +64,9 @@ export const useProjectSync = () => {
 
     const interval = setInterval(() => {
       if (hasUnsavedChanges) {
-        saveProjectData().catch(console.error);
+        saveProjectData().catch((error) =>
+          console.error('[UseProjectSync] Operation failed', error),
+        );
       }
     }, autoSavePreferences.intervalMs);
 

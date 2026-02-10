@@ -621,7 +621,10 @@ class NoiseReductionCacheImpl {
         try {
           callback();
         } catch (error) {
-          console.error('Subscriber callback error:', error);
+          console.error(
+            '[NoiseReductionCache] Subscriber callback error',
+            error,
+          );
         }
       });
     }
@@ -700,7 +703,7 @@ class NoiseReductionCacheImpl {
           try {
             cb();
           } catch (e) {
-            console.error(e);
+            console.error('[NoiseReductionCache] Error', e);
           }
         });
       }

@@ -80,7 +80,9 @@ const executeAutoSave = (get: () => any): void => {
   }
 
   lastSaveTimestamp = now;
-  state.saveProjectData().catch(console.error);
+  state
+    .saveProjectData()
+    .catch((error) => console.error('[ProjectSlice] Operation failed', error));
 };
 
 const scheduleAutoSave = (get: () => any, delayMs: number): void => {
@@ -176,11 +178,14 @@ const scheduleWaveformRehydrate = (get: () => any): void => {
         state
           .generateWaveformForMedia?.(mediaId)
           .catch((error: Error) =>
-            console.warn('Waveform rehydrate failed:', error),
+            console.warn('[ProjectSlice] Waveform rehydrate failed', error),
           );
       });
     } catch (error) {
-      console.warn('Waveform rehydrate scheduling failed:', error);
+      console.warn(
+        '[ProjectSlice] Waveform rehydrate scheduling failed',
+        error,
+      );
     }
   }, 0);
 };
@@ -207,11 +212,11 @@ const scheduleSpriteRehydrate = (get: () => any): void => {
         state
           .generateSpriteSheetForMedia?.(item.id)
           .catch((error: Error) =>
-            console.warn('Sprite rehydrate failed:', error),
+            console.warn('[ProjectSlice] Sprite rehydrate failed', error),
           );
       });
     } catch (error) {
-      console.warn('Sprite rehydrate scheduling failed:', error);
+      console.warn('[ProjectSlice] Sprite rehydrate scheduling failed', error);
     }
   }, 0);
 };
@@ -321,7 +326,7 @@ export const createProjectSlice: StateCreator<
               }
             } catch (error) {
               console.warn(
-                `⚠️ Failed to regenerate previewUrl for track ${track.name}:`,
+                `[ProjectSlice] Failed to regenerate previewUrl for track${track.name}:`,
                 error,
               );
             }
@@ -424,7 +429,7 @@ export const createProjectSlice: StateCreator<
       scheduleWaveformRehydrate(get);
       scheduleSpriteRehydrate(get);
     } catch (error) {
-      console.error('Failed to load project data:', error);
+      console.error('[ProjectSlice] Failed to load project data', error);
       throw error;
     }
   },
@@ -432,7 +437,7 @@ export const createProjectSlice: StateCreator<
   saveProjectData: async () => {
     const state = get() as any;
     if (!state.currentProjectId) {
-      console.warn('No current project ID set, cannot save');
+      console.warn('[ProjectSlice] No current project ID set, cannot save');
       return;
     }
 
@@ -458,7 +463,8 @@ export const createProjectSlice: StateCreator<
         !state.hasUnsavedChanges
       ) {
         console.warn(
-          `⚠️ SAFETY BLOCK: Attempted to save empty timeline (0 tracks) over populated one (${existingTrackCount} tracks). ` +
+          '[ProjectSlice] Warning',
+          `Safety block: attempted to save empty timeline (0 tracks) over populated one (${existingTrackCount} tracks). ` +
             `This may indicate a data loss condition. Save operation aborted.`,
         );
         set({ isSaving: false });
@@ -514,7 +520,7 @@ export const createProjectSlice: StateCreator<
       // Sync with ProjectStore to update the project list
       get().syncWithProjectStore();
     } catch (error) {
-      console.error('Failed to save project data:', error);
+      console.error('[ProjectSlice] Failed to save project data', error);
       set({ isSaving: false });
       throw error;
     }
@@ -623,7 +629,11 @@ export const createProjectSlice: StateCreator<
   syncWithProjectStore: () => {
     // Trigger ProjectStore to reload projects
     const projectStore = useProjectStore.getState();
-    projectStore.loadProjects().catch(console.error);
+    projectStore
+      .loadProjects()
+      .catch((error) =>
+        console.error('[ProjectSlice] Operation failed', error),
+      );
   },
 
   exportProject: () => {
@@ -651,7 +661,7 @@ export const createProjectSlice: StateCreator<
         hasUnsavedChanges: true,
       });
     } catch (error) {
-      console.error('Failed to import project:', error);
+      console.error('[ProjectSlice] Failed to import project', error);
     }
   },
 

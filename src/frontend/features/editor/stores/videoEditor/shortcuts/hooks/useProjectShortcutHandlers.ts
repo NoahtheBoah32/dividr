@@ -36,26 +36,26 @@ export const useProjectShortcutHandlers = (
 
   const onNewProject = useCallback(() => {
     newProjectAction(navigate).catch((error) => {
-      console.error('[useProjectShortcutHandlers] New Project failed:', error);
+      console.error('[UseProjectShortcutHandlers] New Project failed', error);
     });
   }, [navigate]);
 
   const onOpenProject = useCallback(() => {
     openProjectAction(navigate).catch((error) => {
-      console.error('[useProjectShortcutHandlers] Open Project failed:', error);
+      console.error('[UseProjectShortcutHandlers] Open Project failed', error);
     });
   }, [navigate]);
 
   const onSaveProject = useCallback(() => {
     saveProjectAction().catch((error) => {
-      console.error('[useProjectShortcutHandlers] Save Project failed:', error);
+      console.error('[UseProjectShortcutHandlers] Save Project failed', error);
     });
   }, []);
 
   const onSaveProjectAs = useCallback(() => {
     saveProjectAsAction().catch((error) => {
       console.error(
-        '[useProjectShortcutHandlers] Save Project As failed:',
+        '[UseProjectShortcutHandlers] Save Project As failed',
         error,
       );
     });
@@ -63,7 +63,7 @@ export const useProjectShortcutHandlers = (
 
   const onImportMedia = useCallback(() => {
     importMediaAction(importMediaFromDialog).catch((error) => {
-      console.error('[useProjectShortcutHandlers] Import Media failed:', error);
+      console.error('[UseProjectShortcutHandlers] Import Media failed', error);
     });
   }, [importMediaFromDialog]);
 
@@ -75,10 +75,7 @@ export const useProjectShortcutHandlers = (
 
   const onCloseProject = useCallback(() => {
     closeProjectAction(navigate, showConfirmation).catch((error) => {
-      console.error(
-        '[useProjectShortcutHandlers] Close Project failed:',
-        error,
-      );
+      console.error('[UseProjectShortcutHandlers] Close Project failed', error);
     });
   }, [navigate, showConfirmation]);
 

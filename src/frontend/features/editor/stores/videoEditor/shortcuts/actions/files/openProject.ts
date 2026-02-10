@@ -58,7 +58,7 @@ export const openProjectAction = async (navigate: (path: string) => void) => {
       `Project "${projectData.metadata?.title || 'Untitled'}" opened`,
     );
   } catch (error) {
-    console.error('[Open Project] Failed:', error);
+    console.error('[OpenProject] Failed', error);
     toast.error('Failed to open project');
   }
 };

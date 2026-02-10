@@ -41,13 +41,13 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
 
       // Early exit: no selection = no-op
       if (selectedTracks.length === 0) {
-        console.warn('⚠️ No tracks selected for duplication');
+        console.warn('[TrackShortcuts] No tracks selected for duplication');
         return;
       }
 
       // Early exit: no tracks exist
       if (allTracks.length === 0) {
-        console.error('⚠️ Timeline is empty, cannot duplicate');
+        console.error('[TrackShortcuts] Timeline is empty, cannot duplicate');
         return;
       }
 
@@ -70,7 +70,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
         const track = allTracks.find((t: any) => t.id === trackId);
         if (!track) {
           console.error(
-            `❌ Track ${trackId} not found in tracks array, skipping`,
+            `[TrackShortcuts] Track${trackId} not found in tracks array, skipping`,
           );
           return;
         }
@@ -115,7 +115,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       if (newlyCreatedIds.length > 0) {
         freshState.setSelectedTracks(newlyCreatedIds);
       } else {
-        console.error('❌ Duplication produced no new tracks');
+        console.error('[TrackShortcuts] Duplication produced no new tracks');
       }
     },
   },

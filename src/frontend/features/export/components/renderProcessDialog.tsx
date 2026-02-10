@@ -75,18 +75,21 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
 
   const handleGoToFile = async () => {
     if (!outputFilePath) {
-      console.error('No output file path available');
+      console.error('[RenderProcessDialog] No output file path available');
       return;
     }
 
     try {
       const result = await window.electronAPI.showItemInFolder(outputFilePath);
       if (!result.success) {
-        console.error('Failed to open file location:', result.error);
+        console.error(
+          '[RenderProcessDialog] Failed to open file location',
+          result.error,
+        );
         alert(`Failed to open file location: ${result.error}`);
       }
     } catch (error) {
-      console.error('Error opening file location:', error);
+      console.error('[RenderProcessDialog] Error opening file location', error);
       alert('Failed to open file location');
     }
   };

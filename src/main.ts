@@ -124,9 +124,9 @@ const markStartupPhase = (
 
   const baseMessage = `⏱️ [startup] ${phase} +${sinceLast}ms (${sinceStart}ms)`;
   if (meta && Object.keys(meta).length > 0) {
-    console.log(baseMessage, meta);
+    console.log('[Main] Log', baseMessage, meta);
   } else {
-    console.log(baseMessage);
+    console.log('[Main] Log', baseMessage);
   }
 
   if (
@@ -134,7 +134,7 @@ const markStartupPhase = (
     sinceStart > STARTUP_BUDGET_MS
   ) {
     console.warn(
-      `⚠️ [startup] interactive exceeded ${STARTUP_BUDGET_MS}ms budget (${sinceStart}ms)`,
+      `[Startup] interactive exceeded${STARTUP_BUDGET_MS}ms budget (${sinceStart}ms)`,
     );
   }
 };
@@ -188,11 +188,11 @@ function getFfmpegAudioDenoiseFilter(): 'arnndn' | 'afftdn' | null {
       ffmpegAudioDenoiseFilter = null;
     }
   } catch (error) {
-    console.warn('⚠️ Failed to detect FFmpeg filters:', error);
+    console.warn('[Main] Failed to detect FFmpeg filters', error);
     ffmpegAudioDenoiseFilter = null;
   }
 
-  console.log('🔎 FFmpeg denoise filter support:', ffmpegAudioDenoiseFilter);
+  console.log('[Main] FFmpeg denoise filter support', ffmpegAudioDenoiseFilter);
   return ffmpegAudioDenoiseFilter;
 }
 
@@ -312,12 +312,12 @@ function killCurrentFfmpegProcess(reason: string): boolean {
     return false;
   }
 
-  console.warn(`🛑 Killing FFmpeg process (${reason})`);
+  console.warn(`[Main] Killing FFmpeg process (${reason})`);
   const proc = currentFfmpegProcess;
   try {
     proc.kill('SIGTERM');
   } catch (error) {
-    console.warn('⚠️ Failed to send SIGTERM to FFmpeg:', error);
+    console.warn('[Main] Failed to send SIGTERM to FFmpeg', error);
   }
 
   setTimeout(() => {
@@ -325,7 +325,7 @@ function killCurrentFfmpegProcess(reason: string): boolean {
       try {
         proc.kill('SIGKILL');
       } catch (error) {
-        console.warn('⚠️ Failed to send SIGKILL to FFmpeg:', error);
+        console.warn('[Main] Failed to send SIGKILL to FFmpeg', error);
       }
     }
     clearCurrentFfmpegProcess();
@@ -384,7 +384,7 @@ function queueFFmpegTask<T>(
     ffmpegTaskQueue.splice(insertIndex, 0, task);
 
     console.log(
-      `📋 FFmpeg task queued: ${taskId} (priority ${priority}), queue length: ${ffmpegTaskQueue.length}`,
+      `[Main] FFmpeg task queued${taskId} (priority ${priority}), queue length: ${ffmpegTaskQueue.length}`,
     );
 
     // Start processing if not already running
@@ -404,19 +404,19 @@ async function processFFmpegQueue() {
     if (!task) break;
 
     console.log(
-      `⚙️ Processing FFmpeg task: ${task.id} (priority ${task.priority}), remaining: ${ffmpegTaskQueue.length}`,
+      `[Main] Processing FFmpeg task${task.id} (priority ${task.priority}), remaining: ${ffmpegTaskQueue.length}`,
     );
 
     try {
       await task.execute();
     } catch (error) {
-      console.error(`❌ FFmpeg task ${task.id} failed:`, error);
+      console.error(`[Main] FFmpeg task${task.id} failed:`, error);
       // Error is already handled by the task's reject
     }
   }
 
   isProcessingFFmpegQueue = false;
-  console.log('✅ FFmpeg queue empty');
+  console.log('[Main] FFmpeg queue empty');
 }
 
 // =============================================================================
@@ -549,14 +549,14 @@ function runQueuedFfmpeg(
 // Initialize ffmpeg paths dynamically with fallbacks
 async function initializeFfmpegPaths() {
   markStartupPhase('ffmpeg-init-start');
-  console.log('🔍 Initializing FFmpeg paths...');
-  console.log('📦 Is packaged:', app.isPackaged);
-  console.log('🌍 Environment:', process.env.NODE_ENV || 'production');
+  console.log('[Main] Initializing FFmpeg paths');
+  console.log('[Main] Is packaged', app.isPackaged);
+  console.log('[Main] Environment', process.env.NODE_ENV || 'production');
 
   // Method 1: Try ffmpeg-static first (bundled, fast, reliable)
   if (!ffmpegPath) {
     try {
-      console.log('🔄 Attempting ffmpeg-static (bundled binary)...');
+      console.log('[Main] Attempting ffmpeg-static (bundled binary)');
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const ffmpegStatic = require('ffmpeg-static');
@@ -565,7 +565,7 @@ async function initializeFfmpegPaths() {
         const fs = require('fs');
         if (fs.existsSync(ffmpegStatic)) {
           ffmpegPath = ffmpegStatic;
-          console.log('✅ FFmpeg resolved via ffmpeg-static:', ffmpegPath);
+          console.log('[Main] FFmpeg resolved via ffmpeg-static', ffmpegPath);
 
           // Check version to confirm it's modern
           try {
@@ -577,21 +577,24 @@ async function initializeFfmpegPaths() {
             );
             if (versionMatch) {
               console.log(
-                `ℹ️  FFmpeg version ${versionMatch[1]}.${versionMatch[2]} (bundled)`,
+                `[Main] ℹ FFmpeg version${versionMatch[1]}.${versionMatch[2]} (bundled)`,
               );
             }
           } catch (vErr) {
             console.log(
-              'ℹ️  (Could not detect version, but using ffmpeg-static)',
+              '[Main] ℹ (Could not detect version, but using ffmpeg-static)',
             );
           }
         } else {
-          console.log('⚠️ ffmpeg-static returned invalid path:', ffmpegStatic);
+          console.log(
+            '[Main] ffmpeg-static returned invalid path',
+            ffmpegStatic,
+          );
         }
       }
     } catch (requireError) {
-      console.log('⚠️ ffmpeg-static not available:', requireError.message);
-      console.log('ℹ️  Install with: yarn add ffmpeg-static');
+      console.log('[Main] ffmpeg-static not available', requireError.message);
+      console.log('[Main] ℹ Install with: yarn add ffmpeg-static');
     }
   }
 
@@ -599,7 +602,7 @@ async function initializeFfmpegPaths() {
   if (!ffmpegPath) {
     try {
       console.log(
-        '🔄 Attempting ffbinaries fallback (downloads FFmpeg if needed)...',
+        '[Main] Attempting ffbinaries fallback (downloads FFmpeg if needed)',
       );
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
@@ -619,10 +622,13 @@ async function initializeFfmpegPaths() {
 
       if (require('fs').existsSync(expectedPath)) {
         ffmpegPath = expectedPath;
-        console.log('✅ FFmpeg already downloaded via ffbinaries:', ffmpegPath);
+        console.log(
+          '[Main] FFmpeg already downloaded via ffbinaries',
+          ffmpegPath,
+        );
       } else {
         console.log(
-          '📥 Downloading FFmpeg via ffbinaries (first time setup)...',
+          '[Main] Downloading FFmpeg via ffbinaries (first time setup)',
         );
 
         // Download FFmpeg (async operation)
@@ -632,11 +638,14 @@ async function initializeFfmpegPaths() {
             { destination: binDir },
             (err: any) => {
               if (err) {
-                console.error('❌ Failed to download FFmpeg:', err);
+                console.error('[Main] Failed to download FFmpeg', err);
                 reject(err);
               } else {
                 ffmpegPath = expectedPath;
-                console.log('✅ FFmpeg downloaded successfully:', ffmpegPath);
+                console.log(
+                  '[Main] FFmpeg downloaded successfully',
+                  ffmpegPath,
+                );
                 resolve(null);
               }
             },
@@ -653,47 +662,51 @@ async function initializeFfmpegPaths() {
           );
           if (versionMatch) {
             console.log(
-              `ℹ️  FFmpeg version ${versionMatch[1]}.${versionMatch[2]} from ffbinaries`,
+              `[Main] ℹ FFmpeg version${versionMatch[1]}.${versionMatch[2]} from ffbinaries`,
             );
           }
         } catch (vErr) {
-          console.log('ℹ️  (Could not detect version, but FFmpeg is ready)');
+          console.log(
+            '[Main] ℹ (Could not detect version, but FFmpeg is ready)',
+          );
         }
       }
     } catch (error) {
-      console.log('⚠️ ffbinaries failed:', error.message);
-      console.log('ℹ️  Install with: yarn add ffbinaries');
+      console.log('[Main] ffbinaries failed', error.message);
+      console.log('[Main] ℹ Install with: yarn add ffbinaries');
     }
   }
 
   // Log if no FFmpeg found yet
   if (!ffmpegPath) {
-    console.log('⚠️ No FFmpeg binary found in standard locations');
+    console.log('[Main] No FFmpeg binary found in standard locations');
   }
 
   // FFprobe require method (only for development, same issue as ffmpeg)
   if (!app.isPackaged) {
     try {
-      console.log('🔄 Attempting FFprobe require method (development mode)...');
+      console.log(
+        '[Main] Attempting FFprobe require method (development mode)',
+      );
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const ffprobeStatic = require('ffprobe-static');
       if (ffprobeStatic) {
         ffprobePath = ffprobeStatic;
-        console.log('✅ FFprobe resolved via require:', ffprobePath?.path);
+        console.log('[Main] FFprobe resolved via require', ffprobePath?.path);
       }
     } catch (requireError) {
-      console.log('⚠️ FFprobe require method failed:', requireError.message);
+      console.log('[Main] FFprobe require method failed', requireError.message);
     }
   } else {
     console.log(
-      '🚫 Skipping FFprobe require method for packaged app - using manual resolution',
+      '[Main] Skipping FFprobe require method for packaged app - using manual resolution',
     );
   }
 
   // Method 2: Manual path resolution for packaged apps (always used for packaged apps)
   if (app.isPackaged) {
     try {
-      console.log('🔄 Attempting manual path resolution...');
+      console.log('[Main] Attempting manual path resolution');
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const path = require('path');
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
@@ -705,9 +718,9 @@ async function initializeFfmpegPaths() {
       const isWindows = process.platform === 'win32';
       const ffmpegBinary = isWindows ? 'ffmpeg.exe' : 'ffmpeg';
 
-      console.log('📁 App path:', appPath);
-      console.log('📁 Resources path:', resourcesPath);
-      console.log('🖥️ Platform:', process.platform);
+      console.log('[Main] App path', appPath);
+      console.log('[Main] Resources path', resourcesPath);
+      console.log('[Main] Platform', process.platform);
 
       const possiblePaths = [
         // Try @ffmpeg-installer first (better hardware acceleration)
@@ -784,13 +797,13 @@ async function initializeFfmpegPaths() {
       ];
 
       for (const testPath of possiblePaths) {
-        console.log('🔍 Checking FFmpeg path:', testPath);
+        console.log('[Main] Checking FFmpeg path', testPath);
         if (fs.existsSync(testPath)) {
           ffmpegPath = testPath;
-          console.log('✅ FFmpeg found at manual path:', testPath);
+          console.log('[Main] FFmpeg found at manual path', testPath);
           break;
         } else {
-          console.log('❌ FFmpeg not found at:', testPath);
+          console.log('[Main] FFmpeg not found at', testPath);
         }
       }
 
@@ -893,29 +906,29 @@ async function initializeFfmpegPaths() {
       ];
 
       for (const testPath of ffprobePaths) {
-        console.log('🔍 Checking FFprobe path:', testPath);
+        console.log('[Main] Checking FFprobe path', testPath);
         if (fs.existsSync(testPath)) {
           ffprobePath = { path: testPath };
-          console.log('✅ FFprobe found at manual path:', testPath);
+          console.log('[Main] FFprobe found at manual path', testPath);
           break;
         } else {
-          console.log('❌ FFprobe not found at:', testPath);
+          console.log('[Main] FFprobe not found at', testPath);
         }
       }
     } catch (manualError) {
-      console.log('⚠️ Manual path resolution failed:', manualError.message);
+      console.log('[Main] Manual path resolution failed', manualError.message);
     }
   }
 
   // Method 3: System fallback
   if (!ffmpegPath) {
     try {
-      console.log('🔄 Attempting system FFmpeg fallback...');
+      console.log('[Main] Attempting system FFmpeg fallback');
       const systemFfmpeg = (await execCommand('where ffmpeg')).trim();
       ffmpegPath = systemFfmpeg.split('\n')[0];
-      console.log('✅ Using system FFmpeg:', ffmpegPath);
+      console.log('[Main] Using system FFmpeg', ffmpegPath);
     } catch (systemError) {
-      console.log('⚠️ System FFmpeg not available:', systemError.message);
+      console.log('[Main] System FFmpeg not available', systemError.message);
     }
   }
 
@@ -923,31 +936,31 @@ async function initializeFfmpegPaths() {
     try {
       const systemFfprobe = (await execCommand('where ffprobe')).trim();
       ffprobePath = { path: systemFfprobe.split('\n')[0] };
-      console.log('✅ Using system FFprobe:', ffprobePath.path);
+      console.log('[Main] Using system FFprobe', ffprobePath.path);
     } catch (systemError) {
-      console.log('⚠️ System FFprobe not available:', systemError.message);
+      console.log('[Main] System FFprobe not available', systemError.message);
     }
   }
 
   // Final status report
-  console.log('🎯 FFmpeg initialization complete:');
+  console.log('[Main] FFmpeg initialization complete');
   console.log(
-    '  - FFmpeg available:',
+    '[Main] FFmpeg available',
     !!ffmpegPath,
     ffmpegPath ? `(${ffmpegPath})` : '',
   );
   console.log(
-    '  - FFprobe available:',
+    '[Main] FFprobe available',
     !!ffprobePath?.path,
     ffprobePath?.path ? `(${ffprobePath.path})` : '',
   );
 
   if (!ffmpegPath || !ffprobePath?.path) {
-    console.error('❌ FFmpeg initialization failed!');
+    console.error('[Main] FFmpeg initialization failed!');
     console.error(
-      '📋 Please ensure ffmpeg-static and ffprobe-static packages are installed correctly',
+      '[Main] Please ensure ffmpeg-static and ffprobe-static packages are installed correctly',
     );
-    console.error('📋 Or install FFmpeg system-wide as a fallback');
+    console.error('[Main] Or install FFmpeg system-wide as a fallback');
   }
 }
 
@@ -974,14 +987,14 @@ const runDeferredInitialization = (reason: string): void => {
     initializeFfmpegPaths()
       .then(() => markStartupPhase('ffmpeg-ready'))
       .catch((error) => {
-        console.error('⚠️ FFmpeg init failed (non-blocking):', error);
+        console.error('[Main] FFmpeg init failed (non-blocking)', error);
       }),
     ensureMediaServer().catch((error) => {
-      console.error('⚠️ Media server init failed (non-blocking):', error);
+      console.error('[Main] Media server init failed (non-blocking)', error);
     }),
     startMediaCacheCleanup().catch((error) => {
       console.error(
-        '⚠️ Media cache cleanup init failed (non-blocking):',
+        '[Main] Media cache cleanup init failed (non-blocking)',
         error,
       );
     }),
@@ -1001,7 +1014,7 @@ const kickoffDeferredInitialization = (reason = 'window-visible') => {
 
   if (shouldLogStartup) {
     console.log(
-      `⏳ [startup] scheduling deferred init in ${Math.round(delay)}ms`,
+      `[Main] ⏳ [startup] scheduling deferred init in${Math.round(delay)}ms`,
       {
         reason,
       },
@@ -1019,7 +1032,7 @@ const ensurePythonInitialized = async (_reason: string): Promise<void> => {
   try {
     await initializePythonWhisper();
   } catch (error) {
-    console.error('⚠️ Python Whisper initialization failed:', error);
+    console.error('[Main] Python Whisper initialization failed', error);
     throw error;
   }
 };
@@ -1043,7 +1056,7 @@ function getMediaCacheDir(): string {
       fs.mkdirSync(baseDir, { recursive: true });
     }
   } catch (error) {
-    console.warn('⚠️ Failed to ensure media cache directory:', error);
+    console.warn('[Main] Failed to ensure media cache directory', error);
   }
   mediaCacheDir = baseDir;
   return mediaCacheDir;
@@ -1070,7 +1083,7 @@ function resolveMediaPath(input: string): string | null {
         }
       }
     } catch (error) {
-      console.warn('⚠️ Failed to parse media URL:', error);
+      console.warn('[Main] Failed to parse media URL', error);
       return null;
     }
   }
@@ -1173,7 +1186,7 @@ const runMediaCacheCleanup = async (reason: string): Promise<void> => {
   try {
     await cleanupMediaCache();
   } catch (error) {
-    console.warn('⚠️ Media cache cleanup failed:', error);
+    console.warn('[Main] Media cache cleanup failed', error);
   } finally {
     mediaCacheCleanupInProgress = false;
     markStartupPhase('media-cache-cleanup-complete', { reason });
@@ -1226,7 +1239,7 @@ function ensureMediaServer(): Promise<void> {
           urlPath = decodeURIComponent(parsedUrl.pathname.slice(1));
         }
       } catch (error) {
-        console.error('Error parsing media server URL:', error);
+        console.error('[Main] Error parsing media server URL', error);
         setCorsHeaders(res);
         res.writeHead(400);
         res.end('Invalid URL');
@@ -1284,7 +1297,7 @@ function ensureMediaServer(): Promise<void> {
           });
 
           stream.on('error', (streamError) => {
-            console.error('Error streaming file:', streamError);
+            console.error('[Main] Error streaming file', streamError);
             if (!res.headersSent) {
               setCorsHeaders(res);
               res.writeHead(500);
@@ -1306,7 +1319,7 @@ function ensureMediaServer(): Promise<void> {
 
           const stream = fs.createReadStream(resolvedPath);
           stream.on('error', (streamError) => {
-            console.error('Error streaming file:', streamError);
+            console.error('[Main] Error streaming file', streamError);
             if (!res.headersSent) {
               setCorsHeaders(res);
               res.writeHead(500);
@@ -1321,7 +1334,7 @@ function ensureMediaServer(): Promise<void> {
           stream.pipe(res);
         }
       } catch (error) {
-        console.error('Error serving file:', error);
+        console.error('[Main] Error serving file', error);
         setCorsHeaders(res);
         res.writeHead(500);
         res.end('Internal server error');
@@ -1330,14 +1343,14 @@ function ensureMediaServer(): Promise<void> {
 
     mediaServer.listen(MEDIA_SERVER_PORT, 'localhost', () => {
       console.log(
-        `📁 Media server started on http://localhost:${MEDIA_SERVER_PORT}`,
+        `[Main] Media server started on http://localhost${MEDIA_SERVER_PORT}`,
       );
       markStartupPhase('media-server-ready');
       resolve();
     });
 
     mediaServer.on('error', (error) => {
-      console.error('Media server error:', error);
+      console.error('[Main] Media server error', error);
       mediaServerReadyPromise = null;
       reject(error);
     });
@@ -1503,10 +1516,10 @@ ipcMain.handle('show-item-in-folder', async (event, filePath: string) => {
     // Show item in folder (works cross-platform)
     shell.showItemInFolder(filePath);
 
-    console.log('📂 Opened file location:', filePath);
+    console.log('[Main] Opened file location', filePath);
     return { success: true };
   } catch (error) {
-    console.error('Failed to show file in folder:', error);
+    console.error('[Main] Failed to show file in folder', error);
     return { success: false, error: error.message };
   }
 });
@@ -1557,8 +1570,8 @@ ipcMain.handle('run-ffmpeg-with-progress', async (event, job: VideoEditJob) => {
 ipcMain.handle(
   'extract-audio-from-video',
   async (event, videoPath: string, outputDir?: string) => {
-    console.log('🎵 MAIN PROCESS: extractAudioFromVideo handler called!');
-    console.log('🎵 MAIN PROCESS: Video path:', videoPath);
+    console.log('[Main] MAIN PROCESS: extractAudioFromVideo handler called!');
+    console.log('[Main] MAIN PROCESS: Video path', videoPath);
 
     if (!ffmpegPath) {
       return {
@@ -1577,7 +1590,7 @@ ipcMain.handle(
 
       // Use fileIOManager for directory creation with EMFILE protection
       await fileIOManager.mkdir(audioOutputDir, 'normal');
-      console.log('📁 Audio extraction directory ready:', audioOutputDir);
+      console.log('[Main] Audio extraction directory ready', audioOutputDir);
 
       // Generate unique filename for extracted audio
       const videoBaseName = path.basename(videoPath, path.extname(videoPath));
@@ -1585,7 +1598,7 @@ ipcMain.handle(
       const audioFileName = `${videoBaseName}_${timestamp}_extracted.wav`;
       const audioOutputPath = path.join(audioOutputDir, audioFileName);
 
-      console.log('🎵 Extracting audio to:', audioOutputPath);
+      console.log('[Main] Extracting audio to', audioOutputPath);
 
       // FFmpeg command to extract audio with high quality
       const args = [
@@ -1602,16 +1615,16 @@ ipcMain.handle(
         audioOutputPath, // Output audio file
       ];
 
-      console.log('🎬 AUDIO EXTRACTION FFMPEG COMMAND:');
-      console.log(['ffmpeg', ...args].join(' '));
+      console.log('[Main] AUDIO EXTRACTION FFMPEG COMMAND');
+      console.log('[Main] Log', ['ffmpeg', ...args].join(' '));
 
       const ffmpegResult = await runQueuedFfmpeg(args, {
         priority: 1,
         timeoutMs: 5 * 60 * 1000, // 5 minutes
         onStdout: (text) =>
-          console.log(`[Audio Extract stdout] ${text.trim()}`),
+          console.log(`[AudioExtractStdout] Log${text.trim()}`),
         onStderr: (text) =>
-          console.log(`[Audio Extract stderr] ${text.trim()}`),
+          console.log(`[AudioExtractStderr] Log${text.trim()}`),
       });
 
       if (ffmpegResult.timedOut) {
@@ -1636,7 +1649,7 @@ ipcMain.handle(
               lastError = statErr as Error;
               if (isEMFILEError(statErr) && attempt < 3) {
                 console.warn(
-                  `⚠️ EMFILE during audio file verification, retry ${attempt}/3`,
+                  `[Main] EMFILE during audio file verification, retry${attempt}/3`,
                 );
                 await new Promise((r) => setTimeout(r, 500 * attempt));
               } else {
@@ -1650,9 +1663,9 @@ ipcMain.handle(
             // Use the same logic as the create-preview-url handler
             const previewUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodeURIComponent(audioOutputPath)}`;
 
-            console.log('✅ Audio extraction successful!');
-            console.log('📁 Audio file path:', audioOutputPath);
-            console.log('📏 Audio file size:', stats.size, 'bytes');
+            console.log('[Main] Audio extraction successful!');
+            console.log('[Main] Audio file path', audioOutputPath);
+            console.log('[Main] Audio file size', stats.size, 'bytes');
 
             return {
               success: true,
@@ -1663,7 +1676,7 @@ ipcMain.handle(
             };
           }
 
-          console.error('❌ Audio file was created but is empty');
+          console.error('[Main] Audio file was created but is empty');
           return {
             success: false,
             error: 'Audio extraction failed: output file is empty',
@@ -1672,7 +1685,7 @@ ipcMain.handle(
           const errorMessage =
             statError instanceof Error ? statError.message : 'Unknown error';
           console.error(
-            '❌ Failed to verify extracted audio file:',
+            '[Main] Failed to verify extracted audio file',
             errorMessage,
           );
 
@@ -1693,7 +1706,7 @@ ipcMain.handle(
       }
 
       console.error(
-        '❌ Audio extraction failed with exit code:',
+        '[Main] Audio extraction failed with exit code',
         ffmpegResult.code,
       );
       return {
@@ -1709,9 +1722,9 @@ ipcMain.handle(
 ipcMain.handle(
   'run-custom-ffmpeg',
   async (event, args: string[], outputDir: string) => {
-    console.log('🎯 MAIN PROCESS: runCustomFFmpeg handler called!');
-    console.log('🎯 MAIN PROCESS: FFmpeg args:', args);
-    console.log('🎯 MAIN PROCESS: Output directory:', outputDir);
+    console.log('[Main] MAIN PROCESS: runCustomFFmpeg handler called!');
+    console.log('[Main] MAIN PROCESS: FFmpeg args', args);
+    console.log('[Main] MAIN PROCESS: Output directory', outputDir);
 
     if (!ffmpegPath) {
       return {
@@ -1732,12 +1745,12 @@ ipcMain.handle(
     try {
       if (hasOutputDir) {
         await fileIOManager.mkdir(absoluteOutputDir, 'high');
-        console.log('📁 Output directory ready:', absoluteOutputDir);
+        console.log('[Main] Output directory ready', absoluteOutputDir);
       }
     } catch (dirError) {
       const errorMessage =
         dirError instanceof Error ? dirError.message : 'Unknown error';
-      console.error('❌ Failed to create output directory:', errorMessage);
+      console.error('[Main] Failed to create output directory', errorMessage);
 
       if (isEMFILEError(dirError)) {
         return {
@@ -1762,15 +1775,15 @@ ipcMain.handle(
         })
       : args;
 
-    console.log('🎬 COMPLETE CUSTOM FFMPEG COMMAND:');
-    console.log(['ffmpeg', ...finalArgs].join(' '));
+    console.log('[Main] COMPLETE CUSTOM FFMPEG COMMAND');
+    console.log('[Main] Log', ['ffmpeg', ...finalArgs].join(' '));
 
     // Use priority queue with LOWEST priority (3) for thumbnail extraction
     const ffmpegResult = await runQueuedFfmpeg(finalArgs, {
       priority: 3,
       timeoutMs: 10 * 60 * 1000, // 10 minutes
-      onStdout: (text) => console.log(`[FFmpeg stdout] ${text.trim()}`),
-      onStderr: (text) => console.log(`[FFmpeg stderr] ${text.trim()}`),
+      onStdout: (text) => console.log(`[FFmpegStdout] Log${text.trim()}`),
+      onStderr: (text) => console.log(`[FFmpegStderr] Log${text.trim()}`),
     });
 
     if (ffmpegResult.timedOut) {
@@ -1780,7 +1793,7 @@ ipcMain.handle(
       };
     }
 
-    console.log(`🎬 FFmpeg process exited with code: ${ffmpegResult.code}`);
+    console.log(`[Main] FFmpeg process exited with code${ffmpegResult.code}`);
 
     if (ffmpegResult.code === 0) {
       if (!hasOutputDir) {
@@ -1794,7 +1807,7 @@ ipcMain.handle(
           .sort();
 
         console.log(
-          `✅ Generated ${outputFiles.length} thumbnail files:`,
+          `[Main] Generated${outputFiles.length} thumbnail files:`,
           outputFiles,
         );
 
@@ -1803,7 +1816,7 @@ ipcMain.handle(
           output: outputFiles,
         };
       } catch (listError) {
-        console.error('❌ Error listing output files:', listError);
+        console.error('[Main] Error listing output files', listError);
         return {
           success: false,
           error: `FFmpeg succeeded but failed to list output files: ${listError.message}`,
@@ -1811,7 +1824,7 @@ ipcMain.handle(
       }
     }
 
-    console.error(`❌ FFmpeg failed with exit code: ${ffmpegResult.code}`);
+    console.error(`[Main] FFmpeg failed with exit code${ffmpegResult.code}`);
     return {
       success: false,
       error: `FFmpeg process failed with exit code ${ffmpegResult.code}. stderr: ${ffmpegResult.stderr}`,
@@ -1833,10 +1846,10 @@ ipcMain.handle(
   ) => {
     const { jobId, videoPath, outputDir, commands } = options;
 
-    console.log('🎬 Starting background sprite sheet generation:', jobId);
-    console.log('📹 Video:', videoPath);
-    console.log('📁 Output:', outputDir);
-    console.log('🔧 Commands:', commands.length);
+    console.log('[Main] Starting background sprite sheet generation', jobId);
+    console.log('[Main] Video', videoPath);
+    console.log('[Main] Output', outputDir);
+    console.log('[Main] Commands', commands.length);
 
     if (!ffmpegPath) {
       return {
@@ -1910,7 +1923,7 @@ ipcMain.handle('cancel-sprite-sheet-job', async (event, jobId: string) => {
 
   activeSpriteSheetJobs.delete(jobId);
 
-  console.log('🛑 Cancelled sprite sheet job:', jobId);
+  console.log('[Main] Cancelled sprite sheet job', jobId);
   return {
     success: true,
     message: 'Job cancelled',
@@ -1929,13 +1942,16 @@ async function processSpriteSheetsInBackground(
       : path.resolve(job.outputDir);
 
     await fileIOManager.mkdir(absoluteOutputDir, 'normal');
-    console.log('📁 Sprite sheet output directory ready:', absoluteOutputDir);
+    console.log(
+      '[Main] Sprite sheet output directory ready',
+      absoluteOutputDir,
+    );
 
     // Process each command sequentially
     for (let i = 0; i < job.commands.length; i++) {
       const currentJob = activeSpriteSheetJobs.get(jobId);
       if (!currentJob) {
-        console.log('🛑 Job cancelled during processing:', jobId);
+        console.log('[Main] Job cancelled during processing', jobId);
         return;
       }
 
@@ -1955,10 +1971,10 @@ async function processSpriteSheetsInBackground(
       };
 
       console.log(
-        `🎬 Processing sprite sheet ${i + 1}/${job.commands.length} for job ${jobId}`,
+        `[Main] Processing sprite sheet${i + 1}/${job.commands.length} for job ${jobId}`,
       );
       console.log(
-        '🔧 FFmpeg command:',
+        '[Main] FFmpeg command',
         ['ffmpeg', ...adjustedCommand].join(' '),
       );
 
@@ -1981,7 +1997,7 @@ async function processSpriteSheetsInBackground(
         result.success = false;
         result.error = `FFmpeg process timed out after ${timeoutMs / 1000} seconds`;
       } else if (ffmpegResult.code === 0) {
-        console.log(`✅ Sprite sheet ${i + 1} generated successfully`);
+        console.log(`[Main] Sprite sheet${i + 1} generated successfully`);
 
         // Progressive loading: Notify renderer that this sheet is ready
         if (mainWindow) {
@@ -1999,7 +2015,7 @@ async function processSpriteSheetsInBackground(
         result.success = true;
       } else {
         console.error(
-          `❌ Sprite sheet ${i + 1} failed with exit code: ${ffmpegResult.code}`,
+          `[Main] Sprite sheet${i + 1} failed with exit code: ${ffmpegResult.code}`,
         );
         // Try to extract meaningful error from stderr
         const errorMatch =
@@ -2014,7 +2030,7 @@ async function processSpriteSheetsInBackground(
 
       if (!result.success) {
         console.error(
-          `❌ Failed to generate sprite sheet ${i + 1}/${job.commands.length}:`,
+          `[Main] Failed to generate sprite sheet${i + 1}/${job.commands.length}:`,
           result.error,
         );
 
@@ -2036,7 +2052,7 @@ async function processSpriteSheetsInBackground(
       }
 
       console.log(
-        `✅ Successfully generated sprite sheet ${i + 1}/${job.commands.length}`,
+        `[Main] Successfully generated sprite sheet${i + 1}/${job.commands.length}`,
       );
     }
 
@@ -2069,7 +2085,7 @@ async function processSpriteSheetsInBackground(
             lastError = err as Error;
             if (isEMFILEError(err) && attempt < 3) {
               console.warn(
-                `⚠️ EMFILE listing sprite sheet files, retry ${attempt}/3`,
+                `[Main] EMFILE listing sprite sheet files, retry${attempt}/3`,
               );
               await new Promise((r) => setTimeout(r, 500 * attempt));
             } else {
@@ -2079,7 +2095,7 @@ async function processSpriteSheetsInBackground(
         }
 
         console.log(
-          `✅ Generated ${outputFiles.length} sprite sheet files for job ${jobId}`,
+          `[Main] Generated${outputFiles.length} sprite sheet files for job ${jobId}`,
         );
 
         // Notify renderer about completion
@@ -2094,7 +2110,7 @@ async function processSpriteSheetsInBackground(
         const errorMessage =
           listError instanceof Error ? listError.message : 'Unknown error';
         console.error(
-          '❌ Error listing sprite sheet output files:',
+          '[Main] Error listing sprite sheet output files',
           errorMessage,
         );
       }
@@ -2102,7 +2118,7 @@ async function processSpriteSheetsInBackground(
       activeSpriteSheetJobs.delete(jobId);
     }
   } catch (error) {
-    console.error('❌ Background sprite sheet processing error:', error);
+    console.error('[Main] Background sprite sheet processing error', error);
 
     // Notify renderer about error
     if (mainWindow) {
@@ -2165,7 +2181,7 @@ async function writeFileWithRetry(
       lastError = error as Error;
       if (isEMFILEError(error) && attempt < maxRetries) {
         console.warn(
-          `⚠️ EMFILE error writing ${filePath}, retry ${attempt}/${maxRetries}`,
+          `[Main] EMFILE error writing${filePath}, retry ${attempt}/${maxRetries}`,
         );
         // Exponential backoff
         await new Promise((resolve) =>
@@ -2195,7 +2211,7 @@ ipcMain.handle(
   ) => {
     try {
       console.log(
-        `🎯 Processing ${fileBuffers.length} dropped files in main process (controlled concurrency)`,
+        `[Main] Processing${fileBuffers.length} dropped files in main process (controlled concurrency)`,
       );
 
       const tempDir = path.join(os.tmpdir(), 'dividr-uploads');
@@ -2229,7 +2245,7 @@ ipcMain.handle(
         const batch = fileBuffers.slice(batchStart, batchEnd);
 
         console.log(
-          `📁 Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(totalFiles / BATCH_SIZE)} (files ${batchStart + 1}-${batchEnd} of ${totalFiles})`,
+          `[Main] Processing batch${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(totalFiles / BATCH_SIZE)} (files ${batchStart + 1}-${batchEnd} of ${totalFiles})`,
         );
 
         // Process batch in parallel (within concurrency limits)
@@ -2265,7 +2281,7 @@ ipcMain.handle(
             }
 
             console.log(
-              `✅ [${globalIndex + 1}/${totalFiles}] Wrote: ${fileData.name} -> ${tempFilePath}`,
+              `[Main] [${globalIndex + 1}/${totalFiles}] Wrote: ${fileData.name} -> ${tempFilePath}`,
             );
 
             return {
@@ -2285,7 +2301,7 @@ ipcMain.handle(
             const errorMessage =
               error instanceof Error ? error.message : 'Unknown error';
             console.error(
-              `❌ [${globalIndex + 1}/${totalFiles}] Failed to write: ${fileData.name}:`,
+              `[Main] [${globalIndex + 1}/${totalFiles}] Failed to write: ${fileData.name}:`,
               errorMessage,
             );
 
@@ -2317,7 +2333,7 @@ ipcMain.handle(
       // Log file I/O stats
       const stats = fileIOManager.getStats();
       console.log(
-        `📊 File I/O Stats - Completed: ${stats.completedOperations}, Failed: ${stats.failedOperations}, EMFILE errors: ${stats.emfileErrors}`,
+        `[Main] File I/O Stats - Completed${stats.completedOperations}, Failed: ${stats.failedOperations}, EMFILE errors: ${stats.emfileErrors}`,
       );
 
       if (processedFiles.length === 0 && errors.length > 0) {
@@ -2339,7 +2355,7 @@ ipcMain.handle(
         },
       };
     } catch (error) {
-      console.error('Failed to process dropped files:', error);
+      console.error('[Main] Failed to process dropped files', error);
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
       return { success: false, error: errorMessage };
@@ -2366,14 +2382,17 @@ ipcMain.handle('cleanup-temp-files', async (event, filePaths: string[]) => {
             filePath.includes('dividr-uploads')
           ) {
             await fileIOManager.deleteFile(filePath, 'low');
-            console.log(`🗑️ Cleaned up temporary file: ${filePath}`);
+            console.log(`[Main] Cleaned up temporary file${filePath}`);
             return true;
           }
           return false;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : 'Unknown error';
-          console.warn(`⚠️ Failed to cleanup file ${filePath}:`, errorMessage);
+          console.warn(
+            `[Main] Failed to cleanup file${filePath}:`,
+            errorMessage,
+          );
           errors.push(`${path.basename(filePath)}: ${errorMessage}`);
           return false;
         }
@@ -2389,7 +2408,7 @@ ipcMain.handle('cleanup-temp-files', async (event, filePaths: string[]) => {
       errors: errors.length > 0 ? errors : undefined,
     };
   } catch (error) {
-    console.error('Failed to cleanup temporary files:', error);
+    console.error('[Main] Failed to cleanup temporary files', error);
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: errorMessage };
@@ -2399,7 +2418,7 @@ ipcMain.handle('cleanup-temp-files', async (event, filePaths: string[]) => {
 // IPC Handler for reading file content with EMFILE protection
 ipcMain.handle('read-file', async (event, filePath: string) => {
   try {
-    console.log(`📖 Reading file content from: ${filePath}`);
+    console.log(`[Main] Reading file content from${filePath}`);
 
     if (!fileIOManager.exists(filePath)) {
       throw new Error(`File not found: ${filePath}`);
@@ -2410,13 +2429,15 @@ ipcMain.handle('read-file', async (event, filePath: string) => {
       encoding: 'utf-8',
       priority: 'normal',
     });
-    console.log(`📄 Successfully read file, content length: ${content.length}`);
+    console.log(
+      `[Main] Successfully read file, content length${content.length}`,
+    );
 
     return content;
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error';
-    console.error(`❌ Failed to read file ${filePath}:`, errorMessage);
+    console.error(`[Main] Failed to read file${filePath}:`, errorMessage);
 
     // Provide helpful error message for EMFILE
     if (isEMFILEError(error)) {
@@ -2432,7 +2453,7 @@ ipcMain.handle('read-file', async (event, filePath: string) => {
 // IPC Handler for reading file as ArrayBuffer (for validation) with EMFILE protection
 ipcMain.handle('read-file-as-buffer', async (event, filePath: string) => {
   try {
-    console.log(`📖 Reading file as buffer from: ${filePath}`);
+    console.log(`[Main] Reading file as buffer from${filePath}`);
 
     if (!fileIOManager.exists(filePath)) {
       throw new Error(`File not found: ${filePath}`);
@@ -2441,7 +2462,7 @@ ipcMain.handle('read-file-as-buffer', async (event, filePath: string) => {
     // Read file as Buffer using controlled I/O manager
     const buffer = await fileIOManager.readFileAsBuffer(filePath, 'normal');
     console.log(
-      `📄 Successfully read file buffer, size: ${buffer.length} bytes`,
+      `[Main] Successfully read file buffer, size${buffer.length} bytes`,
     );
 
     // Convert Node Buffer to ArrayBuffer for transfer to renderer
@@ -2453,7 +2474,7 @@ ipcMain.handle('read-file-as-buffer', async (event, filePath: string) => {
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error';
     console.error(
-      `❌ Failed to read file as buffer ${filePath}:`,
+      `[Main] Failed to read file as buffer${filePath}:`,
       errorMessage,
     );
 
@@ -2499,7 +2520,7 @@ ipcMain.handle('get-io-status', async () => {
 // IPC Handler for cancelling background tasks for a specific media
 ipcMain.handle('cancel-media-tasks', async (event, mediaId: string) => {
   const cancelledCount = backgroundTaskQueue.cancelTasksForMedia(mediaId);
-  console.log(`🛑 Cancelled ${cancelledCount} tasks for media ${mediaId}`);
+  console.log(`[Main] Cancelled${cancelledCount} tasks for media ${mediaId}`);
   return { success: true, cancelledCount };
 });
 
@@ -2539,14 +2560,14 @@ ipcMain.handle('create-preview-url', async (event, filePath: string) => {
       const encodedPath = encodeURIComponent(filePath);
       const serverUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodedPath}`;
 
-      console.log(`🎬 Created server URL for media: ${serverUrl}`);
+      console.log(`[Main] Created server URL for media${serverUrl}`);
       return { success: true, url: serverUrl };
     }
 
     // For other file types, return error
     return { success: false, error: 'Unsupported file type' };
   } catch (error) {
-    console.error('Failed to create preview URL:', error);
+    console.error('[Main] Failed to create preview URL', error);
     return { success: false, error: error.message };
   }
 });
@@ -2580,7 +2601,7 @@ ipcMain.handle(
         total: fileSize,
       };
     } catch (error) {
-      console.error('Failed to get file stream:', error);
+      console.error('[Main] Failed to get file stream', error);
       return { success: false, error: error.message };
     }
   },
@@ -2645,7 +2666,7 @@ ipcMain.handle('ffmpeg:detect-frame-rate', async (event, videoPath: string) => {
     });
 
     ffprobe.stderr.on('data', (data) => {
-      console.error(`ffprobe stderr: ${data}`);
+      console.error(`[Main] ffprobe stderr${data}`);
     });
 
     ffprobe.on('close', (code) => {
@@ -2662,7 +2683,7 @@ ipcMain.handle('ffmpeg:detect-frame-rate', async (event, videoPath: string) => {
             resolve(30);
           }
         } catch (err) {
-          console.error('Failed to parse ffprobe output:', err);
+          console.error('[Main] Failed to parse ffprobe output', err);
           resolve(30);
         }
       } else {
@@ -2705,7 +2726,7 @@ ipcMain.handle('ffmpeg:get-duration', async (event, filePath: string) => {
     });
 
     ffprobe.stderr.on('data', (data) => {
-      console.error(`ffprobe stderr: ${data}`);
+      console.error(`[Main] ffprobe stderr${data}`);
     });
 
     ffprobe.on('close', (code) => {
@@ -2717,7 +2738,7 @@ ipcMain.handle('ffmpeg:get-duration', async (event, filePath: string) => {
           if (result.format && result.format.duration) {
             const duration = parseFloat(result.format.duration);
             console.log(
-              `📏 Duration from format: ${duration}s for ${filePath}`,
+              `[Main] Duration from format${duration}s for ${filePath}`,
             );
             resolve(duration);
             return;
@@ -2729,7 +2750,7 @@ ipcMain.handle('ffmpeg:get-duration', async (event, filePath: string) => {
               if (stream.duration && parseFloat(stream.duration) > 0) {
                 const duration = parseFloat(stream.duration);
                 console.log(
-                  `📏 Duration from stream: ${duration}s for ${filePath}`,
+                  `[Main] Duration from stream${duration}s for ${filePath}`,
                 );
                 resolve(duration);
                 return;
@@ -2741,23 +2762,23 @@ ipcMain.handle('ffmpeg:get-duration', async (event, filePath: string) => {
           const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(filePath);
           const fallbackDuration = isImage ? 5 : 60;
           console.warn(
-            `⚠️ Could not determine duration for ${filePath}, using fallback: ${fallbackDuration}s`,
+            `[Main] Could not determine duration for${filePath}, using fallback: ${fallbackDuration}s`,
           );
           resolve(fallbackDuration);
         } catch (err) {
-          console.error('Failed to parse ffprobe output:', err);
+          console.error('[Main] Failed to parse ffprobe output', err);
           const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(filePath);
           resolve(isImage ? 5 : 60); // Fallback
         }
       } else {
-        console.error(`ffprobe failed with code ${code} for ${filePath}`);
+        console.error(`[Main] ffprobe failed with code${code} for ${filePath}`);
         const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(filePath);
         resolve(isImage ? 5 : 60); // Fallback
       }
     });
 
     ffprobe.on('error', (err) => {
-      console.error(`ffprobe error for ${filePath}:`, err.message);
+      console.error(`[Main] ffprobe error for${filePath}:`, err.message);
       const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(filePath);
       resolve(isImage ? 5 : 60); // Fallback
     });
@@ -2814,8 +2835,11 @@ ipcMain.handle('getVideoDimensions', async (_event, filePath: string) => {
   });
 });
 ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
-  console.log('🎯 MAIN PROCESS: ffmpegRun handler called!');
-  console.log('🎯 MAIN PROCESS: Received job:', JSON.stringify(job, null, 2));
+  console.log('[Main] MAIN PROCESS: ffmpegRun handler called!');
+  console.log(
+    '[Main] MAIN PROCESS: Received job',
+    JSON.stringify(job, null, 2),
+  );
 
   const location = job.outputPath || 'public/output/';
   // Ensure we have an absolute path for the location
@@ -2838,11 +2862,14 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
 
         // Write subtitle content to file
         fs.writeFileSync(tempSubtitlePath, job.subtitleContent, 'utf8');
-        console.log('📝 Created temporary subtitle file:', tempSubtitlePath);
+        console.log('[Main] Created temporary subtitle file', tempSubtitlePath);
 
         // Update the job to use the absolute path instead of just the filename
         job.operations.subtitles = tempSubtitlePath;
-        console.log('📁 Updated subtitle path to absolute:', tempSubtitlePath);
+        console.log(
+          '[Main] Updated subtitle path to absolute',
+          tempSubtitlePath,
+        );
       }
 
       // Verify subtitle file exists before running FFmpeg
@@ -2850,7 +2877,7 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
         if (!fs.existsSync(tempSubtitlePath)) {
           throw new Error(`Subtitle file does not exist: ${tempSubtitlePath}`);
         }
-        console.log('✅ Subtitle file verified to exist:', tempSubtitlePath);
+        console.log('[Main] Subtitle file verified to exist', tempSubtitlePath);
       }
 
       // Build proper FFmpeg command
@@ -2861,8 +2888,8 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
       );
       const args = ['-progress', 'pipe:1', '-y', ...baseArgs];
 
-      console.log('🎬 COMPLETE FFMPEG COMMAND:');
-      console.log(['ffmpeg', ...args].join(' '));
+      console.log('[Main] COMPLETE FFMPEG COMMAND');
+      console.log('[Main] Log', ['ffmpeg', ...args].join(' '));
 
       return new Promise((resolve, reject) => {
         // Double-check subtitle file still exists right before spawning
@@ -2921,11 +2948,11 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
             try {
               fs.unlinkSync(tempSubtitlePath);
               console.log(
-                '🗑️ Cleaned up temporary subtitle file after FFmpeg completion',
+                '[Main] Cleaned up temporary subtitle file after FFmpeg completion',
               );
             } catch (cleanupError) {
               console.warn(
-                '⚠️ Failed to cleanup temporary subtitle file after completion:',
+                '[Main] Failed to cleanup temporary subtitle file after completion',
                 cleanupError,
               );
             }
@@ -2942,12 +2969,12 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
                 logs.includes('Exiting normally, received signal')));
 
           if (wasCancelled) {
-            console.log('🛑 FFmpeg process was cancelled by user');
+            console.log('[Main] FFmpeg process was cancelled by user');
 
             // Delete the incomplete output file
             const outputFilePath = path.join(absoluteLocation, job.output);
             console.log(
-              '🔍 Checking for incomplete output file at:',
+              '[Main] Checking for incomplete output file at',
               outputFilePath,
             );
 
@@ -2955,18 +2982,18 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
               try {
                 fs.unlinkSync(outputFilePath);
                 console.log(
-                  '🗑️ Deleted incomplete output file:',
+                  '[Main] Deleted incomplete output file',
                   outputFilePath,
                 );
               } catch (deleteError) {
                 console.warn(
-                  '⚠️ Failed to delete incomplete output file:',
+                  '[Main] Failed to delete incomplete output file',
                   deleteError,
                 );
               }
             } else {
               console.log(
-                'ℹ️ No output file found to delete (may not have been created yet)',
+                '[Main] ℹ No output file found to delete (may not have been created yet)',
               );
             }
 
@@ -2980,7 +3007,7 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
           }
 
           console.log(
-            `🏁 FFmpeg process finished with code: ${code}, signal: ${signal}`,
+            `[Main] FFmpeg process finished with code${code}, signal: ${signal}`,
           );
 
           if (code === 0) {
@@ -2997,18 +3024,18 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
           if (ffmpeg.stderr) ffmpeg.stderr.removeAllListeners();
           ffmpeg.removeAllListeners();
           clearCurrentFfmpegProcess();
-          console.log('❌ FFmpeg process error:', err.message);
+          console.log('[Main] FFmpeg process error', err.message);
 
           // Cleanup temporary subtitle file on error
           if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
             try {
               fs.unlinkSync(tempSubtitlePath);
               console.log(
-                '🗑️ Cleaned up temporary subtitle file after FFmpeg error',
+                '[Main] Cleaned up temporary subtitle file after FFmpeg error',
               );
             } catch (cleanupError) {
               console.warn(
-                '⚠️ Failed to cleanup temporary subtitle file after error:',
+                '[Main] Failed to cleanup temporary subtitle file after error',
                 cleanupError,
               );
             }
@@ -3018,18 +3045,21 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
         });
       });
     } catch (error) {
-      console.log('💥 Setup error occurred before FFmpeg could start:', error);
+      console.log(
+        '[Main] Setup error occurred before FFmpeg could start',
+        error,
+      );
 
       // Only cleanup on setup errors, not FFmpeg execution errors
       if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
         try {
           fs.unlinkSync(tempSubtitlePath);
           console.log(
-            '🗑️ Cleaned up temporary subtitle file due to setup error',
+            '[Main] Cleaned up temporary subtitle file due to setup error',
           );
         } catch (cleanupError) {
           console.warn(
-            '⚠️ Failed to cleanup temporary subtitle file after setup error:',
+            '[Main] Failed to cleanup temporary subtitle file after setup error',
             cleanupError,
           );
         }
@@ -3072,7 +3102,7 @@ async function runProxyFFmpeg(
   }
 
   console.log(
-    `🎬 FFmpeg proxy command (${encoderConfig.description}):`,
+    `[Main] FFmpeg proxy command (${encoderConfig.description}):`,
     [ffmpegBinaryPath, ...args].join(' '),
   );
 
@@ -3100,7 +3130,10 @@ async function runProxyFFmpeg(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`❌ FFmpeg spawn error (${encoderConfig.type}):`, message);
+    console.error(
+      `[Main] FFmpeg spawn error (${encoderConfig.type}):`,
+      message,
+    );
     return {
       success: false,
       code: -1,
@@ -3112,11 +3145,11 @@ async function runProxyFFmpeg(
 // IPC Handler for generating proxy files for 4K video optimization
 // Uses hybrid encoder selection: GPU hardware encoder if available, CPU fallback otherwise
 ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
-  console.log('🔄 generate-proxy called for:', inputPath);
+  console.log('[Main] generate-proxy called for', inputPath);
 
   // Check if there is already an active generation for this file
   if (activeProxyGenerations.has(inputPath)) {
-    console.log('🔄 Joining existing proxy generation for:', inputPath);
+    console.log('[Main] Joining existing proxy generation for', inputPath);
     return activeProxyGenerations.get(inputPath);
   }
 
@@ -3137,7 +3170,7 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
 
       // Check if proxy already exists
       if (fs.existsSync(outputPath)) {
-        console.log('✅ Proxy already exists at:', outputPath);
+        console.log('[Main] Proxy already exists at', outputPath);
         // Verify it's valid (size > 0)
         const stats = fs.statSync(outputPath);
         if (stats.size > 0) {
@@ -3149,26 +3182,26 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
 
       // Use a temporary file during generation to prevent incomplete reads
       const tempPath = outputPath + '.tmp';
-      console.log(`📝 Writing to temp file: ${tempPath}`);
+      console.log(`[Main] Writing to temp file${tempPath}`);
 
       // Clean up any stale temp file
       if (fs.existsSync(tempPath)) {
         try {
           fs.unlinkSync(tempPath);
         } catch (e) {
-          console.warn('⚠️ Could not cleanup old temp proxy:', e);
+          console.warn('[Main] Could not cleanup old temp proxy', e);
         }
       }
 
       // Get optimal encoder configuration (hardware if available, software fallback)
       const encoderConfig = await getProxyEncoderConfig(ffmpegPath);
 
-      console.log('🚀 Starting proxy generation to:', outputPath);
-      console.log(`🎮 Using encoder: ${encoderConfig.description}`);
+      console.log('[Main] Starting proxy generation to', outputPath);
+      console.log(`[Main] Using encoder${encoderConfig.description}`);
       const startTime = Date.now();
       const startTimeString = new Date(startTime).toLocaleTimeString();
       console.log(
-        `⏱️ Proxy generation START: ${startTimeString} (${startTime})`,
+        `[Main] ⏱ Proxy generation START${startTimeString} (${startTime})`,
       );
 
       // Attempt proxy generation with selected encoder
@@ -3186,22 +3219,22 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
       // If hardware encoder failed, fallback to software encoding
       if (!result.success && encoderConfig.type !== 'software') {
         console.warn(
-          `⚠️ Hardware encoder ${encoderConfig.type} failed (code: ${result.code}), falling back to software encoding`,
+          `[Main] Hardware encoder${encoderConfig.type} failed (code: ${result.code}), falling back to software encoding`,
         );
-        console.warn(`   Error: ${result.stderr?.slice(-200)}`);
+        console.warn(`[Main] Error${result.stderr?.slice(-200)}`);
 
         // Clean up any partial temp file from failed attempt
         if (fs.existsSync(tempPath)) {
           try {
             fs.unlinkSync(tempPath);
           } catch (e) {
-            console.warn('⚠️ Could not cleanup temp file after failure:', e);
+            console.warn('[Main] Could not cleanup temp file after failure', e);
           }
         }
 
         // Retry with software encoder
         const softwareConfig = getSoftwareEncoderConfig();
-        console.log(`🔄 Retrying with ${softwareConfig.description}...`);
+        console.log(`[Main] Retrying with${softwareConfig.description}...`);
 
         result = await runProxyFFmpeg(
           inputPath,
@@ -3219,8 +3252,10 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
       const endTimeString = new Date(endTime).toLocaleTimeString();
       const durationMs = endTime - startTime;
 
-      console.log(`⏱️ Proxy generation END: ${endTimeString} (${endTime})`);
-      console.log(`⏱️ Duration: ${durationMs}ms`);
+      console.log(
+        `[Main] ⏱ Proxy generation END${endTimeString} (${endTime})`,
+      );
+      console.log(`[Main] ⏱ Duration${durationMs}ms`);
 
       if (result.success) {
         try {
@@ -3231,7 +3266,7 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
           if (fs.existsSync(tempPath)) {
             fs.renameSync(tempPath, outputPath);
             console.log(
-              '✅ Proxy generation complete (renamed temp -> final):',
+              '[Main] Proxy generation complete (renamed temp -> final)',
               outputPath,
             );
 
@@ -3259,20 +3294,20 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
             };
           } else {
             console.error(
-              '❌ Temp proxy file missing after successful FFmpeg exit',
+              '[Main] Temp proxy file missing after successful FFmpeg exit',
             );
             return { success: false, error: 'Temp proxy file missing' };
           }
         } catch (err) {
-          console.error('❌ Failed to rename temp proxy file:', err);
+          console.error('[Main] Failed to rename temp proxy file', err);
           return {
             success: false,
             error: 'Failed to finalize proxy file',
           };
         }
       } else {
-        console.error(`❌ Proxy generation failed with code: ${result.code}`);
-        console.error(`❌ FFmpeg stderr:`, result.stderr);
+        console.error(`[Main] Proxy generation failed with code${result.code}`);
+        console.error('[Main] FFmpeg stderr', result.stderr);
 
         // Cleanup temp file
         if (fs.existsSync(tempPath)) {
@@ -3284,7 +3319,7 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
         };
       }
     } catch (error) {
-      console.error('Failed to generate proxy:', error);
+      console.error('[Main] Failed to generate proxy', error);
       return { success: false, error: error.message };
     } finally {
       // Remove from active generations map when done
@@ -3325,7 +3360,7 @@ ipcMain.handle('get-hardware-capabilities', async () => {
       },
     };
   } catch (error) {
-    console.error('Failed to detect hardware capabilities:', error);
+    console.error('[Main] Failed to detect hardware capabilities', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -3382,9 +3417,11 @@ ipcMain.handle(
       vad?: boolean;
     },
   ) => {
-    console.log('🎤 MAIN PROCESS: whisper:transcribe handler called (Python)');
-    console.log('   Audio path:', audioPath);
-    console.log('   Options:', options);
+    console.log(
+      '[Main] MAIN PROCESS: whisper:transcribe handler called (Python)',
+    );
+    console.log('[Main] Audio path', audioPath);
+    console.log('[Main] Options', options);
 
     try {
       await ensurePythonInitialized('ipc:whisper:transcribe');
@@ -3397,10 +3434,10 @@ ipcMain.handle(
         },
       });
 
-      console.log('✅ Transcription successful');
+      console.log('[Main] Transcription successful');
       return { success: true, result };
     } catch (error) {
-      console.error('❌ Whisper transcription failed:', error);
+      console.error('[Main] Whisper transcription failed', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3411,7 +3448,7 @@ ipcMain.handle(
 
 // IPC Handler to cancel transcription
 ipcMain.handle('whisper:cancel', async () => {
-  console.log('🛑 MAIN PROCESS: whisper:cancel handler called');
+  console.log('[Main] MAIN PROCESS: whisper:cancel handler called');
 
   const cancelled = cancelTranscription();
   return {
@@ -3424,7 +3461,7 @@ ipcMain.handle('whisper:cancel', async () => {
 
 // IPC Handler to check Whisper status
 ipcMain.handle('whisper:status', async () => {
-  console.log('📊 MAIN PROCESS: whisper:status handler called');
+  console.log('[Main] MAIN PROCESS: whisper:status handler called');
 
   // Try to initialize if not already initialized (but don't fail if it doesn't work)
   if (!getPythonWhisperStatus().available) {
@@ -3432,7 +3469,7 @@ ipcMain.handle('whisper:status', async () => {
       await ensurePythonInitialized('ipc:whisper:status');
     } catch (error) {
       console.log(
-        '⚠️ Python initialization failed during status check:',
+        '[Main] Python initialization failed during status check',
         error,
       );
       // Continue to return status even if initialization failed
@@ -3440,7 +3477,7 @@ ipcMain.handle('whisper:status', async () => {
   }
 
   const status = getPythonWhisperStatus();
-  console.log('   Status:', status);
+  console.log('[Main] Status', status);
 
   return status;
 });
@@ -3463,10 +3500,10 @@ ipcMain.handle(
       engine?: 'ffmpeg' | 'deepfilter';
     },
   ) => {
-    console.log('🔇 MAIN PROCESS: media-tools:noise-reduce handler called');
-    console.log('   Input path:', inputPath);
-    console.log('   Output path:', outputPath);
-    console.log('   Options:', options);
+    console.log('[Main] MAIN PROCESS: media-tools:noise-reduce handler called');
+    console.log('[Main] Input path', inputPath);
+    console.log('[Main] Output path', outputPath);
+    console.log('[Main] Options', options);
 
     const engine = options?.engine || 'ffmpeg'; // Default to FFmpeg for safety/speed
 
@@ -3487,11 +3524,11 @@ ipcMain.handle(
           },
         );
 
-        console.log('✅ DeepFilter noise reduction successful');
+        console.log('[Main] DeepFilter noise reduction successful');
         return { success: true, result };
       } else {
         // --- FFmpeg (Native) ---
-        console.log('⚡ Using FFmpeg for noise reduction');
+        console.log('[Main] Using FFmpeg for noise reduction');
 
         if (!ffmpegPath) {
           throw new Error('FFmpeg binary not available');
@@ -3509,7 +3546,7 @@ ipcMain.handle(
           throw new Error(`RNNoise model not found: ${modelPath}`);
         }
 
-        console.log('   Denoise filter:', filter);
+        console.log('[Main] Denoise filter', filter);
 
         // Build command
         // Note: buildArnnDenCommand returns args for "ffmpeg -i input -af arnndn..."
@@ -3517,7 +3554,7 @@ ipcMain.handle(
         // We need to add -y to overwrite output if it exists (standard behavior)
         args.unshift('-y');
 
-        console.log('   Command:', `ffmpeg ${args.join(' ')}`);
+        console.log('[Main] Command', `ffmpeg${args.join(' ')}`);
 
         const runFfmpegDenoise = async (runArgs: string[]) => {
           let durationSec = 0;
@@ -3583,7 +3620,7 @@ ipcMain.handle(
           }
 
           console.error(
-            '❌ FFmpeg noise reduction failed. Code:',
+            '[Main] FFmpeg noise reduction failed. Code',
             ffmpegResult.code,
           );
           return { success: false, stderrLog };
@@ -3591,7 +3628,7 @@ ipcMain.handle(
 
         const firstAttempt = await runFfmpegDenoise(args);
         if (firstAttempt.success) {
-          console.log('✅ FFmpeg noise reduction successful');
+          console.log('[Main] FFmpeg noise reduction successful');
           event.sender.send('media-tools:progress', {
             stage: 'complete',
             progress: 100,
@@ -3624,7 +3661,7 @@ ipcMain.handle(
         };
       }
     } catch (error) {
-      console.error('❌ Noise reduction failed:', error);
+      console.error('[Main] Noise reduction failed', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3635,7 +3672,7 @@ ipcMain.handle(
 
 // IPC Handler to cancel media-tools operation
 ipcMain.handle('media-tools:cancel', async () => {
-  console.log('🛑 MAIN PROCESS: media-tools:cancel handler called');
+  console.log('[Main] MAIN PROCESS: media-tools:cancel handler called');
 
   const cancelled = cancelCurrentOperation();
   return {
@@ -3648,7 +3685,7 @@ ipcMain.handle('media-tools:cancel', async () => {
 
 // IPC Handler to check media-tools status
 ipcMain.handle('media-tools:status', async () => {
-  console.log('📊 MAIN PROCESS: media-tools:status handler called');
+  console.log('[Main] MAIN PROCESS: media-tools:status handler called');
 
   // Try to initialize if not already initialized
   if (!getMediaToolsStatus().available) {
@@ -3656,14 +3693,14 @@ ipcMain.handle('media-tools:status', async () => {
       await ensurePythonInitialized('ipc:media-tools:status');
     } catch (error) {
       console.log(
-        '⚠️ Media tools initialization failed during status check:',
+        '[Main] Media tools initialization failed during status check',
         error,
       );
     }
   }
 
   const status = getMediaToolsStatus();
-  console.log('   Status:', status);
+  console.log('[Main] Status', status);
 
   return status;
 });
@@ -3684,17 +3721,17 @@ ipcMain.handle(
   'noise-reduction:get-output-path',
   async (_event, inputPath: string, engine?: string) => {
     console.log(
-      '📁 MAIN PROCESS: noise-reduction:get-output-path handler called',
+      '[Main] MAIN PROCESS: noise-reduction:get-output-path handler called',
     );
-    console.log('   Input path:', inputPath);
-    console.log('   Engine:', engine);
+    console.log('[Main] Input path', inputPath);
+    console.log('[Main] Engine', engine);
 
     try {
       // Ensure directory exists
       if (!fs.existsSync(NOISE_REDUCTION_TEMP_DIR)) {
         fs.mkdirSync(NOISE_REDUCTION_TEMP_DIR, { recursive: true });
         console.log(
-          '   Created noise reduction temp directory:',
+          '[Main] Created noise reduction temp directory',
           NOISE_REDUCTION_TEMP_DIR,
         );
       }
@@ -3712,10 +3749,10 @@ ipcMain.handle(
         `nr_${hash}${engineTag}_${timestamp}.wav`,
       );
 
-      console.log('   Generated output path:', outputPath);
+      console.log('[Main] Generated output path', outputPath);
       return { success: true, outputPath };
     } catch (error) {
-      console.error('❌ Failed to generate output path:', error);
+      console.error('[Main] Failed to generate output path', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3729,9 +3766,9 @@ ipcMain.handle(
   'noise-reduction:cleanup-files',
   async (_event, filePaths: string[]) => {
     console.log(
-      '🗑️ MAIN PROCESS: noise-reduction:cleanup-files handler called',
+      '[Main] MAIN PROCESS: noise-reduction:cleanup-files handler called',
     );
-    console.log('   Files to clean:', filePaths.length);
+    console.log('[Main] Files to clean', filePaths.length);
 
     try {
       let cleanedCount = 0;
@@ -3745,19 +3782,19 @@ ipcMain.handle(
           ) {
             fs.unlinkSync(filePath);
             cleanedCount++;
-            console.log('   Cleaned up:', filePath);
+            console.log('[Main] Cleaned up', filePath);
           } else {
-            console.warn('   Skipped (not in temp dir):', filePath);
+            console.warn('[Main] Skipped (not in temp dir)', filePath);
           }
         } catch (error) {
-          console.warn(`   Failed to cleanup ${filePath}:`, error);
+          console.warn(`[Main] Failed to cleanup${filePath}:`, error);
         }
       }
 
-      console.log(`✅ Cleaned up ${cleanedCount} noise reduction files`);
+      console.log(`[Main] Cleaned up${cleanedCount} noise reduction files`);
       return { success: true, cleanedCount };
     } catch (error) {
-      console.error('❌ Failed to cleanup noise reduction files:', error);
+      console.error('[Main] Failed to cleanup noise reduction files', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3771,9 +3808,9 @@ ipcMain.handle(
   'noise-reduction:create-preview-url',
   async (_event, filePath: string) => {
     console.log(
-      '🔗 MAIN PROCESS: noise-reduction:create-preview-url handler called',
+      '[Main] MAIN PROCESS: noise-reduction:create-preview-url handler called',
     );
-    console.log('   File path:', filePath);
+    console.log('[Main] File path', filePath);
 
     try {
       // Read the file and return base64 data for creating blob URL in renderer
@@ -3785,10 +3822,10 @@ ipcMain.handle(
       const base64 = buffer.toString('base64');
       const mimeType = 'audio/wav';
 
-      console.log('✅ Created preview URL data, size:', buffer.length);
+      console.log('[Main] Created preview URL data, size', buffer.length);
       return { success: true, base64, mimeType };
     } catch (error) {
-      console.error('❌ Failed to create preview URL:', error);
+      console.error('[Main] Failed to create preview URL', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3803,17 +3840,17 @@ ipcMain.handle(
 
 // IPC Handler to check runtime status
 ipcMain.handle('runtime:status', async () => {
-  console.log('📊 MAIN PROCESS: runtime:status handler called');
+  console.log('[Main] MAIN PROCESS: runtime:status handler called');
 
   const status = await checkRuntimeStatus();
-  console.log('   Runtime status:', status);
+  console.log('[Main] Runtime status', status);
 
   return status;
 });
 
 // IPC Handler to start runtime download
 ipcMain.handle('runtime:download', async (event) => {
-  console.log('📥 MAIN PROCESS: runtime:download handler called');
+  console.log('[Main] MAIN PROCESS: runtime:download handler called');
 
   try {
     const result = await downloadRuntime((progress) => {
@@ -3821,10 +3858,10 @@ ipcMain.handle('runtime:download', async (event) => {
       event.sender.send('runtime:download-progress', progress);
     });
 
-    console.log('   Download result:', result);
+    console.log('[Main] Download result', result);
     return result;
   } catch (error) {
-    console.error('❌ Runtime download failed:', error);
+    console.error('[Main] Runtime download failed', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -3834,7 +3871,7 @@ ipcMain.handle('runtime:download', async (event) => {
 
 // IPC Handler to cancel runtime download
 ipcMain.handle('runtime:cancel-download', async () => {
-  console.log('🛑 MAIN PROCESS: runtime:cancel-download handler called');
+  console.log('[Main] MAIN PROCESS: runtime:cancel-download handler called');
 
   const result = await cancelDownload();
   return result;
@@ -3842,7 +3879,7 @@ ipcMain.handle('runtime:cancel-download', async () => {
 
 // IPC Handler to verify runtime installation
 ipcMain.handle('runtime:verify', async () => {
-  console.log('🔍 MAIN PROCESS: runtime:verify handler called');
+  console.log('[Main] MAIN PROCESS: runtime:verify handler called');
 
   const isValid = await verifyInstallation();
   return { valid: isValid };
@@ -3850,7 +3887,7 @@ ipcMain.handle('runtime:verify', async () => {
 
 // IPC Handler to remove runtime
 ipcMain.handle('runtime:remove', async () => {
-  console.log('🗑️ MAIN PROCESS: runtime:remove handler called');
+  console.log('[Main] MAIN PROCESS: runtime:remove handler called');
 
   const result = await removeRuntime();
   return result;
@@ -3861,17 +3898,19 @@ ipcMain.handle('runtime:remove', async () => {
 // ============================================================================
 
 ipcMain.handle('release:check-updates', async () => {
-  console.log('🔎 MAIN PROCESS: release:check-updates handler called');
+  console.log('[Main] MAIN PROCESS: release:check-updates handler called');
   return checkForReleaseUpdates();
 });
 
 ipcMain.handle('release:get-update-cache', async () => {
-  console.log('📦 MAIN PROCESS: release:get-update-cache handler called');
+  console.log('[Main] MAIN PROCESS: release:get-update-cache handler called');
   return readReleaseUpdateCache();
 });
 
 ipcMain.handle('release:get-installed-release', async () => {
-  console.log('📘 MAIN PROCESS: release:get-installed-release handler called');
+  console.log(
+    '[Main] MAIN PROCESS: release:get-installed-release handler called',
+  );
   try {
     return await getInstalledReleaseDetails();
   } catch (error) {
@@ -3884,8 +3923,8 @@ ipcMain.handle('release:get-installed-release', async () => {
 
 // IPC Handler to check if a media file has audio
 ipcMain.handle('media:has-audio', async (event, filePath: string) => {
-  console.log('🔊 MAIN PROCESS: media:has-audio handler called');
-  console.log('   File path:', filePath);
+  console.log('[Main] MAIN PROCESS: media:has-audio handler called');
+  console.log('[Main] File path', filePath);
 
   if (!ffmpegPath) {
     return {
@@ -3922,7 +3961,7 @@ ipcMain.handle('media:has-audio', async (event, filePath: string) => {
         // If there's audio stream info in stdout, the file has audio
         const hasAudio = stdout.includes('[STREAM]');
 
-        console.log(`   Has audio: ${hasAudio} (exit code: ${code})`);
+        console.log(`[Main] Has audio${hasAudio} (exit code: ${code})`);
 
         resolve({
           success: true,
@@ -3931,7 +3970,7 @@ ipcMain.handle('media:has-audio', async (event, filePath: string) => {
       });
 
       ffprobe.on('error', (error) => {
-        console.error('   FFprobe error:', error);
+        console.error('[Main] FFprobe error', error);
         resolve({
           success: false,
           hasAudio: false,
@@ -3940,7 +3979,7 @@ ipcMain.handle('media:has-audio', async (event, filePath: string) => {
       });
     });
   } catch (error) {
-    console.error('❌ Error checking audio:', error);
+    console.error('[Main] Error checking audio', error);
     return {
       success: false,
       hasAudio: false,
@@ -4006,28 +4045,28 @@ const transcodeOutputDir = path.join(os.tmpdir(), 'dividr-transcode');
 if (!fs.existsSync(transcodeOutputDir)) {
   fs.mkdirSync(transcodeOutputDir, { recursive: true });
 }
-console.log(`📁 Transcode output directory: ${transcodeOutputDir}`);
+console.log(`[Main] Transcode output directory${transcodeOutputDir}`);
 
 // IPC Handler to check if a file requires transcoding
 ipcMain.handle(
   'transcode:requires-transcoding',
   async (event, filePath: string) => {
     console.log(
-      '🔍 MAIN PROCESS: transcode:requires-transcoding handler called',
+      '[Main] MAIN PROCESS: transcode:requires-transcoding handler called',
     );
-    console.log('   File path:', filePath);
+    console.log('[Main] File path', filePath);
 
     const ext = path.extname(filePath).toLowerCase();
 
     // Check if extension requires transcoding
     if (FORMATS_REQUIRING_TRANSCODE.includes(ext)) {
-      console.log(`   ✅ File requires transcoding (${ext} format)`);
+      console.log(`[Main] File requires transcoding (${ext} format)`);
       return { requiresTranscoding: true, reason: `${ext} format` };
     }
 
     // For other formats, check the actual codec
     if (!ffprobePath?.path) {
-      console.log('   ⚠️ FFprobe not available, cannot check codec');
+      console.log('[Main] FFprobe not available, cannot check codec');
       return { requiresTranscoding: false, reason: 'Cannot detect codec' };
     }
 
@@ -4065,16 +4104,16 @@ ipcMain.handle(
         codecResult &&
         UNSUPPORTED_CODECS.some((c) => codecResult.includes(c))
       ) {
-        console.log(`   ✅ File requires transcoding (${codecResult} codec)`);
+        console.log(`[Main] File requires transcoding (${codecResult} codec)`);
         return { requiresTranscoding: true, reason: `${codecResult} codec` };
       }
 
       console.log(
-        `   ❌ File does not require transcoding (codec: ${codecResult || 'unknown'})`,
+        `[Main] File does not require transcoding (codec${codecResult || 'unknown'})`,
       );
       return { requiresTranscoding: false, reason: 'Supported format' };
     } catch (error) {
-      console.warn('   ⚠️ Could not detect codec:', error);
+      console.warn('[Main] Could not detect codec', error);
       return { requiresTranscoding: false, reason: 'Cannot detect codec' };
     }
   },
@@ -4093,9 +4132,9 @@ ipcMain.handle(
       crf?: number;
     },
   ) => {
-    console.log('🎬 MAIN PROCESS: transcode:start handler called');
-    console.log('   Media ID:', options.mediaId);
-    console.log('   Input path:', options.inputPath);
+    console.log('[Main] MAIN PROCESS: transcode:start handler called');
+    console.log('[Main] Media ID', options.mediaId);
+    console.log('[Main] Input path', options.inputPath);
 
     if (!ffmpegPath) {
       return { success: false, error: 'FFmpeg not available' };
@@ -4156,9 +4195,9 @@ ipcMain.handle(
 
     activeTranscodeJobs.set(jobId, job);
 
-    console.log(`   Job ID: ${jobId}`);
-    console.log(`   Output path: ${outputPath}`);
-    console.log(`   Duration: ${duration.toFixed(2)}s`);
+    console.log(`[Main] Job ID${jobId}`);
+    console.log(`[Main] Output path${outputPath}`);
+    console.log(`[Main] Duration${duration.toFixed(2)}s`);
 
     // Build FFmpeg arguments
     const args = [
@@ -4186,7 +4225,7 @@ ipcMain.handle(
       outputPath,
     ];
 
-    console.log(`   FFmpeg command: ffmpeg ${args.join(' ')}`);
+    console.log(`[Main] FFmpeg command: ffmpeg${args.join(' ')}`);
 
     let stderrOutput = '';
 
@@ -4254,7 +4293,7 @@ ipcMain.handle(
           const processingTime =
             job.completedAt - (job.startedAt || job.completedAt);
           console.log(
-            `✅ Transcode completed: ${jobId} in ${(processingTime / 1000).toFixed(1)}s`,
+            `[Main] Transcode completed${jobId} in ${(processingTime / 1000).toFixed(1)}s`,
           );
 
           // Create preview URL for the transcoded file
@@ -4273,14 +4312,14 @@ ipcMain.handle(
         }
 
         if (job.status === 'cancelled') {
-          console.log(`🚫 Transcode cancelled: ${jobId}`);
+          console.log(`[Main] Transcode cancelled${jobId}`);
 
           // Clean up output file
           if (fs.existsSync(outputPath)) {
             try {
               fs.unlinkSync(outputPath);
             } catch (e) {
-              console.warn('   Could not delete incomplete transcode file');
+              console.warn('[Main] Could not delete incomplete transcode file');
             }
           }
 
@@ -4296,8 +4335,8 @@ ipcMain.handle(
             stderrOutput.slice(-500) ||
             `FFmpeg exited with code ${result.code}`;
 
-          console.error(`❌ Transcode failed: ${jobId}`);
-          console.error(`   Error: ${job.error}`);
+          console.error(`[Main] Transcode failed${jobId}`);
+          console.error(`[Main] Error${job.error}`);
 
           mainWindow?.webContents.send('transcode:completed', {
             jobId: job.id,
@@ -4313,8 +4352,8 @@ ipcMain.handle(
         job.status = 'failed';
         job.error = error instanceof Error ? error.message : 'Unknown error';
 
-        console.error(`❌ Transcode process error: ${jobId}`);
-        console.error(`   Error: ${job.error}`);
+        console.error(`[Main] Transcode process error${jobId}`);
+        console.error(`[Main] Error${job.error}`);
 
         mainWindow?.webContents.send('transcode:completed', {
           jobId: job.id,
@@ -4355,8 +4394,8 @@ ipcMain.handle('transcode:status', async (event, jobId: string) => {
 
 // IPC Handler to cancel transcode job
 ipcMain.handle('transcode:cancel', async (event, jobId: string) => {
-  console.log('🛑 MAIN PROCESS: transcode:cancel handler called');
-  console.log('   Job ID:', jobId);
+  console.log('[Main] MAIN PROCESS: transcode:cancel handler called');
+  console.log('[Main] Job ID', jobId);
 
   const job = activeTranscodeJobs.get(jobId);
   if (!job) {
@@ -4366,7 +4405,7 @@ ipcMain.handle('transcode:cancel', async (event, jobId: string) => {
   if (job.process && !job.process.killed) {
     job.status = 'cancelled';
     job.process.kill('SIGTERM');
-    console.log(`   Cancelled job: ${jobId}`);
+    console.log(`[Main] Cancelled job${jobId}`);
     return { success: true };
   }
 
@@ -4376,8 +4415,8 @@ ipcMain.handle('transcode:cancel', async (event, jobId: string) => {
 
 // IPC Handler to cancel all transcode jobs for a media ID
 ipcMain.handle('transcode:cancel-for-media', async (event, mediaId: string) => {
-  console.log('🛑 MAIN PROCESS: transcode:cancel-for-media handler called');
-  console.log('   Media ID:', mediaId);
+  console.log('[Main] MAIN PROCESS: transcode:cancel-for-media handler called');
+  console.log('[Main] Media ID', mediaId);
 
   let cancelled = 0;
   for (const [jobId, job] of activeTranscodeJobs.entries()) {
@@ -4393,7 +4432,7 @@ ipcMain.handle('transcode:cancel-for-media', async (event, mediaId: string) => {
     }
   }
 
-  console.log(`   Cancelled ${cancelled} jobs`);
+  console.log(`[Main] Cancelled${cancelled} jobs`);
   return { success: true, cancelled };
 });
 
@@ -4417,7 +4456,7 @@ ipcMain.handle('transcode:get-active-jobs', async () => {
 ipcMain.handle(
   'transcode:cleanup',
   async (event, maxAgeMs: number = 24 * 60 * 60 * 1000) => {
-    console.log('🧹 MAIN PROCESS: transcode:cleanup handler called');
+    console.log('[Main] MAIN PROCESS: transcode:cleanup handler called');
 
     try {
       // Read directory with retry for EMFILE protection
@@ -4428,7 +4467,9 @@ ipcMain.handle(
           break;
         } catch (err) {
           if (isEMFILEError(err) && attempt < 3) {
-            console.warn(`⚠️ EMFILE reading transcode dir, retry ${attempt}/3`);
+            console.warn(
+              `[Main] EMFILE reading transcode dir, retry${attempt}/3`,
+            );
             await new Promise((r) => setTimeout(r, 500 * attempt));
           } else {
             throw err;
@@ -4455,7 +4496,7 @@ ipcMain.handle(
           }
         } catch (statErr) {
           // Skip files we can't stat
-          console.warn(`⚠️ Could not stat ${file}:`, statErr);
+          console.warn(`[Main] Could not stat${file}:`, statErr);
         }
       }
 
@@ -4477,7 +4518,7 @@ ipcMain.handle(
         cleaned += results.filter(Boolean).length;
       }
 
-      console.log(`   Cleaned ${cleaned} old transcode files`);
+      console.log(`[Main] Cleaned${cleaned} old transcode files`);
       return {
         success: true,
         cleaned,
@@ -4486,7 +4527,7 @@ ipcMain.handle(
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      console.error('   Error cleaning up:', errorMessage);
+      console.error('[Main] Error cleaning up', errorMessage);
 
       if (isEMFILEError(error)) {
         return {
@@ -4626,7 +4667,10 @@ const createWindow = () => {
       if (!forceQuit) {
         // Get the real-time setting
         const shouldRunInBackground = await getRunInBackgroundSetting();
-        console.log('Window closing, checking setting:', shouldRunInBackground);
+        console.log(
+          '[Main] Window closing, checking setting',
+          shouldRunInBackground,
+        );
 
         if (shouldRunInBackground) {
           event.preventDefault();
@@ -4779,7 +4823,7 @@ app.on('ready', async () => {
 app.on('window-all-closed', () => {
   if (mediaServer) {
     mediaServer.close();
-    console.log('📁 Media server stopped');
+    console.log('[Main] Media server stopped');
   }
 
   if (process.platform !== 'darwin') {
@@ -4796,7 +4840,7 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   if (mediaServer) {
     mediaServer.close();
-    console.log('📁 Media server stopped');
+    console.log('[Main] Media server stopped');
   }
 
   if (mediaCacheCleanupTimer) {
@@ -4809,17 +4853,17 @@ app.on('before-quit', () => {
     killCurrentFfmpegProcess('app-quit');
     ffmpegTaskQueue.length = 0;
   } catch (error) {
-    console.warn('⚠️ Failed to cleanup FFmpeg before quit:', error);
+    console.warn('[Main] Failed to cleanup FFmpeg before quit', error);
   }
 
   // Cleanup noise reduction temp directory
   if (fs.existsSync(NOISE_REDUCTION_TEMP_DIR)) {
     try {
       fs.rmSync(NOISE_REDUCTION_TEMP_DIR, { recursive: true, force: true });
-      console.log('🗑️ Cleaned up noise reduction temp directory');
+      console.log('[Main] Cleaned up noise reduction temp directory');
     } catch (error) {
       console.warn(
-        '⚠️ Failed to cleanup noise reduction temp directory:',
+        '[Main] Failed to cleanup noise reduction temp directory',
         error,
       );
     }

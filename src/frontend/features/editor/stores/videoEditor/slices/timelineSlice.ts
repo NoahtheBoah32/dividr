@@ -208,7 +208,9 @@ export const createTimelineSlice: StateCreator<
     set((state) => {
       // Don't allow removing video or audio rows (they're essential)
       if (rowId === 'video' || rowId === 'audio') {
-        console.warn(`⚠️ Cannot remove essential track row: ${rowId}`);
+        console.warn(
+          `[TimelineSlice] Cannot remove essential track row${rowId}`,
+        );
         return state;
       }
 

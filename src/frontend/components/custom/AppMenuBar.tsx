@@ -181,23 +181,33 @@ const AppMenuBarComponent = () => {
 
   // Project action handlers - memoized to prevent re-creation
   const handleNewProject = useCallback(() => {
-    newProjectAction(navigate).catch(console.error);
+    newProjectAction(navigate).catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, [navigate]);
 
   const handleOpenProject = useCallback(() => {
-    openProjectAction(navigate).catch(console.error);
+    openProjectAction(navigate).catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, [navigate]);
 
   const handleSaveProject = useCallback(() => {
-    saveProjectAction().catch(console.error);
+    saveProjectAction().catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, []);
 
   const handleSaveProjectAs = useCallback(() => {
-    saveProjectAsAction().catch(console.error);
+    saveProjectAsAction().catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, []);
 
   const handleImportMedia = useCallback(() => {
-    importMediaAction(importMediaFromDialog).catch(console.error);
+    importMediaAction(importMediaFromDialog).catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, [importMediaFromDialog]);
 
   const handleExportVideo = useCallback(() => {
@@ -205,7 +215,9 @@ const AppMenuBarComponent = () => {
   }, [tracksLength]);
 
   const handleCloseProject = useCallback(() => {
-    closeProjectAction(navigate, showConfirmation).catch(console.error);
+    closeProjectAction(navigate, showConfirmation).catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, [navigate, showConfirmation]);
 
   // Edit action handlers - memoized to prevent re-creation
@@ -286,7 +298,7 @@ const AppMenuBarComponent = () => {
           error instanceof Error ? error.message : 'Update check failed',
       });
     } catch (error) {
-      console.warn('Update check failed:', error);
+      console.warn('[AppMenuBar] Update check failed', error);
     }
   }, []);
 

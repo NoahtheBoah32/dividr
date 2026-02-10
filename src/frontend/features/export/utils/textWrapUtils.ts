@@ -360,7 +360,7 @@ function wrapTextToWidthWithDOM(
 
     return computeWrappedTextFromTextNode(elements.textNode, text);
   } catch (error) {
-    console.warn('📐 [TextWrap] DOM measurement failed, falling back', error);
+    console.warn('[TextWrap] DOM measurement failed, falling back', error);
     return null;
   }
 }
@@ -410,7 +410,7 @@ export function wrapTextToWidth(
   const expectedMinWidth = options.fontSize * 5; // Very conservative minimum
   if (testWidth < expectedMinWidth) {
     console.warn(
-      `📐 [TextWrap] Font measurement seems unreliable (${testWidth.toFixed(1)}px < ${expectedMinWidth}px). Skipping auto-wrap.`,
+      `[TextWrap] Font measurement seems unreliable (${testWidth.toFixed(1)}px < ${expectedMinWidth}px). Skipping auto-wrap.`,
     );
     return {
       wrappedText: normalizedText,

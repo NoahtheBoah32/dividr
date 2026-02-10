@@ -98,7 +98,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
         }
       }
     } catch (error) {
-      console.warn('Failed to load release details:', error);
+      console.warn('[About] Failed to load release details', error);
       setReleaseDetails(FALLBACK_RELEASE_DETAILS);
     } finally {
       setReleaseLoading(false);
@@ -110,7 +110,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
       const cache = await window.electronAPI.releaseGetUpdateCache();
       setUpdateCache(cache);
     } catch (error) {
-      console.warn('Failed to load update cache:', error);
+      console.warn('[About] Failed to load update cache', error);
     }
   }, []);
 
@@ -145,7 +145,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
         }
       }
     } catch (error) {
-      console.warn('Update check failed:', error);
+      console.warn('[About] Update check failed', error);
     } finally {
       setIsChecking(false);
     }

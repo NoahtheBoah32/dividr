@@ -118,7 +118,10 @@ export async function importMediaFromDialogUnified(
           options.startFrame || 0,
         );
       } catch (err) {
-        console.warn(`Failed to add ${file.name} to timeline:`, err);
+        console.warn(
+          `[MediaImportService] Failed to add${file.name} to timeline:`,
+          err,
+        );
       }
     }
   }

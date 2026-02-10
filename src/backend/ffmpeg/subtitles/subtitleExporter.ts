@@ -240,7 +240,7 @@ export function extractSubtitleSegments(
   }
 
   console.log(
-    `[Subtitles] Extracting ${subtitleTracks.length} subtitle segments`,
+    `[Subtitles] Extracting${subtitleTracks.length} subtitle segments`,
   );
 
   // Convert tracks to subtitle segments
@@ -258,14 +258,14 @@ export function extractSubtitleSegments(
       startTime = track.subtitleStartTime;
       endTime = track.subtitleEndTime;
       console.log(
-        `[Subtitles] Using original SRT timing for subtitle: ${startTime.toFixed(3)}s - ${endTime.toFixed(3)}s`,
+        `[Subtitles] Using original SRT timing for subtitle${startTime.toFixed(3)}s - ${endTime.toFixed(3)}s`,
       );
     } else {
       // Calculate from frame positions for user-created subtitles
       startTime = track.startFrame / timeline.fps;
       endTime = track.endFrame / timeline.fps;
       console.log(
-        `[Subtitles] Calculated timing from frames: ${startTime.toFixed(3)}s - ${endTime.toFixed(3)}s`,
+        `[Subtitles] Calculated timing from frames${startTime.toFixed(3)}s - ${endTime.toFixed(3)}s`,
       );
     }
 
@@ -306,7 +306,7 @@ export function extractSubtitleSegments(
     segment.index = index + 1;
   });
 
-  console.log(`✅ [Subtitles] Extracted ${segments.length} subtitle segments`);
+  console.log(`[Subtitles] Extracted${segments.length} subtitle segments`);
 
   return segments;
 }
@@ -318,7 +318,7 @@ export function convertTextClipsToSubtitleSegments(
   fps: number,
 ): SubtitleSegment[] {
   console.warn(
-    '⚠️ convertTextClipsToSubtitleSegments is deprecated and should not be used. Text clips are handled by textLayers.ts using extractTextSegments().',
+    '[SubtitleExporter] convertTextClipsToSubtitleSegments is deprecated and should not be used. Text clips are handled by textLayers.ts using extractTextSegments()',
   );
 
   // This function should never be called - text clips are handled separately
@@ -476,7 +476,7 @@ function convertColorToASS(color: string, opacity?: number): string {
     (opacity !== undefined && opacity < 1 && originalCssAlpha !== cssAlpha) ||
     (originalCssAlpha < 1.0 && color.startsWith('#') && color.length === 9)
   ) {
-    console.log('🎨 CSS Opacity Calculation:', {
+    console.log('[SubtitleExporter] CSS Opacity Calculation', {
       color,
       colorAlpha: originalCssAlpha.toFixed(3),
       opacityProperty: opacity?.toFixed(3) || 'none',
@@ -676,7 +676,7 @@ function computeASSStyleParams(
     const originalFontSize = fontSize;
     fontSize = Math.round(fontSize * effectiveScale);
     console.log(
-      `📏 Applied scale ${effectiveScale} to font size: ${originalFontSize}px → ${fontSize}px`,
+      `[SubtitleExporter] Applied scale${effectiveScale} to font size: ${originalFontSize}px → ${fontSize}px`,
     );
   }
 
@@ -714,14 +714,14 @@ export function generateASSContent(
   }
 
   console.log(
-    '📝 generateASSContent received global textStyle:',
+    '[SubtitleExporter] generateASSContent received global textStyle',
     JSON.stringify(textStyle, null, 2),
   );
   console.log(
-    `📝 generateASSContent received global scale: ${globalScale || 1}`,
+    `[SubtitleExporter] generateASSContent received global scale${globalScale || 1}`,
   );
   console.log(
-    '📝 generateASSContent processing',
+    '[SubtitleExporter] generateASSContent processing',
     segments.length,
     'segments with individual styles',
   );
@@ -769,13 +769,13 @@ export function generateASSContent(
   });
 
   console.log(
-    `📝 Generated ${styleMap.size} unique styles for ${segments.length} segments`,
+    `[SubtitleExporter] Generated${styleMap.size} unique styles for ${segments.length} segments`,
   );
 
   // Calculate layer offsets to avoid conflicts when subtitles overlap
   const layerOffsets = calculateLayerOffsets(segments);
   console.log(
-    `🎬 Calculated layer offsets for ${segments.length} segments to avoid overlap conflicts`,
+    `[SubtitleExporter] Calculated layer offsets for${segments.length} segments to avoid overlap conflicts`,
   );
 
   // Collect unique font families used in all styles
@@ -786,7 +786,7 @@ export function generateASSContent(
     }
   });
   console.log(
-    `🎨 Fonts used in subtitles: ${Array.from(usedFontFamilies).join(', ')}`,
+    `[SubtitleExporter] Fonts used in subtitles${Array.from(usedFontFamilies).join(', ')}`,
   );
 
   // Calculate vertical margin based on video dimensions
@@ -800,10 +800,10 @@ export function generateASSContent(
   const verticalMargin = Math.round(playResY * marginPercentage);
 
   console.log(
-    `📐 Video dimensions: ${playResX}x${playResY} (aspect ratio: ${aspectRatio.toFixed(3)}, ${isPortrait ? 'portrait' : 'landscape'})`,
+    `[SubtitleExporter] Video dimensions${playResX}x${playResY} (aspect ratio: ${aspectRatio.toFixed(3)}, ${isPortrait ? 'portrait' : 'landscape'})`,
   );
   console.log(
-    `📐 Calculated vertical margin: ${verticalMargin}px (${(marginPercentage * 100).toFixed(1)}% of height)`,
+    `[SubtitleExporter] Calculated vertical margin${verticalMargin}px (${(marginPercentage * 100).toFixed(1)}% of height)`,
   );
 
   // Generate style definitions
@@ -811,7 +811,7 @@ export function generateASSContent(
   styleMap.forEach(({ params, styleName, style }) => {
     // Base style
     console.log(
-      `🎨 Creating ASS style "${styleName}" with font: "${params.fontFamily}"`,
+      `[SubtitleExporter] Creating ASS style "${styleName}" with font: "${params.fontFamily}"`,
     );
     styleDefinitions.push(
       `Style: ${styleName},${params.fontFamily},${params.fontSize},${params.primaryColor},&H000000FF,${params.outlineColor},${params.backColor},${params.bold},${params.italic},${params.underline},0,100,100,0,0,${params.borderStyle},${params.outlineWidth},${params.shadowDistance},2,10,10,${verticalMargin},1`,
@@ -847,8 +847,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
   // Log the first few style definitions for debugging
-  console.log('📝 ASS File Preview (first 3 styles):');
-  styleDefinitions.slice(0, 3).forEach((style) => console.log('  ', style));
+  console.log('[SubtitleExporter] ASS File Preview (first 3 styles)');
+  styleDefinitions
+    .slice(0, 3)
+    .forEach((style) => console.log('[SubtitleExporter] Log', style));
 
   // Generate events with per-segment styles
   const events = segments
@@ -870,15 +872,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const layerOffset = layerOffsets[index];
 
       // Log segment processing
-      console.log(`\n📝 Processing segment ${index + 1}/${segments.length}:`);
       console.log(
-        `   - Text: "${segment.text.substring(0, 50)}${segment.text.length > 50 ? '...' : ''}"`,
+        `[SubtitleExporter] Processing segment${index + 1}/${segments.length}:`,
       );
       console.log(
-        `   - Time: ${segment.startTime.toFixed(3)}s - ${segment.endTime.toFixed(3)}s`,
+        `[SubtitleExporter] Text: "${segment.text.substring(0, 50)}${segment.text.length > 50 ? '...' : ''}"`,
       );
-      console.log(`   - Style: ${styleName}`);
-      console.log(`   - Layer offset: ${layerOffset}`);
+      console.log(
+        `[SubtitleExporter] Time${segment.startTime.toFixed(3)}s - ${segment.endTime.toFixed(3)}s`,
+      );
+      console.log(`[SubtitleExporter] Style${styleName}`);
+      console.log(`[SubtitleExporter] Layer offset${layerOffset}`);
 
       // Log position and scale information (always show, even if defaults)
       const x =
@@ -886,14 +890,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const y =
         segment.position?.y !== undefined ? segment.position.y : undefined;
 
-      console.log(`   - Transform:`);
+      console.log('[SubtitleExporter] Transform');
       console.log(
-        `     * Position: x=${x !== undefined ? x.toFixed(3) : 'default'}, y=${y !== undefined ? y.toFixed(3) : 'default'}`,
+        `[SubtitleExporter] * Position: x=${x !== undefined ? x.toFixed(3) : 'default'}, y=${y !== undefined ? y.toFixed(3) : 'default'}`,
       );
-      console.log(`     * Segment scale: ${segmentScale}`);
-      console.log(`     * Global scale: ${globalScale || 1}`);
+      console.log(`[SubtitleExporter] * Segment scale${segmentScale}`);
+      console.log(`[SubtitleExporter] * Global scale${globalScale || 1}`);
       console.log(
-        `     * Effective scale: ${effectiveScale.toFixed(3)} (applied to font size)`,
+        `[SubtitleExporter] * Effective scale${effectiveScale.toFixed(3)} (applied to font size)`,
       );
 
       // Apply text transformations if specified
@@ -991,7 +995,7 @@ function calculateLayerOffsets(segments: SubtitleSegment[]): number[] {
       layerOffsets[i] = maxLayerOffset + 3;
 
       console.log(
-        `  Segment ${i} "${currentSegment.text.substring(0, 20)}" overlaps with ${overlappingSegments.length} segments, assigned layer offset ${layerOffsets[i]}`,
+        `[SubtitleExporter] Segment${i} "${currentSegment.text.substring(0, 20)}" overlaps with ${overlappingSegments.length} segments, assigned layer offset ${layerOffsets[i]}`,
       );
     }
   }
@@ -1065,15 +1069,15 @@ function generatePositionTags(
         : playResY - 20; // Default bottom position with 20px margin
 
     // Log normalized and pixel coordinates
-    console.log(`📍 Subtitle position coordinates:`);
+    console.log('[SubtitleExporter] Subtitle position coordinates');
     console.log(
-      `   - Normalized: x=${position.x?.toFixed(3) || 'default'}, y=${position.y?.toFixed(3) || 'default'} (0-1 range, 0.5=center)`,
+      `[SubtitleExporter] Normalized: x=${position.x?.toFixed(3) || 'default'}, y=${position.y?.toFixed(3) || 'default'} (0-1 range, 0.5=center)`,
     );
     console.log(
-      `   - Pixel coords: x=${Math.round(x)}px, y=${Math.round(y)}px`,
+      `[SubtitleExporter] Pixel coords: x=${Math.round(x)}px, y=${Math.round(y)}px`,
     );
-    console.log(`   - Video dimensions: ${playResX}x${playResY}`);
-    console.log(`   - Scale: ${position.scale || 1}`);
+    console.log(`[SubtitleExporter] Video dimensions${playResX}x${playResY}`);
+    console.log(`[SubtitleExporter] Scale${position.scale || 1}`);
 
     // \pos(x,y) - absolute position
     tags.push(`\\pos(${x},${y})`);
@@ -1135,7 +1139,9 @@ function generateGlowLayers(
     const textLayer = `Dialogue: ${layerOffset + 2},${startTime},${endTime},${styleName}Outline,,0,0,0,,${positionTags}${text}`;
     layers.push(textLayer);
 
-    console.log('✨ Triple-layer mode: glow + background + outlined text');
+    console.log(
+      '[SubtitleExporter] Triple-layer mode: glow + background + outlined text',
+    );
   } else if (params.hasBackground) {
     // Double-layer: glow + background (no outline)
     const { xbord, ybord } = calculateBackgroundBoxDimensions(
@@ -1144,13 +1150,13 @@ function generateGlowLayers(
     const backgroundLayer = `Dialogue: ${layerOffset + 1},${startTime},${endTime},${styleName},,0,0,0,,${positionTags}{\\xbord${xbord}\\ybord${ybord}}${text}`;
     layers.push(backgroundLayer);
 
-    console.log('✨ Double-layer mode: glow + background');
+    console.log('[SubtitleExporter] Double-layer mode: glow + background');
   } else {
     // Double-layer: glow + text (no background)
     const mainLayer = `Dialogue: ${layerOffset + 1},${startTime},${endTime},${styleName},,0,0,0,,${positionTags}${text}`;
     layers.push(mainLayer);
 
-    console.log('✨ Double-layer mode: glow + text');
+    console.log('[SubtitleExporter] Double-layer mode: glow + text');
   }
 
   return layers.join('\n');
@@ -1213,7 +1219,7 @@ function convertTextStyleToASS(textStyle?: TextStyleOptions): {
       //console.log(`✅ Using available font for ASS subtitles: ${fontFamily}`);
     } else {
       console.warn(
-        `⚠️ Font "${requestedFont}" not available, falling back to Arial`,
+        `[SubtitleExporter] Font "${requestedFont}" not available, falling back to Arial`,
       );
       fontFamily = 'Arial';
     }
@@ -1302,13 +1308,13 @@ export async function createSubtitleFile(
     });
 
     if (result.success && result.filePath) {
-      console.log(`✅ Subtitle file created: ${result.filePath}`);
+      console.log(`[SubtitleExporter] Subtitle file created${result.filePath}`);
       return result.filePath;
     } else {
       throw new Error(result.error || 'Failed to create subtitle file');
     }
   } catch (error) {
-    console.error('❌ Failed to create subtitle file:', error);
+    console.error('[SubtitleExporter] Failed to create subtitle file', error);
     throw new Error(`Failed to create subtitle file: ${error}`);
   }
 }
@@ -1320,12 +1326,15 @@ export async function cleanupSubtitleFile(filePath: string): Promise<void> {
   try {
     const result = await window.electronAPI.deleteFile(filePath);
     if (result.success) {
-      console.log(`🗑️ Cleaned up subtitle file: ${filePath}`);
+      console.log(`[SubtitleExporter] Cleaned up subtitle file${filePath}`);
     } else {
-      console.warn('⚠️ Failed to cleanup subtitle file:', result.error);
+      console.warn(
+        '[SubtitleExporter] Failed to cleanup subtitle file',
+        result.error,
+      );
     }
   } catch (error) {
-    console.warn('⚠️ Failed to cleanup subtitle file:', error);
+    console.warn('[SubtitleExporter] Failed to cleanup subtitle file', error);
     // Don't throw error for cleanup failures
   }
 }

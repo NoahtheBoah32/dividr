@@ -144,7 +144,7 @@ const isRateLimitCooldownActive = (): boolean => {
 
 const logRateLimit = (error: GitHubApiError): void => {
   const timestamp = new Date().toISOString();
-  console.warn('⚠️ [release] GitHub API rate limit exceeded', {
+  console.warn('[Release] GitHub API rate limit exceeded', {
     url: error.url,
     status: error.status,
     message: error.message,

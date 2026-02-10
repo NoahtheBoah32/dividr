@@ -263,7 +263,7 @@ const DuplicateButton: React.FC = React.memo(() => {
       const track = tracks.find((t) => t.id === trackId);
       if (!track) {
         console.error(
-          `❌ Track ${trackId} not found in tracks array, skipping`,
+          `[TimelineControls] Track${trackId} not found in tracks array, skipping`,
         );
         return;
       }
@@ -297,7 +297,7 @@ const DuplicateButton: React.FC = React.memo(() => {
     if (newlyCreatedIds.length > 0) {
       setSelectedTracks(newlyCreatedIds);
     } else {
-      console.error('❌ Duplication produced no new tracks');
+      console.error('[TimelineControls] Duplication produced no new tracks');
     }
   }, [
     selectedTrackIds,
@@ -635,14 +635,14 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
           } else {
             failCount++;
             console.error(
-              `❌ Failed to generate subtitles for ${track.name}:`,
+              `[TimelineControls] Failed to generate subtitles for${track.name}:`,
               result.error,
             );
           }
         } catch (error) {
           failCount++;
           console.error(
-            `❌ Error generating subtitles for ${track.name}:`,
+            `[TimelineControls] Error generating subtitles for${track.name}:`,
             error,
           );
         }
