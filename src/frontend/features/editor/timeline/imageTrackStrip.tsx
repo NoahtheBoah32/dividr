@@ -88,6 +88,9 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
       width: number;
       height: number;
     } | null>(null);
+    const [staticGifFrameUrl, setStaticGifFrameUrl] = useState<string | null>(
+      null,
+    );
 
     // Viewport state for culling (timeline scroll container)
     const [viewportBounds, setViewportBounds] = useState({
@@ -101,9 +104,95 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
       return track.previewUrl || track.source;
     }, [track.previewUrl, track.source]);
 
+    const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
+    const mediaItem = useMemo(() => {
+      return mediaLibrary.find(
+        (item) =>
+          (track.mediaId && item.id === track.mediaId) ||
+          item.source === track.source,
+      );
+    }, [mediaLibrary, track.mediaId, track.source]);
+
+    const isGifTrack = useMemo(() => {
+      const mimeType = (mediaItem?.mimeType || '').toLowerCase();
+      const name = (mediaItem?.name || track.name || '').toLowerCase();
+      const source = (track.source || '').toLowerCase();
+      const preview = (track.previewUrl || '').toLowerCase();
+      return (
+        mimeType.includes('image/gif') ||
+        name.endsWith('.gif') ||
+        source.endsWith('.gif') ||
+        preview.endsWith('.gif')
+      );
+    }, [
+      mediaItem?.mimeType,
+      mediaItem?.name,
+      track.name,
+      track.source,
+      track.previewUrl,
+    ]);
+
+    // Build a static frame for GIF tracks so timeline rendering is cheap.
+    useEffect(() => {
+      if (!isGifTrack || !imageUrl) {
+        setStaticGifFrameUrl(null);
+        return;
+      }
+
+      let cancelled = false;
+      const img = new Image();
+
+      img.onload = () => {
+        if (cancelled) return;
+        try {
+          const canvas = document.createElement('canvas');
+          const drawWidth = Math.max(1, img.naturalWidth || 1);
+          const drawHeight = Math.max(1, img.naturalHeight || 1);
+          canvas.width = drawWidth;
+          canvas.height = drawHeight;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            setStaticGifFrameUrl(null);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, drawWidth, drawHeight);
+          const dataUrl = canvas.toDataURL('image/png', 0.9);
+          setStaticGifFrameUrl(dataUrl);
+        } catch {
+          setStaticGifFrameUrl(null);
+        }
+      };
+
+      img.onerror = () => {
+        if (!cancelled) {
+          setStaticGifFrameUrl(null);
+        }
+      };
+
+      img.src = imageUrl;
+
+      return () => {
+        cancelled = true;
+        img.onload = null;
+        img.onerror = null;
+      };
+    }, [isGifTrack, imageUrl]);
+
+    const timelineImageUrl = useMemo(() => {
+      if (!isGifTrack) return imageUrl;
+      if (mediaItem?.thumbnail) return mediaItem.thumbnail;
+      if (staticGifFrameUrl) return staticGifFrameUrl;
+      return imageUrl;
+    }, [isGifTrack, imageUrl, mediaItem?.thumbnail, staticGifFrameUrl]);
+
+    const useSingleLayerGifFallback =
+      isGifTrack && !mediaItem?.thumbnail && !staticGifFrameUrl;
+
     // Load image and get dimensions
     useEffect(() => {
-      if (!imageUrl) {
+      if (!timelineImageUrl) {
         setImageError('No image source');
         return;
       }
@@ -126,13 +215,13 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
         setImageLoaded(false);
       };
 
-      img.src = imageUrl;
+      img.src = timelineImageUrl;
 
       return () => {
         img.onload = null;
         img.onerror = null;
       };
-    }, [imageUrl]);
+    }, [timelineImageUrl]);
 
     // Calculate native display width based on image aspect ratio
     const tileNativeWidth = useMemo(() => {
@@ -282,7 +371,7 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
         <div className="absolute inset-0 bg-gray-800" />
 
         {/* GPU-accelerated image tile container */}
-        {imageLoaded && (
+        {imageLoaded && !useSingleLayerGifFallback && (
           <div
             className="absolute inset-0"
             style={{
@@ -294,12 +383,26 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
               <GPUAcceleratedImageTile
                 key={tile.id}
                 tile={tile}
-                imageUrl={imageUrl}
+                imageUrl={timelineImageUrl}
                 height={height}
                 tileNativeWidth={tileNativeWidth}
               />
             ))}
           </div>
+        )}
+
+        {/* Fallback: keep GIF as a single repeated layer if static frame extraction failed */}
+        {imageLoaded && useSingleLayerGifFallback && (
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `url(${timelineImageUrl})`,
+              backgroundSize: `${tileNativeWidth}px ${height}px`,
+              backgroundRepeat: 'repeat-x',
+              backgroundPosition: 'left center',
+              imageRendering: 'auto',
+            }}
+          />
         )}
 
         {/* Track name overlay */}
