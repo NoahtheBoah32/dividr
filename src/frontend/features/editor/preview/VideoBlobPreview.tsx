@@ -28,10 +28,7 @@ import {
 } from './hooks';
 import { CanvasOverlay, UnifiedOverlayRenderer } from './overlays';
 import { TransformBoundaryLayer } from './overlays/TransformBoundaryLayer';
-import {
-  calculateContentScale,
-  calculateVideoFitTransform,
-} from './utils/scalingUtils';
+import { calculateContentScale } from './utils/scalingUtils';
 
 interface VideoBlobPreviewProps {
   className?: string;
@@ -350,126 +347,6 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     },
     [setSelectedTracks, preview.interactionMode],
   );
-
-  // Auto-fit media tracks (video + image) when canvas aspect ratio changes
-  const prevCanvasDimensionsRef = useRef<{
-    width: number;
-    height: number;
-    aspectRatio: number;
-  } | null>(null);
-
-  useEffect(() => {
-    if (
-      !preview.canvasWidth ||
-      !preview.canvasHeight ||
-      preview.canvasWidth <= 0 ||
-      preview.canvasHeight <= 0
-    ) {
-      return;
-    }
-
-    const currentAspectRatio = preview.canvasWidth / preview.canvasHeight;
-    const prevDimensions = prevCanvasDimensionsRef.current;
-
-    const hasDimensionChange =
-      !prevDimensions ||
-      prevDimensions.width !== preview.canvasWidth ||
-      prevDimensions.height !== preview.canvasHeight;
-
-    const hasAspectRatioChange =
-      !prevDimensions ||
-      Math.abs(prevDimensions.aspectRatio - currentAspectRatio) > 0.001;
-
-    if (!hasDimensionChange && !hasAspectRatioChange) return;
-
-    prevCanvasDimensionsRef.current = {
-      width: preview.canvasWidth,
-      height: preview.canvasHeight,
-      aspectRatio: currentAspectRatio,
-    };
-
-    if (!prevDimensions) return;
-
-    const mediaTracks = tracks.filter(
-      (track) =>
-        (track.type === 'video' || track.type === 'image') && track.visible,
-    );
-    if (mediaTracks.length === 0) return;
-
-    mediaTracks.forEach((track) => {
-      let originalWidth: number | undefined;
-      let originalHeight: number | undefined;
-
-      if (track.width && track.height) {
-        originalWidth = track.width;
-        originalHeight = track.height;
-      } else if (
-        track.type === 'video' &&
-        videoRef.current &&
-        videoRef.current.videoWidth > 0
-      ) {
-        originalWidth = videoRef.current.videoWidth;
-        originalHeight = videoRef.current.videoHeight;
-      } else if (track.textTransform?.width && track.textTransform?.height) {
-        originalWidth = track.textTransform.width;
-        originalHeight = track.textTransform.height;
-      }
-
-      if (!originalWidth || !originalHeight) return;
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: originalWidth,
-        height: originalHeight,
-      };
-
-      const newTransform = calculateVideoFitTransform(
-        originalWidth,
-        originalHeight,
-        preview.canvasWidth,
-        preview.canvasHeight,
-        currentTransform,
-      );
-
-      const widthChanged =
-        Math.abs(
-          (currentTransform.width || originalWidth) - newTransform.width,
-        ) > 0.5;
-      const heightChanged =
-        Math.abs(
-          (currentTransform.height || originalHeight) - newTransform.height,
-        ) > 0.5;
-      const scaleChanged =
-        Math.abs((currentTransform.scale || 1) - newTransform.scale) > 0.001;
-
-      if (widthChanged || heightChanged || scaleChanged) {
-        const update = {
-          x: newTransform.x,
-          y: newTransform.y,
-          scale: newTransform.scale,
-          rotation: newTransform.rotation,
-          width: newTransform.width,
-          height: newTransform.height,
-        };
-
-        if (track.type === 'video') {
-          handleVideoTransformUpdate(track.id, update);
-        } else {
-          handleImageTransformUpdate(track.id, update);
-        }
-      }
-    });
-  }, [
-    preview.canvasWidth,
-    preview.canvasHeight,
-    tracks,
-    videoRef,
-    handleVideoTransformUpdate,
-    handleImageTransformUpdate,
-  ]);
 
   const handleTextUpdate = useCallback(
     (trackId: string, newText: string) => {
