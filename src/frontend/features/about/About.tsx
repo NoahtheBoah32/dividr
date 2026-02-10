@@ -202,7 +202,7 @@ export default function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
         </DialogHeader>
 
         <ScrollArea className="flex-1 px-8 py-0 overflow-y-auto min-h-0">
-          <div className="grid gap-6 grid-rows-[2fr_1fr]">
+          <div className="grid gap-6 grid-rows-[2fr_auto]">
             <div className="flex min-h-0 flex-1 flex-col gap-3">
               <div className="font-semibold text-xs text-muted-foreground/80 uppercase tracking-wide pb-1">
                 Release Notes

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Skeleton } from '@/frontend/components/ui/skeleton';
 import { cn } from '@/frontend/utils/utils';
-import { Film } from 'lucide-react';
+import { ClosedCaption, Film, Type } from 'lucide-react';
 import React, {
   useCallback,
   useEffect,
@@ -193,10 +193,10 @@ const TrackItemWrapper: React.FC<{
       <div
         data-track-id={track.id}
         className={cn(
-          'absolute rounded flex items-center select-none transition-opacity duration-150',
+          'absolute rounded flex items-center select-none transition-opacity duration-150 border-2 border-transparent',
           getTrackItemHeightClasses(track.type),
           isDuplicationFeedback ? 'overflow-visible' : 'overflow-hidden',
-          isSelected ? 'border-2 border-secondary' : '',
+          isSelected ? 'border-secondary' : '',
           getCursorClass(),
           track.visible ? 'opacity-100' : 'opacity-50',
           isDuplicationFeedback ? 'track-duplicate-feedback z-50' : 'z-10',
@@ -862,18 +862,40 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         );
       }
 
+      const trackLabel =
+        track.type === 'subtitle' && track.subtitleText
+          ? track.subtitleText
+          : track.type === 'text' && track.textContent
+            ? track.textContent
+            : track.name;
+
+      if (track.type === 'text' || track.type === 'subtitle') {
+        const TrackTypeIcon = track.type === 'subtitle' ? ClosedCaption : Type;
+
+        return (
+          <div
+            className={cn(
+              'h-full w-full px-2 py-1 flex items-center gap-1.5 text-[11px] overflow-hidden',
+              isSelected ? 'text-secondary' : 'text-white/90 hover:text-white',
+            )}
+          >
+            <TrackTypeIcon className="h-3 w-3 shrink-0 text-inherit" />
+            <span className="min-w-0 overflow-hidden whitespace-nowrap">
+              {trackLabel}
+            </span>
+          </div>
+        );
+      }
+
       return (
-        <div className="text-white text-[11px] h-fit whitespace-nowrap overflow-hidden text-ellipsis px-2 py-1">
-          {track.type === 'subtitle' && track.subtitleText
-            ? track.subtitleText
-            : track.type === 'text' && track.textContent
-              ? track.textContent
-              : track.name}
+        <div className="text-white text-[11px] h-fit whitespace-nowrap overflow-hidden px-2 py-1">
+          {trackLabel}
         </div>
       );
     }, [
       track,
       track.muted,
+      isSelected,
       frameWidth,
       width,
       zoomLevel,
