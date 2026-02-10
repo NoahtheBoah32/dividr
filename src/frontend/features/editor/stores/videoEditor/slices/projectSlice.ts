@@ -11,7 +11,6 @@ import {
   DEFAULT_AUTO_SAVE_PREFERENCES,
 } from '../utils/constants';
 
-const SPRITE_SHEET_SKIP_DURATION_SECONDS = 1800;
 const EXTRACTED_AUDIO_MARKER = '_extracted.';
 
 // Auto-save manager state (module-level to persist across re-renders)
@@ -190,6 +189,41 @@ const scheduleWaveformRehydrate = (get: () => any): void => {
   }, 0);
 };
 
+const scheduleSpriteRehydrate = (get: () => any): void => {
+  setTimeout(() => {
+    try {
+      const state = get() as any;
+      const mediaLibrary: any[] = state.mediaLibrary || [];
+
+      const spriteTargets = mediaLibrary.filter((item) => {
+        if (item?.type !== 'video') return false;
+        const hasAnySheets = (item.spriteSheets?.spriteSheets?.length || 0) > 0;
+        const isGenerating = item.jobStates?.spriteSheet === 'processing';
+        const isTranscoding =
+          item.transcoding?.status === 'pending' ||
+          item.transcoding?.status === 'processing';
+        return !hasAnySheets && !isGenerating && !isTranscoding;
+      });
+
+      if (spriteTargets.length > 0) {
+        console.log(
+          `🔄 Rehydrating sprite sheets for ${spriteTargets.length} media item(s)`,
+        );
+      }
+
+      spriteTargets.forEach((item) => {
+        state
+          .generateSpriteSheetForMedia?.(item.id)
+          .catch((error: Error) =>
+            console.warn('Sprite rehydrate failed:', error),
+          );
+      });
+    } catch (error) {
+      console.warn('Sprite rehydrate scheduling failed:', error);
+    }
+  }, 0);
+};
+
 export interface ProjectSlice {
   currentProjectId: string | null;
   autoSavePreferences: AutoSavePreferences;
@@ -318,12 +352,10 @@ export const createProjectSlice: StateCreator<
       );
       const normalizedMediaLibrary = loadedMediaLibrary.map((item: any) => {
         if (item?.type === 'video') {
-          const shouldDisableSprites =
-            item.duration >= SPRITE_SHEET_SKIP_DURATION_SECONDS;
           return {
             ...item,
-            spriteSheetDisabled:
-              item.spriteSheetDisabled ?? shouldDisableSprites,
+            // Reset legacy duration-based flag so sprites can render on long videos.
+            spriteSheetDisabled: false,
           };
         }
         return item;
@@ -408,6 +440,7 @@ export const createProjectSlice: StateCreator<
       restartPeriodicAutoSave(get);
 
       scheduleWaveformRehydrate(get);
+      scheduleSpriteRehydrate(get);
 
       console.log(`✅ Loaded project data for: ${project.metadata.title}`);
     } catch (error) {

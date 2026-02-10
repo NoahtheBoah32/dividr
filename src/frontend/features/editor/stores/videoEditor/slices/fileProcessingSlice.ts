@@ -25,8 +25,6 @@ const TRACK_COLORS = [
   '#34495e',
 ];
 
-const SPRITE_SHEET_SKIP_DURATION_SECONDS = 1800;
-
 // Helper function to detect subtitle files
 const isSubtitleFile = (fileName: string): boolean => {
   const subtitleExtensions = [
@@ -448,9 +446,8 @@ const processImportedFile = async (
     size: fileInfo.size,
     mimeType,
     contentSignature,
-    spriteSheetDisabled:
-      trackType === 'video' &&
-      actualDurationSeconds >= SPRITE_SHEET_SKIP_DURATION_SECONDS,
+    // Keep sprite sheets enabled for long-form videos.
+    spriteSheetDisabled: false,
     metadata:
       trackType === 'audio'
         ? {

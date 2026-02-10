@@ -463,9 +463,6 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) =>
         item.source === source || item.tempFilePath === source,
     );
-    if (mediaItem?.spriteSheetDisabled) {
-      return undefined;
-    }
     return mediaItem?.spriteSheets;
   },
 
@@ -794,26 +791,6 @@ export const createMediaLibrarySlice: StateCreator<
       return true; // Not an error, just not applicable
     }
 
-    if (mediaItem.spriteSheetDisabled) {
-      console.log(
-        `⏭️ Sprite sheets disabled for long-form video: ${mediaItem.name}`,
-      );
-      set((state: any) => ({
-        mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
-          item.id === mediaId
-            ? {
-                ...item,
-                jobStates: {
-                  ...item.jobStates,
-                  spriteSheet: 'completed' as const,
-                },
-              }
-            : item,
-        ),
-      }));
-      return true;
-    }
-
     // Skip if sprite sheets already exist
     if (mediaItem.spriteSheets?.success) {
       console.log(`Sprite sheets already exist for: ${mediaItem.name}`);
@@ -886,10 +863,19 @@ export const createMediaLibrarySlice: StateCreator<
       return true;
     }
     if (currentJobState === 'completed') {
-      console.log(
-        `✅ Sprite sheet job already completed for: ${mediaItem.name} (idempotent skip)`,
-      );
-      return true;
+      const hasGeneratedSheets =
+        mediaItem.spriteSheets?.success &&
+        (mediaItem.spriteSheets?.spriteSheets?.length || 0) > 0;
+      if (!hasGeneratedSheets) {
+        console.log(
+          `🔄 Sprite sheet job marked completed without sheets for: ${mediaItem.name}, retrying generation`,
+        );
+      } else {
+        console.log(
+          `✅ Sprite sheet job already completed for: ${mediaItem.name} (idempotent skip)`,
+        );
+        return true;
+      }
     }
 
     // Skip if already generating (legacy check)
