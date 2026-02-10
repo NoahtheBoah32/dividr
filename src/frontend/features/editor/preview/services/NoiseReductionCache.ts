@@ -46,9 +46,9 @@ type SubscriptionCallback = () => void;
 const DEBUG_NOISE_REDUCTION_CACHE = false;
 
 function logCache(message: string, data?: unknown) {
-  if (DEBUG_NOISE_REDUCTION_CACHE) {
-    console.log(`[NoiseReductionCache] ${message}`, data || '');
-  }
+  if (!DEBUG_NOISE_REDUCTION_CACHE) return;
+  void message;
+  void data;
 }
 
 // =============================================================================

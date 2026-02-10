@@ -234,17 +234,13 @@ export const SettingsPanel: React.FC<CustomPanelProps> = ({ className }) => {
   };
 
   // Handle FPS warning confirmation
-  const handleFpsWarningConfirm = (enableInterpolation: boolean) => {
+  const handleFpsWarningConfirm = (_enableInterpolation: boolean) => {
+    void _enableInterpolation;
     if (pendingFps) {
       setFps(pendingFps);
       // TODO: Store interpolation preference for export
       // This could be added to the timeline state or export settings
-      console.log(
-        'FPS set to:',
-        pendingFps,
-        'Interpolation:',
-        enableInterpolation,
-      );
+
       setPendingFps(null);
     }
   };

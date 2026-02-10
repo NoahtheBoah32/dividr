@@ -39,12 +39,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       const selectedTracks = freshState.timeline?.selectedTrackIds || [];
       const allTracks = freshState.tracks || [];
 
-      console.log('[Duplicate] Fresh state check:', {
-        selectedCount: selectedTracks.length,
-        totalTracks: allTracks.length,
-        selectedIds: selectedTracks,
-      });
-
       // Early exit: no selection = no-op
       if (selectedTracks.length === 0) {
         console.warn('⚠️ No tracks selected for duplication');
@@ -69,7 +63,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       selectedTracks.forEach((trackId: string) => {
         // Skip if already processed (e.g., as part of a linked pair)
         if (processedTrackIds.has(trackId)) {
-          console.log(`[Duplicate] Skipping ${trackId} - already processed`);
           return;
         }
 
@@ -81,14 +74,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
           );
           return;
         }
-
-        console.log(`[Duplicate] Processing track:`, {
-          id: trackId,
-          name: track.name,
-          type: track.type,
-          isLinked: track.isLinked,
-          linkedTrackId: track.linkedTrackId,
-        });
 
         // Check if this is a linked pair where BOTH tracks are selected
         const bothSidesSelected =
@@ -103,9 +88,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
         // This prevents duplicating the pair twice
         if (bothSidesSelected && track.linkedTrackId) {
           processedTrackIds.add(track.linkedTrackId);
-          console.log(
-            `[Duplicate] Both sides selected, marking ${track.linkedTrackId} as processed`,
-          );
         }
 
         // Duplicate the track - returns single ID or array of IDs [primary, linked]
@@ -115,7 +97,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
           bothSidesSelected,
           true,
         );
-        console.log(`[Duplicate] Result:`, result);
 
         if (result) {
           // Handle both single ID and array of IDs
@@ -133,10 +114,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       // Update selection to the newly duplicated tracks
       if (newlyCreatedIds.length > 0) {
         freshState.setSelectedTracks(newlyCreatedIds);
-        console.log(
-          `✅ Duplicated ${processedTrackIds.size} track(s) → created ${newlyCreatedIds.length} new track(s)`,
-        );
-        console.log(`   New IDs:`, newlyCreatedIds);
       } else {
         console.error('❌ Duplication produced no new tracks');
       }
@@ -160,7 +137,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       }
 
       freshState.copyTracks(selectedTracks);
-      console.log(`[Copy] Copied ${selectedTracks.length} track(s)`);
     },
     options: {
       preventDefault: true,
@@ -185,7 +161,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       }
 
       freshState.cutTracks(selectedTracks);
-      console.log(`[Cut] Cut ${selectedTracks.length} track(s)`);
     },
     options: {
       preventDefault: true,
@@ -209,7 +184,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       }
 
       freshState.pasteTracks();
-      console.log('[Paste] Pasted tracks from clipboard');
     },
     options: {
       preventDefault: true,

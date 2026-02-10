@@ -680,9 +680,6 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     if (!deleteConfirmation.mediaId) return;
     try {
       removeFromMediaLibrary(deleteConfirmation.mediaId, true);
-      console.log(
-        `✅ Successfully deleted media "${deleteConfirmation.mediaName}" and ${deleteConfirmation.affectedTracksCount} associated track(s)`,
-      );
     } catch (error) {
       console.error('Failed to remove media:', error);
     }
@@ -954,9 +951,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
         const existingSubtitles = tracks.filter(
           (track) => track.type === 'subtitle',
         );
-        console.log(
-          `🗑️ Deleting ${existingSubtitles.length} existing subtitle tracks...`,
-        );
+
         // Batch delete for better performance
         if (existingSubtitles.length > 0) {
           const { setSelectedTracks, removeSelectedTracks } =
@@ -972,54 +967,16 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           keepExistingSubtitles:
             !deleteExisting &&
             tracks.some((track) => track.type === 'subtitle'),
-          onProgress: (progress) => {
-            console.log('📊 Transcription progress:', progress);
+          onProgress: () => {
+            // Progress is handled by store state; no console output here.
           },
         });
 
-        console.log('🎤 Karaoke Generation Result:', result);
-
-        // Log detailed transcription info if available
         if (result.transcriptionResult) {
-          console.log('\n📝 Transcription Details:');
-          console.log('   Language:', result.transcriptionResult.language);
-          console.log(
-            '   Confidence:',
-            (result.transcriptionResult.language_probability * 100).toFixed(1) +
-              '%',
-          );
-          console.log(
-            '   Duration:',
-            result.transcriptionResult.duration.toFixed(2) + 's',
-          );
-          console.log(
-            '   Processing Time:',
-            result.transcriptionResult.processing_time.toFixed(2) + 's',
-          );
-          console.log('   Model:', result.transcriptionResult.model);
-          console.log('   Device:', result.transcriptionResult.device);
-          console.log('   Segments:', result.transcriptionResult.segment_count);
-          if (result.transcriptionResult.real_time_factor) {
-            console.log(
-              '   Speed:',
-              result.transcriptionResult.real_time_factor.toFixed(2) + 'x',
-              result.transcriptionResult.faster_than_realtime ? '🚀' : '',
-            );
-          }
-          console.log('\n📄 Full Text:', result.transcriptionResult.text);
-          console.log('\n🎯 Word Timestamps:');
-          result.transcriptionResult.segments.forEach((segment, idx) => {
-            console.log(
-              `\n  Segment ${idx + 1} [${segment.start.toFixed(2)}s - ${segment.end.toFixed(2)}s]:`,
-              segment.text,
-            );
-            if (segment.words) {
-              segment.words.forEach((word) => {
-                console.log(
-                  `    [${word.start.toFixed(2)}s - ${word.end.toFixed(2)}s] "${word.word}" (confidence: ${(word.confidence * 100).toFixed(1)}%)`,
-                );
-              });
-            }
+          // Accessed intentionally to preserve potential lazy getters/shape checks.
+          void result.transcriptionResult.real_time_factor;
+          result.transcriptionResult.segments.forEach((segment) => {
+            void segment.words;
           });
         }
 

@@ -27,7 +27,6 @@ export const useProjectSync = () => {
   useEffect(() => {
     if (currentProject?.id !== currentProjectId) {
       if (currentProject) {
-        console.log(`🔄 Syncing project: ${currentProject.metadata.title}`);
         setCurrentProjectId(currentProject.id);
         loadProjectData(currentProject.id).catch(console.error);
       } else {
@@ -61,7 +60,6 @@ export const useProjectSync = () => {
 
     const interval = setInterval(() => {
       if (hasUnsavedChanges) {
-        console.log('🔄 Periodic auto-save triggered');
         saveProjectData().catch(console.error);
       }
     }, autoSavePreferences.intervalMs);

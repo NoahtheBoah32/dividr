@@ -81,12 +81,9 @@ export const useExportHandler = () => {
 
         // Get timeline gaps
         const gaps = getTimelineGaps();
-        console.log('Gaps detected:', gaps);
 
         // Add gaps to job
         job.gaps = gaps;
-        console.log('🎬 FFmpeg Job:', job);
-        console.log('🗂️ Output Path:', job.outputPath);
 
         // Track current time to avoid race conditions
         let latestCurrentTime = render.currentTime;
@@ -112,14 +109,12 @@ export const useExportHandler = () => {
           },
           onStatus: (status) => {
             updateRenderProgress(render.progress, status, latestCurrentTime);
-            //console.log(render.progress);
+            // Progress handled via state updates.
           },
           onLog: () => {
             // Logging disabled
           },
         };
-
-        console.log('🚀 Starting render process...');
 
         // Construct the full output file path (use forward slash for cross-platform compatibility)
         const fullOutputPath = `${job.outputPath}/${job.output}`.replace(
@@ -139,13 +134,10 @@ export const useExportHandler = () => {
           quality: 'high',
         });
 
-        console.log('📞 Calling runFfmpegWithProgress...');
         const result = await runFfmpegWithProgress(job, callbacks);
-        console.log('✅ runFfmpegWithProgress completed:', result);
 
         // Check if export was cancelled
         if (result.cancelled) {
-          console.log('🛑 Export was cancelled by user');
           clearExportReminderTimer();
           cancelRender();
           setRenderDialogState('cancelled');
@@ -189,9 +181,8 @@ export const useExportHandler = () => {
       clearExportReminderTimer();
 
       // Call IPC to kill FFmpeg process
-      console.log('🛑 Calling ffmpeg:cancel IPC...');
-      const result = await window.electronAPI.invoke('ffmpeg:cancel');
-      console.log('🛑 FFmpeg cancel result:', result);
+
+      await window.electronAPI.invoke('ffmpeg:cancel');
 
       // Update UI state
       cancelRender();

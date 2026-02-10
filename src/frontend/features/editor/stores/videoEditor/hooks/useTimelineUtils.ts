@@ -9,13 +9,8 @@ export const useTimelineUtils = () => {
   const displayFps = getDisplayFps(store.tracks);
 
   const getTimelineGaps = () => {
-    console.log('--- Starting independent gap detection process ---');
-    console.log('Initial tracks state:', store.tracks);
-
     const result = detectTimelineGaps(store.tracks);
 
-    console.log('\n--- Independent gap detection process complete ---');
-    console.log('Final gaps:', result);
     return result;
   };
 

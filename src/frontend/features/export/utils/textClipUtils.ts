@@ -100,11 +100,6 @@ export function extractTextClips(
     };
   });
 
-  console.log(
-    `📝 Extracted ${textClips.length} text clips for export`,
-    textClips,
-  );
-
   return textClips;
 }
 

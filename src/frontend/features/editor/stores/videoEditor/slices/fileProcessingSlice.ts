@@ -257,7 +257,6 @@ if (typeof window !== 'undefined' && window.electronAPI) {
     (event: any, data: { path: string; log: string }) => {
       // TODO: Dispatch update to media store if we want to show exact percentage
       // For now just log to verify progress
-      console.log(`[Proxy Progress] ${data.log.trim()}`);
     },
   );
 }
@@ -318,10 +317,6 @@ const processImportedFile = async (
         videoDimensions.width,
         videoDimensions.height,
       );
-
-      console.log(
-        `📐 Detected aspect ratio for ${fileInfo.name}: ${aspectRatioData?.label || 'custom'} (${aspectRatioData?.ratio?.toFixed(2)})`,
-      );
     } catch (error) {
       console.warn(
         `⚠️ Failed to get dimensions for ${fileInfo.name}, using fallback:`,
@@ -335,9 +330,6 @@ const processImportedFile = async (
     }
   } else if (fileInfo.type === 'audio') {
     // Audio files don't have dimensions - set to zero
-    console.log(
-      `🎵 Audio file detected: ${fileInfo.name} (no dimensions needed)`,
-    );
   }
 
   // Create preview URL for video, image, AND audio files
@@ -353,9 +345,6 @@ const processImportedFile = async (
       );
       if (previewResult.success) {
         previewUrl = previewResult.url;
-        console.log(
-          `🔗 Created preview URL for ${fileInfo.type}: ${fileInfo.name}`,
-        );
       }
     } catch (error) {
       console.warn(
@@ -387,18 +376,11 @@ const processImportedFile = async (
     const signature = await generateContentSignatureFromPath(fileInfo.path);
     if (signature) {
       contentSignature = signature;
-      console.log(
-        `🔑 Generated content signature for ${fileInfo.name}: ${signature.partialHash.substring(0, 16)}...`,
-      );
 
       // Check for duplicate if callback provided
       if (checkDuplicateFn && contentSignature) {
         const existingMedia = checkDuplicateFn(contentSignature);
         if (existingMedia) {
-          console.log(
-            `🔄 Duplicate detected: "${fileInfo.name}" matches existing "${existingMedia.name}"`,
-          );
-
           // Handle duplicate - ask user what to do
           if (handleDuplicateFn) {
             const choice = await handleDuplicateFn(
@@ -409,9 +391,7 @@ const processImportedFile = async (
             if (choice === 'use-existing') {
               // User chose to use existing - return existing media info
               // Don't add to timeline again since it's already there or user just wants to skip
-              console.log(
-                `✅ Using existing media: ${existingMedia.name} (${existingMedia.id})`,
-              );
+
               return {
                 id: existingMedia.id,
                 name: existingMedia.name,
@@ -424,7 +404,6 @@ const processImportedFile = async (
             }
 
             // choice === 'import-copy' - continue with import
-            console.log(`📋 Importing as copy: ${fileInfo.name}`);
           }
         }
       }
@@ -483,10 +462,6 @@ const processImportedFile = async (
   const needsProxy = trackType === 'video' && videoDimensions.width > 2000;
 
   if (needsProxy) {
-    console.log(
-      `🎥 High-res content detected (${videoDimensions.width}x${videoDimensions.height}), starting proxy generation...`,
-    );
-
     // Show informative toast with hardware capabilities
     (async () => {
       try {
@@ -551,28 +526,12 @@ const processImportedFile = async (
             error?: string;
           }) => {
             if (result.success && result.proxyPath) {
-              console.log('✅ Proxy generated successfully:', result.proxyPath);
-
               // Log encoder information
               if (result.encoder) {
-                console.log(`🎮 Encoder used: ${result.encoder.description}`);
-                if (result.encoder.fallbackUsed) {
-                  console.log(
-                    `⚠️ Hardware encoder ${result.encoder.originalEncoder} failed, used software fallback`,
-                  );
-                }
+                void result.encoder.fallbackUsed;
               }
 
-              if (result.benchmark) {
-                console.log(`⏱️ Proxy generation stats:`);
-                console.log(`   - Duration: ${result.benchmark.durationMs}ms`);
-                console.log(
-                  `   - Start: ${new Date(result.benchmark.startTime).toLocaleTimeString()}`,
-                );
-                console.log(
-                  `   - End: ${new Date(result.benchmark.endTime).toLocaleTimeString()}`,
-                );
-              }
+              void result.benchmark;
 
               // Create URL for the proxy file
               const proxyUrlResult = await window.electronAPI.createPreviewUrl(
@@ -591,28 +550,16 @@ const processImportedFile = async (
                     benchmarkMs: result.benchmark?.durationMs,
                   },
                 });
-                console.log(
-                  '✅ Switched previewUrl to proxy for:',
-                  fileInfo.name,
-                );
 
                 // Trigger deferred background jobs now that proxy is ready
                 if (generateSpriteFn && !spriteSheetDisabled) {
-                  console.log(
-                    `🎬 Starting deferred sprite sheet generation for proxy: ${fileInfo.name}`,
-                  );
                   generateSpriteFn(mediaId).catch((err) =>
                     console.warn('Deferred sprite gen failed:', err),
                   );
                 } else if (spriteSheetDisabled) {
-                  console.log(
-                    `⏭️ Sprite sheets disabled for long-form video: ${fileInfo.name}`,
-                  );
+                  // Sprite generation intentionally skipped for this media item.
                 }
                 if (generateThumbnailFn) {
-                  console.log(
-                    `📸 Starting deferred thumbnail generation for proxy: ${fileInfo.name}`,
-                  );
                   generateThumbnailFn(mediaId).catch((err) =>
                     console.warn('Deferred thumbnail gen failed:', err),
                   );
@@ -626,9 +573,6 @@ const processImportedFile = async (
 
               // Fallback: If proxy fails, try generating sprites/thumbnails from original source
               // This ensures we at least have visual metadata even if performance isn't optimized
-              console.log(
-                `⚠️ Proxy failed, falling back to source for sprites/thumbnails: ${fileInfo.name}`,
-              );
 
               if (generateSpriteFn) {
                 generateSpriteFn(mediaId).catch((err) =>
@@ -660,10 +604,6 @@ const processImportedFile = async (
         await window.electronAPI.transcodeRequiresTranscoding(fileInfo.path);
 
       if (transcodeCheck.requiresTranscoding) {
-        console.log(
-          `🎬 File requires transcoding: ${fileInfo.name} (${transcodeCheck.reason})`,
-        );
-
         // Update media with transcoding pending status
         if (updateMediaLibraryFn) {
           updateMediaLibraryFn(mediaId, {
@@ -685,10 +625,6 @@ const processImportedFile = async (
             });
 
             if (result.success && result.jobId) {
-              console.log(
-                `🎬 Transcode started for ${fileInfo.name}: job ${result.jobId}`,
-              );
-
               // Update with job ID and processing status
               if (updateMediaLibraryFn) {
                 updateMediaLibraryFn(mediaId, {
@@ -763,9 +699,6 @@ const processImportedFile = async (
     const extractAudioWithRetry = async (retries = 3, delay = 1000) => {
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
-          console.log(
-            `🎵 Audio extraction attempt ${attempt}/${retries} for ${fileInfo.name}`,
-          );
           const result = await window.electronAPI.extractAudioFromVideo(
             fileInfo.path,
           );
@@ -782,16 +715,13 @@ const processImportedFile = async (
                 },
               });
             }
-            console.log(`✅ Audio extracted successfully for ${fileInfo.name}`);
+
             audioExtractionComplete = true;
             return; // Success, exit retry loop
           } else if (
             result.error?.includes('Another FFmpeg process is already running')
           ) {
             if (attempt < retries) {
-              console.log(
-                `⏳ FFmpeg busy, retrying audio extraction in ${delay}ms...`,
-              );
               await new Promise((resolve) => setTimeout(resolve, delay));
               continue; // Retry
             } else {
@@ -858,9 +788,6 @@ const processImportedFile = async (
           try {
             const result = await generateWaveformFn(mediaId);
             if (result) {
-              console.log(
-                `✅ Waveform generated for ${fileInfo.name} on attempt ${attempt}`,
-              );
               return;
             }
           } catch (error) {
@@ -912,9 +839,6 @@ const processImportedFile = async (
         // Delay sprite sheet generation to give audio extraction priority
         // This prevents FFmpeg resource contention
         setTimeout(() => {
-          console.log(
-            `🎬 Starting sprite sheet generation for ${fileInfo.name} (deferred for audio priority)`,
-          );
           generateSpriteFn(mediaId).catch((error) => {
             console.warn(
               `⚠️ Sprite sheet generation failed for ${fileInfo.name}:`,
@@ -933,9 +857,7 @@ const processImportedFile = async (
           });
         }, 500); // 500ms delay to let audio extraction start and potentially complete
       } else if (spriteSheetDisabled) {
-        console.log(
-          `⏭️ Sprite sheets disabled for long-form video: ${fileInfo.name}`,
-        );
+        // Sprite generation intentionally skipped for this media item.
       }
 
       // STEP 4: Generate thumbnail (lowest priority, can run alongside sprites)
@@ -965,9 +887,6 @@ const processImportedFile = async (
         try {
           const result = await generateWaveformFn(mediaId);
           if (result) {
-            console.log(
-              `✅ Waveform generated for ${fileInfo.name} on attempt ${attempt}`,
-            );
             return;
           }
         } catch (error) {
@@ -1105,8 +1024,6 @@ export const createFileProcessingSlice: StateCreator<
 > = (set, get) => ({
   importMediaFromDialog: async (): Promise<ImportResult> => {
     try {
-      console.log('🔍 Opening file dialog for media selection...');
-
       // Use Electron's native file dialog
       const result = await window.electronAPI.openFileDialog({
         title: 'Select Media Files',
@@ -1148,10 +1065,6 @@ export const createFileProcessingSlice: StateCreator<
         return { success: false, importedFiles: [] };
       }
 
-      console.log(
-        `🔍 Validating ${result.files.length} selected files from dialog...`,
-      );
-
       // STEP 1: Validate files BEFORE any processing
       // Convert file paths to File objects for validation
       const fileObjects = await Promise.all(
@@ -1192,9 +1105,7 @@ export const createFileProcessingSlice: StateCreator<
       // Validate all files
       const validationResults = await FileIntegrityValidator.validateFiles(
         validFileObjects,
-        (completed, total) => {
-          console.log(`Validation progress: ${completed}/${total}`);
-        },
+        (_completed, _total) => undefined,
       );
 
       // Separate valid and invalid files
@@ -1209,7 +1120,6 @@ export const createFileProcessingSlice: StateCreator<
         const originalIndex = validFileObjects.indexOf(file);
         if (validationResult.isValid) {
           validFileIndices.push(originalIndex);
-          console.log(`✅ Valid: ${file.name}`);
         } else {
           const reason = validationResult.error || 'File validation failed';
           rejectedFiles.push({
@@ -1233,9 +1143,6 @@ export const createFileProcessingSlice: StateCreator<
       }
 
       // STEP 2: Process only valid files
-      console.log(
-        `📦 Processing ${validFileIndices.length} valid files from dialog...`,
-      );
 
       const importedFiles: Array<{
         id: string;
@@ -1312,9 +1219,6 @@ export const createFileProcessingSlice: StateCreator<
                 duplicateChoice === 'use-existing' &&
                 sigInfo?.existingMedia
               ) {
-                console.log(
-                  `✅ Using existing media: ${sigInfo.existingMedia.name}`,
-                );
                 importedFiles.push({
                   id: sigInfo.existingMedia.id,
                   name: sigInfo.existingMedia.name,
@@ -1356,9 +1260,6 @@ export const createFileProcessingSlice: StateCreator<
           }),
         );
 
-        console.log(
-          `✅ Successfully imported ${importedFiles.length} files from dialog`,
-        );
         if (rejectedFiles.length > 0) {
           console.warn(`⚠️ Rejected ${rejectedFiles.length} files`);
         }
@@ -1405,16 +1306,11 @@ export const createFileProcessingSlice: StateCreator<
 
       // Check if this exact import is already in progress
       if (ongoingImports.has(importKey)) {
-        console.log(
-          `⚠️ Import already in progress for these files, returning existing promise`,
-        );
         const existingImport = ongoingImports.get(importKey);
         if (existingImport) {
           return existingImport;
         }
       }
-
-      console.log(`🔍 Validating ${files.length} dropped files...`);
 
       // Create and store the import promise to prevent duplicate processing
       const importPromise = (async (): Promise<ImportResult> => {
@@ -1422,9 +1318,7 @@ export const createFileProcessingSlice: StateCreator<
           // STEP 1: Validate files BEFORE any processing
           const validationResults = await FileIntegrityValidator.validateFiles(
             files,
-            (completed, total) => {
-              console.log(`Validation progress: ${completed}/${total}`);
-            },
+            (_completed, _total) => undefined,
           );
 
           // Separate valid and invalid files
@@ -1438,7 +1332,6 @@ export const createFileProcessingSlice: StateCreator<
           validationResults.forEach((result, file) => {
             if (result.isValid) {
               validFiles.push(file);
-              console.log(`✅ Valid: ${file.name}`);
             } else {
               const reason = result.error || 'File validation failed';
               rejectedFiles.push({
@@ -1463,7 +1356,6 @@ export const createFileProcessingSlice: StateCreator<
           }
 
           // STEP 2: Process only valid files
-          console.log(`📦 Processing ${validFiles.length} valid files...`);
 
           // Convert File objects to ArrayBuffers for IPC transfer
           const fileBuffers = await Promise.all(
@@ -1572,9 +1464,6 @@ export const createFileProcessingSlice: StateCreator<
                     duplicateChoice === 'use-existing' &&
                     sigInfo?.existingMedia
                   ) {
-                    console.log(
-                      `✅ Using existing media: ${sigInfo.existingMedia.name}`,
-                    );
                     importedFiles.push({
                       id: sigInfo.existingMedia.id,
                       name: sigInfo.existingMedia.name,
@@ -1616,9 +1505,6 @@ export const createFileProcessingSlice: StateCreator<
               }),
             );
 
-            console.log(
-              `✅ Successfully imported ${importedFiles.length} files`,
-            );
             if (rejectedFiles.length > 0) {
               console.warn(`⚠️ Rejected ${rejectedFiles.length} files`);
             }
@@ -1672,16 +1558,11 @@ export const createFileProcessingSlice: StateCreator<
 
       // Check if this exact import is already in progress
       if (ongoingImports.has(importKey)) {
-        console.log(
-          `⚠️ Import already in progress for these files, returning existing promise`,
-        );
         const existingImport = ongoingImports.get(importKey);
         if (existingImport) {
           return existingImport;
         }
       }
-
-      console.log(`🔍 Validating ${files.length} files for timeline import...`);
 
       // Create and store the import promise to prevent duplicate processing
       const importPromise = (async (): Promise<ImportResult> => {
@@ -1689,9 +1570,7 @@ export const createFileProcessingSlice: StateCreator<
           // STEP 1: Validate files BEFORE any processing
           const validationResults = await FileIntegrityValidator.validateFiles(
             files,
-            (completed, total) => {
-              console.log(`Validation progress: ${completed}/${total}`);
-            },
+            (_completed, _total) => undefined,
           );
 
           // Separate valid and invalid files
@@ -1705,7 +1584,6 @@ export const createFileProcessingSlice: StateCreator<
           validationResults.forEach((result, file) => {
             if (result.isValid) {
               validFiles.push(file);
-              console.log(`✅ Valid: ${file.name}`);
             } else {
               const reason = result.error || 'File validation failed';
               rejectedFiles.push({
@@ -1730,9 +1608,6 @@ export const createFileProcessingSlice: StateCreator<
           }
 
           // STEP 2: Process only valid files
-          console.log(
-            `📦 Processing ${validFiles.length} valid files for timeline...`,
-          );
 
           // Convert File objects to ArrayBuffers for IPC transfer
           const fileBuffers = await Promise.all(
@@ -1842,9 +1717,6 @@ export const createFileProcessingSlice: StateCreator<
                   duplicateChoice === 'use-existing' &&
                   sigInfo?.existingMedia
                 ) {
-                  console.log(
-                    `✅ Using existing media: ${sigInfo.existingMedia.name}`,
-                  );
                   importedFiles.push({
                     id: sigInfo.existingMedia.id,
                     name: sigInfo.existingMedia.name,
@@ -1892,19 +1764,11 @@ export const createFileProcessingSlice: StateCreator<
               }
             }
 
-            console.log(
-              `✅ Added ${importedFiles.length} files to media library`,
-            );
-
             // STEP 2: Add successfully imported media to timeline using addTrackFromMediaLibrary
             // This ensures we reuse cached sprites/waveforms and avoid duplicate track creation
             // CRITICAL: Process SEQUENTIALLY to ensure each file gets a unique row index
             // (especially important for subtitle files which need separate rows per file)
             if (mediaIdsToAddToTimeline.length > 0) {
-              console.log(
-                `📍 Adding ${mediaIdsToAddToTimeline.length} files to timeline from media library...`,
-              );
-
               const timelineResults: Array<{
                 success: boolean;
                 mediaId: string;
@@ -1924,9 +1788,6 @@ export const createFileProcessingSlice: StateCreator<
                     mediaItem?.transcoding?.status === 'pending' ||
                     mediaItem?.transcoding?.status === 'processing'
                   ) {
-                    console.log(
-                      `🚫 Blocking timeline addition for transcoding media: ${mediaItem.name}`,
-                    );
                     currentState.setTranscodingBlockedMedia(mediaItem);
                     continue; // Skip adding to timeline
                   }
@@ -1954,10 +1815,6 @@ export const createFileProcessingSlice: StateCreator<
                   );
                 }
               });
-
-              console.log(
-                `✅ Added ${mediaIdsToAddToTimeline.length} files to timeline from media library`,
-              );
             }
             if (rejectedFiles.length > 0) {
               console.warn(`⚠️ Rejected ${rejectedFiles.length} files`);

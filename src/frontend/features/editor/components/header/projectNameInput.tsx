@@ -62,11 +62,9 @@ const ProjectNameInput: React.FC<ProjectNameInputProps> = ({
       newTitle !== currentProject.metadata.title
     ) {
       saveTimeoutRef.current = setTimeout(async () => {
-        console.log('Auto-saving project with title:', newTitle);
         setIsSaving(true);
         try {
           await saveCurrentProject();
-          console.log('Project saved successfully');
         } catch (error) {
           console.error('Failed to auto-save project:', error);
           toast.error('Failed to save project');

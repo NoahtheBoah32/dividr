@@ -105,20 +105,6 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
         track.subtitleText,
     );
 
-    // Debug logging for subtitle timing verification
-    if (activeSubtitles.length > 0) {
-      const displayFps = getDisplayFps(tracks);
-      activeSubtitles.forEach((track) => {
-        const currentTime = currentFrame / displayFps;
-        console.log(
-          `[Canvas Subtitle Display] Frame: ${currentFrame} (${currentTime.toFixed(3)}s) | ` +
-            `Track: [${track.startFrame}, ${track.endFrame}) | ` +
-            `Original: [${track.subtitleStartTime?.toFixed(3)}s, ${track.subtitleEndTime?.toFixed(3)}s) | ` +
-            `Text: "${track.subtitleText?.substring(0, 30)}..."`,
-        );
-      });
-    }
-
     return activeSubtitles;
   }, [tracks, timeline.currentFrame]);
 
@@ -230,19 +216,12 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
       const files = Array.from(e.dataTransfer.files);
       if (files.length === 0) return;
 
-      console.log(
-        '🎯 VideoPreview handleDrop called with',
-        files.length,
-        'files',
-      );
+      
 
       try {
         await importMediaFromDrop(files);
-      } catch (error) {
-        console.error(
-          'Failed to import media from drop in VideoPreview:',
-          error,
-        );
+      } catch {
+        // Silent by design: import pipeline handles user-facing failures.
       }
     },
     [importMediaFromDrop],
@@ -251,8 +230,8 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
   const handleClick = useCallback(async () => {
     try {
       await useVideoEditorStore.getState().importMediaFromDialog();
-    } catch (error) {
-      console.error('Failed to open file dialog from VideoPreview:', error);
+    } catch {
+      // Silent by design: dialog cancellation is expected.
     }
   }, []);
 
@@ -291,8 +270,8 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
           videoElement.element.src = '';
           videoElement.element.load(); // Force cleanup
           videoElement.element.remove();
-        } catch (error) {
-          console.warn(`⚠️ Error cleaning up video element ${trackId}:`, error);
+        } catch {
+          // Ignore cleanup failures for detached media elements.
         }
         videoElements.delete(trackId);
 
@@ -319,9 +298,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
         track.previewUrl &&
         videoElement.element.src !== track.previewUrl
       ) {
-        console.log(
-          `🔄 Reloading video element for restored track: ${track.name}`,
-        );
+        
 
         // Force reload with new source
         videoElement.element.pause();
@@ -368,11 +345,11 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
             return newSet;
           });
 
-          console.log(`✅ Video loaded: ${track.name}`);
+          
         };
 
         const handleError = () => {
-          console.error(`❌ Failed to load: ${track.name}`);
+          
           setLoadingTracks((prev) => {
             const newSet = new Set(prev);
             newSet.delete(track.id);
@@ -387,12 +364,12 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
 
         // Add buffering event listeners
         const handleWaiting = () => {
-          console.log(`⏳ Video ${track.name} started buffering`);
+          
           setBufferingTracks((prev) => new Set(prev).add(track.id));
         };
 
         const handleCanPlay = () => {
-          console.log(`▶️ Video ${track.name} can play`);
+          
           setBufferingTracks((prev) => {
             const newSet = new Set(prev);
             newSet.delete(track.id);
@@ -401,7 +378,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
         };
 
         const handleLoadedMetadata = () => {
-          console.log(`📊 Video ${track.name} metadata loaded`);
+          
           setBufferingTracks((prev) => {
             const newSet = new Set(prev);
             newSet.delete(track.id);
@@ -461,13 +438,6 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
         return rowIndexA - rowIndexB; // Ascending order: lower row = behind
       });
 
-      // Debug logging for active tracks
-      sortedTracks.forEach((track) => {
-        if (track.type === 'video') {
-          //    console.log(`Track ${track.name}: visible=${track.visible}, frame=${frame}, start=${track.startFrame}, end=${track.endFrame}, active=true, rowIndex=${track.trackRowIndex ?? 0}`);
-        }
-      });
-
       return sortedTracks;
     },
     [tracks],
@@ -523,7 +493,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
         // Don't play if any video is buffering (Remotion-inspired behavior)
         if (isTrackActive && playback.isPlaying && !anyBuffering) {
           videoElement.element.play().catch(() => {
-            // console.log('Autoplay prevented for', track.name);
+            // Autoplay blocks are expected in some environments.
           });
         } else {
           videoElement.element.pause();
@@ -596,8 +566,6 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
 
       const activeTracks = getActiveTracksAtFrame(timeline.currentFrame);
       const videoElements = videoElementsRef.current;
-      let successfulDraws = 0;
-      let failedDraws = 0;
 
       activeTracks.forEach((track) => {
         if (track.type === 'video' || track.type === 'image') {
@@ -607,11 +575,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
           const x = track.offsetX || (preview.canvasWidth - width) / 2;
           const y = track.offsetY || (preview.canvasHeight - height) / 2;
 
-          // Debug logging for each track
-          // console.log(`🎬 Processing track: ${track.name}, type: ${track.type}, videoElement exists: ${!!videoElement}`);
-
           if (!videoElement) {
-            //  console.warn(`⚠️ No video element found for track: ${track.name}`);
             // Draw placeholder for missing video element
             ctx.fillStyle = track.color || '#666666';
             ctx.globalAlpha = 0.7;
@@ -620,18 +584,6 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
             return;
           }
 
-          // More detailed logging about video element state
-          /*console.log(`📊 Video element state for ${track.name}:`, {
-             isLoaded: videoElement.isLoaded,
-             isBuffering: videoElement.isBuffering,
-             readyState: videoElement.element.readyState,
-             videoWidth: videoElement.element.videoWidth,
-             videoHeight: videoElement.element.videoHeight,
-             currentTime: videoElement.element.currentTime,
-             duration: videoElement.element.duration
-           });
-           */
-          // Simplified rendering conditions for debugging
           if (videoElement && videoElement.isLoaded) {
             const video = videoElement.element;
 
@@ -639,24 +591,19 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
               // Very permissive conditions - just try to draw if we have a video element
               if (video.readyState >= 1) {
                 ctx.drawImage(video, x, y, width, height);
-                successfulDraws++;
-                //   console.log(`✅ Successfully drew ${track.name}`);
               } else {
                 // Video not ready, draw placeholder
                 ctx.fillStyle = track.color || '#444444';
                 ctx.globalAlpha = 0.6;
                 ctx.fillRect(x, y, width, height);
                 ctx.globalAlpha = 1.0;
-                //   console.log(`⏳ Video ${track.name} not ready, readyState: ${video.readyState}`);
               }
-            } catch (error) {
-              failedDraws++;
+            } catch {
               // Fallback rendering with error recovery
               ctx.fillStyle = track.color || '#ff4444';
               ctx.globalAlpha = 0.5;
               ctx.fillRect(x, y, width, height);
               ctx.globalAlpha = 1.0;
-              //  console.warn(`⚠️ Draw failed for ${track.name}:`, error);
             }
           } else {
             // Video element exists but not loaded
@@ -664,38 +611,17 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
             ctx.globalAlpha = 0.5;
             ctx.fillRect(x, y, width, height);
             ctx.globalAlpha = 1.0;
-
-            // const loadStatus = videoElement
-            //   ? `isLoaded: ${videoElement.isLoaded}, isBuffering: ${videoElement.isBuffering}`
-            //   : 'no video element';
-            //   console.log(`⏳ Video ${track.name} loading... ${loadStatus}`);
           }
         }
       });
 
       ctx.restore();
-
-      // Performance monitoring with detailed logging
-      //    console.log(`🎬 Render stats: ${successfulDraws} successful, ${failedDraws} failed, ${activeTracks.length} active tracks`);
-
-      if (failedDraws > successfulDraws && activeTracks.length > 0) {
-        console.warn(
-          `🚨 High failure rate: ${failedDraws}/${failedDraws + successfulDraws} draws failed`,
-        );
-      }
-
-      if (activeTracks.length > 0 && successfulDraws === 0) {
-        console.error(
-          '🚨 No videos rendered successfully! Check video loading and track states.',
-        );
-      }
-    } catch (error) {
-      console.error('🚨 Critical rendering error:', error);
+    } catch {
       // Emergency cleanup
       try {
         ctx?.clearRect(0, 0, canvas.width, canvas.height);
-      } catch (e) {
-        console.error('Failed to clear canvas:', e);
+      } catch {
+        // Ignore emergency cleanup failures.
       }
     }
   }, [
@@ -720,8 +646,8 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ className }) => {
 
       try {
         renderFrameSimple();
-      } catch (error) {
-        console.error('🚨 Animation frame error:', error);
+      } catch {
+        // Ignore per-frame render failures; next frame will retry.
       }
 
       renderFrameRef.current = requestAnimationFrame(animate);

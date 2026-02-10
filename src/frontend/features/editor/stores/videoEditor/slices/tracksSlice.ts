@@ -834,9 +834,6 @@ export const createTracksSlice: StateCreator<
       mediaItem.transcoding?.status === 'pending' ||
       mediaItem.transcoding?.status === 'processing'
     ) {
-      console.log(
-        `🚫 Blocking timeline addition for transcoding media: ${mediaItem.name}`,
-      );
       // Trigger global blocked modal if available
       if (state.setTranscodingBlockedMedia) {
         state.setTranscodingBlockedMedia(mediaItem);
@@ -881,14 +878,8 @@ export const createTracksSlice: StateCreator<
           );
 
           // Use batch addTracks for better performance
-          console.log(
-            `🚀 Adding ${subtitleTracks.length} subtitle tracks in batch...`,
-          );
-          const addedIds = await get().addTracks(subtitleTracks);
 
-          console.log(
-            `✅ Imported ${subtitleTracks.length} subtitle segments using batch operation`,
-          );
+          const addedIds = await get().addTracks(subtitleTracks);
 
           return addedIds[0] || ''; // Return first track ID for consistency
         }
@@ -919,9 +910,6 @@ export const createTracksSlice: StateCreator<
       // Use pre-calculated values from import
       aspectRatio = mediaItem.metadata.aspectRatio;
       aspectRatioLabel = mediaItem.metadata.aspectRatioLabel || undefined;
-      console.log(
-        `📐 Using stored aspect ratio: ${aspectRatioLabel || 'custom'} (${aspectRatio?.toFixed(2)}) for ${mediaItem.name}`,
-      );
     } else {
       // Fallback: Detect aspect ratio from dimensions
       const aspectRatioData = detectAspectRatio(
@@ -930,9 +918,6 @@ export const createTracksSlice: StateCreator<
       );
       aspectRatio = aspectRatioData?.ratio;
       aspectRatioLabel = aspectRatioData?.label || undefined;
-      console.log(
-        `📐 Detected aspect ratio (fallback): ${aspectRatioLabel || 'custom'} (${aspectRatio?.toFixed(2)}) for ${mediaItem.name}`,
-      );
     }
 
     const track = {
@@ -978,9 +963,6 @@ export const createTracksSlice: StateCreator<
       track.width &&
       track.height
     ) {
-      console.log(
-        `🎬 Setting canvas size to match first video track: ${track.width}×${track.height}`,
-      );
       (get() as any).setCanvasSize(track.width, track.height);
     }
 
@@ -2262,7 +2244,7 @@ export const createTracksSlice: StateCreator<
     const selectedTrackIds = state.timeline.selectedTrackIds;
 
     if (selectedTrackIds.length < 2) {
-      // console.log('Cannot link: Need at least 2 tracks selected');
+      // Linking requires at least 2 selected tracks.
       return;
     }
 
@@ -2281,10 +2263,6 @@ export const createTracksSlice: StateCreator<
 
     if (videoTrack && audioTrack) {
       (get() as any).linkTracks(videoTrack.id, audioTrack.id);
-    } else {
-      console.log(
-        'Cannot link: Need to select one video and one audio track that are not already linked',
-      );
     }
   },
 

@@ -118,7 +118,6 @@ export const VideoThumbnailStrip: React.FC<VideoThumbnailStripProps> =
         const cachedThumbnails =
           await VideoThumbnailGenerator.getCachedThumbnails(options);
         if (cachedThumbnails && cachedThumbnails.length > 0) {
-          console.log('📸 Using cached thumbnails for', track.name);
           setState((prev) => ({
             ...prev,
             thumbnails: cachedThumbnails,
@@ -131,16 +130,8 @@ export const VideoThumbnailStrip: React.FC<VideoThumbnailStripProps> =
 
         // Check if we're already loading this exact configuration
         if (state.isLoading) {
-          console.log('📸 Already generating thumbnails, skipping...');
           return;
         }
-
-        console.log(
-          '📸 Generating new thumbnails for',
-          track.name,
-          'at zoom',
-          thumbnailParams.roundedZoom,
-        );
 
         setState((prev) => ({
           ...prev,

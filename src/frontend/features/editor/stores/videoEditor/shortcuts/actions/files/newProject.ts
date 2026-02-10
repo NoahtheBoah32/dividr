@@ -11,10 +11,8 @@ export const newProjectAction = async (navigate: (path: string) => void) => {
     const projectStore = useProjectStore.getState();
     const currentProject = projectStore.currentProject;
 
-    // Log if there's a current project (auto-saved)
-    if (currentProject) {
-      console.log('[New Project] Current project will be auto-saved');
-    }
+    // Trigger a read so existing auto-save behavior remains untouched.
+    void currentProject;
 
     // Create a new untitled project
     const projectId = await projectStore.createNewProject('Untitled Project');

@@ -597,11 +597,6 @@ export function normalizeRowIndices(tracks: VideoTrack[]): VideoTrack[] {
  * @returns Tracks with normalized integer row indices
  */
 export function normalizeAfterDrop(tracks: VideoTrack[]): VideoTrack[] {
-  console.log(
-    `🔄 NORMALIZE: Before -`,
-    tracks.map((t) => `${t.type}-${t.trackRowIndex}`).join(', '),
-  );
-
   // Separate tracks into non-audio and audio groups
   const nonAudioTracks = tracks.filter(
     (t) => !AUDIO_GROUP_TYPES.includes(t.type),
@@ -623,14 +618,6 @@ export function normalizeAfterDrop(tracks: VideoTrack[]): VideoTrack[] {
     indexMapping.set(oldIndex, position);
   });
 
-  console.log(`   Unique indices: [${uniqueIndices.join(', ')}]`);
-  console.log(
-    `   Index mapping:`,
-    Array.from(indexMapping.entries())
-      .map(([old, newIdx]) => `${old}→${newIdx}`)
-      .join(', '),
-  );
-
   // Apply mapping to non-audio tracks
   const normalizedNonAudio = nonAudioTracks.map((track) => {
     const oldIndex = track.trackRowIndex ?? 0;
@@ -646,7 +633,6 @@ export function normalizeAfterDrop(tracks: VideoTrack[]): VideoTrack[] {
       }
     }
 
-    console.log(`   ${track.type}: ${oldIndex} → ${newIndex}`);
     return { ...track, trackRowIndex: newIndex };
   });
 
@@ -675,10 +661,6 @@ export function normalizeAfterDrop(tracks: VideoTrack[]): VideoTrack[] {
   });
 
   const result = [...normalizedNonAudio, ...normalizedAudio];
-  console.log(
-    `🔄 NORMALIZE: After -`,
-    result.map((t) => `${t.type}-${t.trackRowIndex}`).join(', '),
-  );
 
   return result;
 }
@@ -839,12 +821,6 @@ export function calculateInsertionRowIndex(
     .map((t) => t.trackRowIndex ?? 0)
     .sort((a, b) => b - a);
 
-  console.log(
-    `🎯 INSERTION: dragType=${trackType}, insertionType=${insertionType}, refRow=${referenceRowIndex}`,
-  );
-  console.log(`   Same-type indices: [${sameTypeIndices}]`);
-  console.log(`   All visual indices: [${uniqueVisualIndices}]`);
-
   // CRITICAL: video-0 is the base track and cannot have videos below it
   const isVideoType = trackType === 'video';
   const minAllowedIndex = isVideoType ? 0 : -Infinity;
@@ -852,9 +828,7 @@ export function calculateInsertionRowIndex(
   // Handle case when no tracks of this type exist
   if (sameTypeIndices.length === 0) {
     // No tracks of this type exist - use reference position for cross-type reordering
-    console.log(
-      `   ➡️ No ${trackType} tracks exist, using refRow=${referenceRowIndex}`,
-    );
+
     return referenceRowIndex;
   }
 
@@ -875,9 +849,7 @@ export function calculateInsertionRowIndex(
         referenceRowIndex + 1,
         visualMaxIndex + 1,
       );
-      console.log(
-        `   ➡️ ${result} (above: max(sameType+1=${sameTypeMaxIndex + 1}, ref+1=${referenceRowIndex + 1}, visual+1=${visualMaxIndex + 1}))`,
-      );
+
       return result;
     }
 
@@ -894,17 +866,15 @@ export function calculateInsertionRowIndex(
           // Special case: dragging below row 0
           if (isVideoType) {
             // video-0 is base - cannot go below, place just above
-            console.log(`   ➡️ 0.5 (video can't go below video-0)`);
+
             return 0.5;
           }
-          console.log(`   ➡️ -0.5 (below row 0)`);
+
           return -0.5;
         }
         // Use fractional below reference (halfway to 0 or minAllowed)
         const result = Math.max(minAllowedIndex, referenceRowIndex - 0.5);
-        console.log(
-          `   ➡️ ${result} (no visual rows below ref=${referenceRowIndex})`,
-        );
+
         return result;
       }
 
@@ -915,9 +885,7 @@ export function calculateInsertionRowIndex(
         minAllowedIndex,
         referenceRowIndex - (referenceRowIndex - nextLowerVisualIndex) / 2,
       );
-      console.log(
-        `   ➡️ ${result} (between ref=${referenceRowIndex} and nextLower=${nextLowerVisualIndex})`,
-      );
+
       return result;
     }
 
@@ -934,17 +902,15 @@ export function calculateInsertionRowIndex(
           // Special case: inserting below row 0
           if (isVideoType) {
             // video-0 is base - cannot go below
-            console.log(`   ➡️ 0.5 (video can't go below video-0)`);
+
             return 0.5;
           }
-          console.log(`   ➡️ -0.5 (between, below row 0)`);
+
           return -0.5;
         }
         // Use fractional below reference
         const result = Math.max(minAllowedIndex, referenceRowIndex - 0.5);
-        console.log(
-          `   ➡️ ${result} (between, no visual rows below ref=${referenceRowIndex})`,
-        );
+
         return result;
       }
 
@@ -953,9 +919,7 @@ export function calculateInsertionRowIndex(
         minAllowedIndex,
         referenceRowIndex - (referenceRowIndex - nextLowerVisualIndex) / 2,
       );
-      console.log(
-        `   ➡️ ${result} (between ref=${referenceRowIndex} and nextLower=${nextLowerVisualIndex})`,
-      );
+
       return result;
     }
 
@@ -1019,10 +983,6 @@ export function detectInsertionPoint(
     const maxVisualIndex = Math.max(...nonAudioRows.map((r) => r.rowIndex));
     const targetIndex = maxVisualIndex + 1;
 
-    console.log(
-      `🎯 DETECT: Above topmost → targetIndex=${targetIndex} (max visual=${maxVisualIndex})`,
-    );
-
     return {
       type: 'above',
       targetRowIndex: targetIndex,
@@ -1058,10 +1018,6 @@ export function detectInsertionPoint(
       // Halfway between min and 0 (or next lower)
       targetIndex = minVisualIndex / 2;
     }
-
-    console.log(
-      `🎯 DETECT: Below bottommost non-audio → targetIndex=${targetIndex} (min visual=${minVisualIndex})`,
-    );
 
     return {
       type: 'below',
@@ -1114,10 +1070,6 @@ export function detectInsertionPoint(
         }
       }
 
-      console.log(
-        `🎯 DETECT: Upper zone of row ${row.rowId} → targetIndex=${targetIndex}`,
-      );
-
       return {
         type: i === 0 ? 'above' : 'between',
         targetRowIndex: targetIndex,
@@ -1139,10 +1091,6 @@ export function detectInsertionPoint(
       // Prevent boundary violations
       if (isAudioRow && !isDraggingAudio) return null;
       if (!isAudioRow && isDraggingAudio) return null;
-
-      console.log(
-        `🎯 DETECT: Inside row ${row.rowId} → targetIndex=${row.rowIndex}`,
-      );
 
       return {
         type: 'inside',
@@ -1197,10 +1145,6 @@ export function detectInsertionPoint(
           targetIndex = midpoint;
         }
       }
-
-      console.log(
-        `🎯 DETECT: Lower zone of row ${row.rowId} → targetIndex=${targetIndex}`,
-      );
 
       return {
         type: nextRow ? 'between' : 'below',

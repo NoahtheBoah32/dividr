@@ -65,22 +65,6 @@ export function useAlignmentGuides({
         });
       }
 
-      // Debug logging (development mode only)
-      if ((import.meta as any).env?.DEV === true) {
-        console.log('[Drag Guides Debug]', {
-          textCenter: { x: elementCenterX, y: elementCenterY },
-          videoCenter: { x: frameCenterX, y: frameCenterY },
-          alignment: {
-            horizontallyCentered: isHorizontallyCentered,
-            verticallyCentered: isVerticallyCentered,
-            deltaX: Math.abs(elementCenterX - frameCenterX),
-            deltaY: Math.abs(elementCenterY - frameCenterY),
-          },
-          tolerance: CENTER_ALIGNMENT_TOLERANCE,
-          guidesActive: guides.map((g) => `${g.type}-${g.label}`),
-        });
-      }
-
       setAlignmentGuides(guides);
     },
     [baseVideoHeight, baseVideoWidth],

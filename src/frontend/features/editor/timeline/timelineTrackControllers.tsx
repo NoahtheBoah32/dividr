@@ -226,23 +226,19 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
           const track = allTracks.find((t) => t.id === trackId);
           if (!track) continue;
 
-          console.log(`🎤 Generating subtitles for: ${track.name}`);
-
           try {
             const result = await generateKaraokeSubtitlesFromTrack(trackId, {
               model: 'base',
               processOnlyThisSegment: true, // Row Controller: process each segment individually
               keepExistingSubtitles:
                 !deleteExisting && allTracks.some((t) => t.type === 'subtitle'),
-              onProgress: (progress) => {
-                console.log('📊 Transcription progress:', progress);
+              onProgress: () => {
+                // Progress reflected in store state.
               },
             });
 
             if (result.success) {
-              console.log(
-                `✅ Generated ${result.trackIds?.length || 0} subtitles for ${track.name}`,
-              );
+              // No-op: success state is reflected in store updates.
             } else if (result.requiresDownload) {
               // Runtime not installed - show download modal and stop processing
               setPendingKaraokeAction({ trackIds, deleteExisting });

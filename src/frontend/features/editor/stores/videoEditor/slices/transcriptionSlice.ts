@@ -313,7 +313,7 @@ export const createTranscriptionSlice: StateCreator<
           }
 
           // Video has audio but not extracted yet - extract it first
-          console.log('🎵 Extracting audio from video for transcription...');
+
           const extractResult = await window.electronAPI.extractAudioFromVideo(
             mediaItem.source,
           );
@@ -381,7 +381,6 @@ export const createTranscriptionSlice: StateCreator<
 
       // Check if we have cached karaoke subtitles
       if (mediaItem.cachedKaraokeSubtitles) {
-        console.log('✨ Using cached karaoke subtitles for:', mediaItem.name);
         transcriptionResult =
           mediaItem.cachedKaraokeSubtitles.transcriptionResult;
 
@@ -394,10 +393,6 @@ export const createTranscriptionSlice: StateCreator<
           },
         });
       } else {
-        console.log('🎤 Starting Whisper transcription...');
-        console.log('   Audio path:', audioPath);
-        console.log('   Model:', options.model);
-
         // Setup progress listener
         const progressListener = (progress: {
           stage: 'loading' | 'processing' | 'complete' | 'error';
@@ -439,26 +434,7 @@ export const createTranscriptionSlice: StateCreator<
 
         transcriptionResult = result.result;
 
-        console.log('✅ Transcription successful');
-        console.log('   Segments:', transcriptionResult.segments.length);
-        console.log('   Language:', transcriptionResult.language);
-        console.log(
-          '   Language Confidence:',
-          transcriptionResult.language_probability,
-        );
-        console.log('   Duration:', transcriptionResult.duration);
-        console.log('   Processing Time:', transcriptionResult.processing_time);
-        console.log('   Model:', transcriptionResult.model);
-        console.log('   Device:', transcriptionResult.device);
-        if (transcriptionResult.real_time_factor) {
-          console.log(
-            '   Speed:',
-            transcriptionResult.real_time_factor.toFixed(2) + 'x',
-            transcriptionResult.faster_than_realtime ? '🚀' : '',
-          );
-        }
-        console.log('\n📝 Full Transcription Result:');
-        console.log(JSON.stringify(transcriptionResult, null, 2));
+        void transcriptionResult.real_time_factor;
 
         // Cache the transcription result
         if (state.updateMediaLibraryItem) {
@@ -491,13 +467,6 @@ export const createTranscriptionSlice: StateCreator<
           );
           if (specificTrack) {
             clipsToProcess = [specificTrack];
-            console.log('🎯 Specific segment subtitle generation:', {
-              trackId: specificTrack.id,
-              trackName: specificTrack.name,
-              startFrame: specificTrack.startFrame,
-              endFrame: specificTrack.endFrame,
-              sourceStartTime: specificTrack.sourceStartTime || 0,
-            });
           }
         } else {
           // ALL CLIPS MODE: Find all clips from the same source (for multi-track selection)
@@ -508,24 +477,11 @@ export const createTranscriptionSlice: StateCreator<
               (t.type === 'video' || t.type === 'audio') &&
               !t.muted,
           );
-          console.log('🎯 Multi-clip subtitle generation:', {
-            sourceTrackName: sourceTrack.name,
-            totalClipsFromSource: clipsToProcess.length,
-            clips: clipsToProcess.map((c: any) => ({
-              id: c.id,
-              startFrame: c.startFrame,
-              endFrame: c.endFrame,
-              sourceStartTime: c.sourceStartTime || 0,
-            })),
-          });
         }
       }
 
       if (clipsToProcess.length === 0 && !sourceTrack) {
         // LEGACY MODE: Media Library workflow - place at timeline start
-        console.log(
-          '📚 Media Library workflow - placing subtitles at timeline start',
-        );
       }
 
       const subtitleTracks: Omit<VideoTrack, 'id'>[] = [];
@@ -721,23 +677,13 @@ export const createTranscriptionSlice: StateCreator<
         }
       });
 
-      console.log(
-        `📝 Created ${subtitleTracks.length} karaoke subtitle tracks`,
-      );
-
       // Add tracks to timeline using batch operation for better performance
-      console.log(
-        `🚀 Adding ${subtitleTracks.length} karaoke subtitle tracks in batch...`,
-      );
+
       const trackIds = await state.addTracks(subtitleTracks);
 
-      console.log(
-        `✅ Added ${trackIds.length} karaoke subtitle tracks to timeline`,
-      );
       // Ensure subtitle track row is visible
       if (state.ensureTrackRowVisible) {
         state.ensureTrackRowVisible('subtitle');
-        console.log('📝 Auto-showed Subtitle track row');
       }
 
       // Mark media as having generated karaoke subtitles

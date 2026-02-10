@@ -138,9 +138,6 @@ export class FileIntegrityValidator {
       // Check 3: Skip browser validation for FFmpeg-only formats (AVI, WMV, FLV, etc.)
       // These formats are valid but browsers can't decode them - FFmpeg will handle them
       if (this.shouldSkipBrowserValidation(file.name)) {
-        console.log(
-          `✅ Skipping browser validation for FFmpeg-supported format: ${file.name}`,
-        );
         return {
           isValid: true,
           fileType: 'video',

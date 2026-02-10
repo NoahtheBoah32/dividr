@@ -196,7 +196,6 @@ export const createTimelineSlice: StateCreator<
       // Sort according to the defined order
       newRows.sort((a, b) => order.indexOf(a) - order.indexOf(b));
 
-      console.log(`✅ Added track row: ${rowId}. Visible rows:`, newRows);
       return {
         timeline: {
           ...state.timeline,
@@ -216,7 +215,6 @@ export const createTimelineSlice: StateCreator<
       const newRows = state.timeline.visibleTrackRows.filter(
         (id) => id !== rowId,
       );
-      console.log(`🗑️ Removed track row: ${rowId}. Visible rows:`, newRows);
 
       return {
         timeline: {
@@ -309,23 +307,20 @@ export const createTimelineSlice: StateCreator<
 
   // Visual feedback for duplication
   triggerDuplicationFeedback: (trackId: string) => {
-    console.log(`[Animation] Adding ${trackId} to feedback set`);
     set((state) => {
       const newSet = new Set(state.duplicationFeedbackTrackIds);
       newSet.add(trackId);
-      console.log(`[Animation] Feedback set now contains:`, Array.from(newSet));
+
       return { duplicationFeedbackTrackIds: newSet };
     });
 
     // Auto-clear after animation duration (600ms)
     setTimeout(() => {
-      console.log(`[Animation] Clearing ${trackId} after 600ms`);
       get().clearDuplicationFeedback(trackId);
     }, 600);
   },
 
   clearDuplicationFeedback: (trackId: string) => {
-    console.log(`[Animation] Removing ${trackId} from feedback set`);
     set((state) => {
       const newSet = new Set(state.duplicationFeedbackTrackIds);
       newSet.delete(trackId);

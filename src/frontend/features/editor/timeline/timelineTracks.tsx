@@ -88,8 +88,8 @@ const parseMediaDragPayload = (
           mediaId: parsed.mediaId || parsed.mediaIds?.[0],
         };
       }
-    } catch (error) {
-      console.warn('Failed to parse drag payload', error);
+    } catch {
+      // Ignore malformed drag payloads.
     }
   }
 
@@ -732,17 +732,10 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         const targetFrame = playback.dragGhost.targetFrame;
         const parsedRow = parseRowId(targetRowId);
 
-        console.log(
-          `🎬 DROP: track=${track.type}, currentRow=${track.trackRowIndex ?? 0}, targetRow=${parsedRow ? parsedRow.rowIndex : 'null'}`,
-        );
-
         if (parsedRow) {
           const currentRowIndex = track.trackRowIndex ?? 0;
 
           if (parsedRow.type !== track.type) {
-            console.log(
-              `   ❌ INVALID: Cannot drop ${track.type} on ${parsedRow.type} row`,
-            );
             endDraggingTrack();
             clearDragGhost();
             setIsResizing(false);
@@ -760,10 +753,6 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
               targetFrame !== null && targetFrame !== undefined
                 ? targetFrame
                 : undefined,
-            );
-          } else {
-            console.log(
-              `   ⏸️ No row change (same row ${currentRowIndex}, target was ${parsedRow.rowIndex})`,
             );
           }
         }
@@ -1270,11 +1259,8 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
                   targetFrame,
                   targetRowIndex,
                 );
-              } catch (error) {
-                console.error(
-                  `Failed to add media ${mediaId} to timeline:`,
-                  error,
-                );
+              } catch {
+                // Silent by design: drag/drop operations can fail without user impact.
               }
             }
             return;
@@ -1283,8 +1269,8 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
           if (e.dataTransfer.files) {
             onDrop(rowDef.id, e.dataTransfer.files);
           }
-        } catch (error) {
-          console.error('Error handling drop:', error);
+        } catch {
+          // Silent by design: drop parsing/import can fail for invalid payloads.
         }
       },
       [
@@ -1602,9 +1588,6 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
         const tracksToSelect = [trackId];
         if (selectedTrack?.isLinked && selectedTrack.linkedTrackId) {
           tracksToSelect.push(selectedTrack.linkedTrackId);
-          console.log(
-            `🔗 Selecting linked track pair: ${trackId} and ${selectedTrack.linkedTrackId}`,
-          );
         }
 
         if (multiSelect) {
@@ -1832,8 +1815,8 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
               },
               { addToTimeline: true, showToasts: true },
             );
-          } catch (error) {
-            console.error('Failed to import dropped files:', error);
+          } catch {
+            // Silent by design: invalid files are filtered by import pipeline.
           }
         }
       },
@@ -2013,11 +1996,8 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
                 targetFrame,
                 targetRowIndex ?? 0,
               );
-            } catch (error) {
-              console.error(
-                `Failed to add media ${mediaId} to timeline:`,
-                error,
-              );
+            } catch {
+              // Silent by design: add-track failures during drag are non-fatal.
             }
           }
           return;
@@ -2040,8 +2020,8 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
             { addToTimeline: true, showToasts: true },
           );
         }
-      } catch (error) {
-        console.error('Error handling placeholder drop:', error);
+      } catch {
+        // Silent by design: placeholder drop failures should not spam console.
       }
     };
 

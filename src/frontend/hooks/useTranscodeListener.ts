@@ -68,10 +68,6 @@ export function useTranscodeListener() {
       if (!mediaItem) return;
 
       if (event.success && event.previewUrl) {
-        console.log(
-          `✅ Transcode completed for ${mediaItem.name}: ${event.previewUrl}`,
-        );
-
         // Update media with transcoded source
         updateMediaLibraryItem(event.mediaId, {
           transcoding: {
@@ -97,9 +93,6 @@ export function useTranscodeListener() {
         );
 
         tracksUsingMedia.forEach((track) => {
-          console.log(
-            `🔄 Updating track ${track.name} with transcoded preview URL`,
-          );
           updateTrack(track.id, {
             previewUrl: event.previewUrl,
           });

@@ -38,7 +38,6 @@ export const TextToolsPanel: React.FC<CustomPanelProps> = ({ className }) => {
   // Handle font click - apply to selected text clip(s)
   const handleFontClick = (fontFamily: string) => {
     if (selectedTextTracks.length === 0) {
-      console.log('No text clip selected');
       return;
     }
 
@@ -51,17 +50,12 @@ export const TextToolsPanel: React.FC<CustomPanelProps> = ({ className }) => {
         },
       });
     });
-
-    console.log(
-      `✅ Applied font "${fontFamily}" to ${selectedTextTracks.length} text clip(s)`,
-    );
   };
 
   const handleAddHeading = async () => {
     beginGroup('Add Heading Text');
     try {
       await addTextClip('heading', currentFrame);
-      console.log('✅ Added heading text clip at frame:', currentFrame);
     } catch (error) {
       console.error('❌ Error adding heading text clip:', error);
     } finally {
@@ -73,7 +67,6 @@ export const TextToolsPanel: React.FC<CustomPanelProps> = ({ className }) => {
     beginGroup('Add Body Text');
     try {
       await addTextClip('body', currentFrame);
-      console.log('✅ Added body text clip at frame:', currentFrame);
     } catch (error) {
       console.error('❌ Error adding body text clip:', error);
     } finally {

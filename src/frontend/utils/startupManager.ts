@@ -84,7 +84,7 @@ class StartupManager {
       if (stage === 'app-ready' && duration > 5000) {
         console.warn(`${formatted} ⚠️ exceeded 5s startup budget`);
       } else {
-        console.log(formatted);
+        // Non-critical startup marks are intentionally quiet.
       }
     }
   }
@@ -138,13 +138,6 @@ class StartupManager {
    */
   printSummary(): void {
     if (!this.isDev()) return;
-
-    const entries = this.metrics.map((metric) => ({
-      stage: metric.stage,
-      ms: metric.duration ?? 0,
-    }));
-
-    console.log('[startup] summary', entries);
   }
 
   /**

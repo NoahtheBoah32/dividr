@@ -312,7 +312,6 @@ export const DialogsTest = () => {
         duplicates={mockDuplicateItems as any}
         onConfirm={(choices: Map<string, DuplicateChoice>) => {
           setDuplicateMediaOpen(false);
-          console.log(choices);
           toast.success(`Processed ${choices.size} duplicate decisions`);
         }}
         onCancel={() => setDuplicateMediaOpen(false)}
@@ -321,8 +320,7 @@ export const DialogsTest = () => {
       <ThumbnailChangerDialog
         open={thumbnailChangerOpen}
         onOpenChange={setThumbnailChangerOpen}
-        onThumbnailSelected={(data) => {
-          console.log('Thumbnail data length:', data.length);
+        onThumbnailSelected={() => {
           toast.success('Thumbnail selected');
         }}
       />

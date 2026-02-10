@@ -120,7 +120,6 @@ const StatusPanel = () => {
       setError(null);
       const statusResult = await window.electronAPI.mediaToolsStatus();
       setStatus(statusResult);
-      console.log('Media Tools Status:', statusResult);
     } catch (err) {
       console.error('Failed to get status:', err);
       setError(err instanceof Error ? err.message : 'Failed to get status');

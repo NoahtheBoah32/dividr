@@ -118,7 +118,7 @@ export const createTextClipsSlice: StateCreator<
     // addTrack handles undo recording via recordAction('Add Track') for non-video tracks
     if (state.addTrack) {
       const trackId = await state.addTrack(textTrack);
-      console.log(`✅ Added ${textType} text clip with ID: ${trackId}`);
+
       return trackId;
     }
 

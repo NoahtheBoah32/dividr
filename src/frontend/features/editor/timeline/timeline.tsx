@@ -246,8 +246,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               waveform?: string;
             };
           }
-        } catch (error) {
-          console.warn('Failed to parse drag payload', error);
+        } catch {
+          // Ignore malformed drag payloads.
         }
       }
 
@@ -975,7 +975,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
             payload.mediaId,
             targetFrame,
             targetRowIndex ?? 0,
-          ).catch(console.error);
+          ).catch(() => {
+            // Drop handler stays silent in dev for expected import failures.
+          });
           return;
         }
 

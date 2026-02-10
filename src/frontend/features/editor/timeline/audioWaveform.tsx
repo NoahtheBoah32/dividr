@@ -581,9 +581,6 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         ? track.sourceDuration / displayFps
         : trackMetrics.durationSeconds;
 
-      console.log(
-        `🎵 Generating waveform for noise-reduced audio: ${track.name}`,
-      );
       setIsGeneratingNrWaveform(true);
 
       // Use optimized 50 peaks/sec for faster generation
@@ -595,23 +592,12 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       })
         .then((result) => {
           if (result.success) {
-            console.log(
-              `✅ Noise-reduced waveform generated for ${track.name}`,
-            );
             // Increment version to trigger waveformData memo re-evaluation
             setNrWaveformVersion((v) => v + 1);
-          } else {
-            console.warn(
-              `⚠️ Noise-reduced waveform generation failed for ${track.name}:`,
-              result.error,
-            );
           }
         })
-        .catch((error) => {
-          console.warn(
-            `⚠️ Noise-reduced waveform generation error for ${track.name}:`,
-            error,
-          );
+        .catch(() => {
+          // Silent by design: waveform generation fallback is handled upstream.
         })
         .finally(() => {
           setIsGeneratingNrWaveform(false);

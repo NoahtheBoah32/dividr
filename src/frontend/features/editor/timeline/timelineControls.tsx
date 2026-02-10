@@ -247,11 +247,6 @@ const DuplicateButton: React.FC = React.memo(() => {
   const handleDuplicate = useCallback(() => {
     if (selectedTrackIds.length === 0) return;
 
-    console.log('[DuplicateButton] Duplicating selected tracks:', {
-      selectedCount: selectedTrackIds.length,
-      selectedIds: selectedTrackIds,
-    });
-
     // Begin grouped transaction for batch duplicate
     beginGroup?.(
       `Duplicate ${selectedTrackIds.length} Track${selectedTrackIds.length > 1 ? 's' : ''}`,
@@ -262,9 +257,6 @@ const DuplicateButton: React.FC = React.memo(() => {
 
     selectedTrackIds.forEach((trackId: string) => {
       if (processedTrackIds.has(trackId)) {
-        console.log(
-          `[DuplicateButton] Skipping ${trackId} - already processed`,
-        );
         return;
       }
 
@@ -599,9 +591,7 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
         const existingSubtitles = tracks.filter(
           (track) => track.type === 'subtitle',
         );
-        console.log(
-          `🗑️ Deleting ${existingSubtitles.length} existing subtitle tracks...`,
-        );
+
         for (const track of existingSubtitles) {
           removeTrack(track.id);
         }
@@ -626,10 +616,6 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
 
         if (!track) continue;
 
-        console.log(
-          `🎤 Generating subtitles for track ${i + 1}/${trackIds.length}: ${track.name}`,
-        );
-
         try {
           const result = await generateKaraokeSubtitlesFromTrack(trackId, {
             model: 'base',
@@ -641,9 +627,6 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
           if (result.success) {
             totalSubtitlesGenerated += result.trackIds?.length || 0;
             successCount++;
-            console.log(
-              `✅ Generated ${result.trackIds?.length || 0} subtitles for ${track.name}`,
-            );
           } else if (result.requiresDownload) {
             // Runtime not installed - show download modal and stop processing
             setPendingKaraokeAction({ trackIds, deleteExisting });

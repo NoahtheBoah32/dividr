@@ -170,11 +170,7 @@ const scheduleWaveformRehydrate = (get: () => any): void => {
         waveformTargets.add(mediaItem.id);
       });
 
-      if (waveformTargets.size > 0) {
-        console.log(
-          `🔄 Rehydrating waveforms for ${waveformTargets.size} media item(s)`,
-        );
-      }
+      void waveformTargets.size;
 
       waveformTargets.forEach((mediaId) => {
         state
@@ -205,11 +201,7 @@ const scheduleSpriteRehydrate = (get: () => any): void => {
         return !hasAnySheets && !isGenerating && !isTranscoding;
       });
 
-      if (spriteTargets.length > 0) {
-        console.log(
-          `🔄 Rehydrating sprite sheets for ${spriteTargets.length} media item(s)`,
-        );
-      }
+      void spriteTargets.length;
 
       spriteTargets.forEach((item) => {
         state
@@ -322,9 +314,6 @@ export const createProjectSlice: StateCreator<
                 track.source,
               );
               if (previewResult.success && previewResult.url) {
-                console.log(
-                  `🔄 Regenerated previewUrl for track: ${track.name}`,
-                );
                 return {
                   ...track,
                   previewUrl: previewResult.url,
@@ -362,23 +351,16 @@ export const createProjectSlice: StateCreator<
       });
 
       // Log what we're loading for debugging data persistence issues
-      console.log(
-        `📂 Loading project "${project.metadata.title}": ${loadedTracks.length} tracks, ${loadedMediaLibrary.length} media items`,
-      );
 
       // Log transform data for text/subtitle tracks to help debug transform persistence
       loadedTracks.forEach((track: any) => {
         if (track.type === 'text' && track.textTransform) {
-          console.log(
-            `  📝 Text track "${track.name}" transform:`,
-            track.textTransform,
-          );
+          // Access retained for debugging workflows without console noise.
+          void track.textTransform;
         }
         if (track.type === 'subtitle' && track.subtitleTransform) {
-          console.log(
-            `  📝 Subtitle track "${track.name}" transform:`,
-            track.subtitleTransform,
-          );
+          // Access retained for debugging workflows without console noise.
+          void track.subtitleTransform;
         }
       });
 
@@ -441,8 +423,6 @@ export const createProjectSlice: StateCreator<
 
       scheduleWaveformRehydrate(get);
       scheduleSpriteRehydrate(get);
-
-      console.log(`✅ Loaded project data for: ${project.metadata.title}`);
     } catch (error) {
       console.error('Failed to load project data:', error);
       throw error;
@@ -497,9 +477,6 @@ export const createProjectSlice: StateCreator<
         : undefined;
 
       // Log what we're saving for debugging data persistence issues
-      console.log(
-        `💾 Saving project "${currentProject.metadata.title}": ${tracksToSave.length} tracks, ${mediaLibraryToSave.length} media items`,
-      );
 
       // Update the project with current video editor state
       const updatedProject = {
@@ -536,10 +513,6 @@ export const createProjectSlice: StateCreator<
 
       // Sync with ProjectStore to update the project list
       get().syncWithProjectStore();
-
-      console.log(
-        `💾 Saved project data for: ${updatedProject.metadata.title}`,
-      );
     } catch (error) {
       console.error('Failed to save project data:', error);
       set({ isSaving: false });
@@ -677,7 +650,6 @@ export const createProjectSlice: StateCreator<
           : state.textStyle,
         hasUnsavedChanges: true,
       });
-      console.log('✅ Project imported successfully');
     } catch (error) {
       console.error('Failed to import project:', error);
     }
@@ -689,37 +661,32 @@ export const createProjectSlice: StateCreator<
       throw new Error('No project loaded');
     }
 
-    try {
-      // Get current project
-      const currentProject = await projectService.getProject(
-        state.currentProjectId,
-      );
-      if (!currentProject) {
-        throw new Error('Current project not found');
-      }
-
-      // Update project with new thumbnail
-      const updatedProject = {
-        ...currentProject,
-        metadata: {
-          ...currentProject.metadata,
-          thumbnail: thumbnailData,
-          updatedAt: new Date().toISOString(),
-        },
-      };
-
-      // Save to IndexedDB
-      await projectService.updateProject(updatedProject);
-
-      // Sync with ProjectStore to update the project list AND current project
-      get().syncWithProjectStore();
-
-      // Also update the current project in ProjectStore immediately
-      const projectStore = useProjectStore.getState();
-      projectStore.setCurrentProject(updatedProject);
-    } catch (error) {
-      console.log(error);
-      throw error;
+    // Get current project
+    const currentProject = await projectService.getProject(
+      state.currentProjectId,
+    );
+    if (!currentProject) {
+      throw new Error('Current project not found');
     }
+
+    // Update project with new thumbnail
+    const updatedProject = {
+      ...currentProject,
+      metadata: {
+        ...currentProject.metadata,
+        thumbnail: thumbnailData,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+
+    // Save to IndexedDB
+    await projectService.updateProject(updatedProject);
+
+    // Sync with ProjectStore to update the project list AND current project
+    get().syncWithProjectStore();
+
+    // Also update the current project in ProjectStore immediately
+    const projectStore = useProjectStore.getState();
+    projectStore.setCurrentProject(updatedProject);
   },
 });

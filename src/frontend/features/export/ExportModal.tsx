@@ -178,11 +178,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     const finalFilename =
       sanitizedBaseName + (selectedFormat?.extension || '.mp4');
 
-    console.log('🧹 Filename sanitization:', {
-      original: filename.trim(),
-      sanitized: sanitizedBaseName,
-      final: finalFilename,
-    });
+    
 
     onExport({
       filename: finalFilename,

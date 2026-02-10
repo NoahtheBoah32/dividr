@@ -261,8 +261,6 @@ export const createUndoRedoSlice: StateCreator<
       groupStartState: startState,
       groupActionName: actionName,
     });
-
-    console.log(`🔗 Begin group: ${actionName}`);
   },
 
   endGroup: () => {
@@ -304,10 +302,6 @@ export const createUndoRedoSlice: StateCreator<
           groupActionName: null,
         };
       });
-
-      console.log(
-        `✅ End group: ${state.groupActionName} (state changed, recorded)`,
-      );
     } else {
       // State didn't change, just reset the grouping flags
       set({
@@ -315,10 +309,6 @@ export const createUndoRedoSlice: StateCreator<
         groupStartState: null,
         groupActionName: null,
       });
-
-      console.log(
-        `⏭️ End group: ${state.groupActionName} (no state change, not recorded)`,
-      );
     }
   },
 
@@ -344,7 +334,6 @@ export const createUndoRedoSlice: StateCreator<
     const state = get() as any;
 
     if (state.undoStack.length === 0) {
-      console.log('Nothing to undo');
       return;
     }
 
@@ -380,18 +369,12 @@ export const createUndoRedoSlice: StateCreator<
     // Mark as unsaved
     const currentState2 = get() as any;
     currentState2.markUnsavedChanges?.();
-
-    console.log(
-      `↶ Undo: ${previousEntry.actionName || 'action'}`,
-      `(${undoStack.length} in history)`,
-    );
   },
 
   redo: () => {
     const state = get() as any;
 
     if (state.redoStack.length === 0) {
-      console.log('Nothing to redo');
       return;
     }
 
@@ -427,11 +410,6 @@ export const createUndoRedoSlice: StateCreator<
     // Mark as unsaved
     const currentState2 = get() as any;
     currentState2.markUnsavedChanges?.();
-
-    console.log(
-      `↷ Redo: ${nextEntry.actionName || 'action'}`,
-      `(${redoStack.length} remaining)`,
-    );
   },
 
   clearHistory: () => {
@@ -439,7 +417,6 @@ export const createUndoRedoSlice: StateCreator<
       undoStack: [],
       redoStack: [],
     });
-    console.log('🗑️ History cleared');
   },
 
   setMaxHistorySize: (size: number) => {
