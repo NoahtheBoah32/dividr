@@ -38,6 +38,7 @@ interface TextTransformBoundaryProps {
   onEditModeChange?: (isEditing: boolean) => void; // Callback when edit mode changes
   autoEnterEditMode?: boolean; // Whether to automatically enter edit mode on mount
   onEditStarted?: () => void; // Callback when auto-edit mode is triggered
+  onRequestEditMode?: (trackId: string) => void; // Request external edit-mode activation (used by boundary-only overlays)
   children: React.ReactNode;
   appliedStyle?: React.CSSProperties;
   clipContent?: boolean; // Whether to clip content to canvas bounds
@@ -84,6 +85,7 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
   onEditModeChange,
   autoEnterEditMode = false,
   onEditStarted,
+  onRequestEditMode,
   children,
   appliedStyle,
   clipContent = false,
@@ -528,7 +530,7 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
       // This enables proper spatial hit-testing - a higher z-index element
       // visible at this position should be selected instead
       // NOTE: This only applies to content area clicks, not handles (checked above)
-      if (getTopElementAtPoint) {
+      if (!isSelected && !boundaryOnly && getTopElementAtPoint) {
         const topElementId = getTopElementAtPoint(e.clientX, e.clientY);
         if (topElementId && topElementId !== track.id) {
           // Another element is above this one at the cursor position
@@ -560,8 +562,18 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
           onSelect(track.id);
         }
 
-        // Skip edit mode if boundaryOnly - let the content layer handle it
-        if (boundaryOnly) return;
+        // Boundary-only overlays cannot enter inline edit mode directly.
+        // Request edit mode from parent so the visible content instance can enter edit.
+        if (boundaryOnly) {
+          if (transformDragStartedRef.current) {
+            transformDragStartedRef.current = false;
+            endDraggingTransform();
+          }
+          e.stopPropagation();
+          e.preventDefault();
+          onRequestEditMode?.(track.id);
+          return;
+        }
 
         e.stopPropagation();
         enterEditMode(true);
@@ -606,6 +618,8 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
       startDraggingTransform,
       boundaryOnly,
       getTopElementAtPoint,
+      endDraggingTransform,
+      onRequestEditMode,
     ],
   );
 

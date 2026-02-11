@@ -89,6 +89,7 @@ export interface UnifiedOverlayRendererProps extends OverlayRenderProps {
   ) => void;
   onTextSelect: (trackId: string) => void;
   onTextUpdate: (trackId: string, newText: string) => void;
+  onRequestTextEdit?: (trackId: string) => void;
   pendingEditTextId?: string | null;
   onEditStarted?: () => void;
   onRotationStateChange: (isRotating: boolean) => void;
@@ -142,6 +143,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
   onTextTransformUpdate,
   onTextSelect,
   onTextUpdate,
+  onRequestTextEdit,
   pendingEditTextId,
   onEditStarted,
   onRotationStateChange,
@@ -485,6 +487,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
           handleEditModeChange,
           pendingEditTextId,
           onEditStarted,
+          onRequestTextEdit,
           getTopElementAtPoint,
         );
       }
@@ -514,6 +517,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
       handleEditModeChange,
       pendingEditTextId,
       onEditStarted,
+      onRequestTextEdit,
       getTopElementAtPoint,
     ],
   );
@@ -567,62 +571,137 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
       overflowWrap: 'normal',
     };
 
+    const selectedSubtitleId = selectedSub?.id || activeSubtitles[0]?.id;
+
+    const subtitleContentNodes = activeSubtitles.map((track) =>
+      renderSubtitleContent(
+        track,
+        getTextStyleForSubtitle,
+        activeStyle,
+        renderScale,
+        globalSubtitlePosition.scale ?? 1,
+        onSubtitleSelect,
+        lockWidth,
+      ),
+    );
+
+    const subtitleBoundaryMeasurementNodes = activeSubtitles.map((track) => (
+      <div
+        key={`sub-boundary-measure-${track.id}`}
+        style={{ visibility: 'hidden', pointerEvents: 'none' }}
+        aria-hidden="true"
+      >
+        {renderSubtitleContent(
+          track,
+          getTextStyleForSubtitle,
+          activeStyle,
+          renderScale,
+          globalSubtitlePosition.scale ?? 1,
+          () => undefined,
+          lockWidth,
+        )}
+      </div>
+    ));
+
     return (
-      <SubtitleTransformBoundary
-        key="global-subtitle-transform"
-        track={globalTrack}
-        isSelected={hasSelected}
-        isActive={true}
-        previewScale={previewScale}
-        videoWidth={baseVideoWidth}
-        videoHeight={baseVideoHeight}
-        actualWidth={actualWidth}
-        actualHeight={actualHeight}
-        panX={panX}
-        panY={panY}
-        // When selected, z-index must be above SelectionHitTestLayer (9000)
-        // to allow drag boundary to receive pointer events.
-        zIndexOverlay={hasSelected ? 9500 : subtitleZIndex}
-        renderScale={renderScale}
-        isTextEditMode={isTextEditMode}
-        interactionMode={interactionMode}
-        maxContainerWidth={storedMaxContainerWidth}
-        onTransformUpdate={(_, transform) => {
-          onSubtitleTransformUpdate(
-            selectedSub?.id || activeSubtitles[0].id,
-            transform,
-          );
-        }}
-        onSelect={() => onSubtitleSelect(activeSubtitles[0]?.id)}
-        onTextUpdate={
-          // CRITICAL: Do NOT use trackId from SubtitleTransformBoundary - it could be "global-subtitle-transform"
-          // which is a fake track used for unified transform, not a real subtitle track.
-          // Instead, use the actual selected subtitle ID or fall back to the first active subtitle.
-          (_, text) => {
-            const actualTrackId = selectedSub?.id || activeSubtitles[0]?.id;
-            if (actualTrackId) {
-              onSubtitleTextUpdate?.(actualTrackId, text);
+      <>
+        <SubtitleTransformBoundary
+          key="global-subtitle-transform-content"
+          track={globalTrack}
+          isSelected={hasSelected}
+          isActive={true}
+          previewScale={previewScale}
+          videoWidth={baseVideoWidth}
+          videoHeight={baseVideoHeight}
+          actualWidth={actualWidth}
+          actualHeight={actualHeight}
+          panX={panX}
+          panY={panY}
+          zIndexOverlay={subtitleZIndex}
+          renderScale={renderScale}
+          isTextEditMode={isTextEditMode}
+          interactionMode={interactionMode}
+          maxContainerWidth={storedMaxContainerWidth}
+          onTransformUpdate={(_, transform) => {
+            onSubtitleTransformUpdate(
+              selectedSub?.id || activeSubtitles[0].id,
+              transform,
+            );
+          }}
+          onSelect={() => onSubtitleSelect(activeSubtitles[0]?.id)}
+          onTextUpdate={
+            // CRITICAL: Do NOT use trackId from SubtitleTransformBoundary - it could be "global-subtitle-transform"
+            // which is a fake track used for unified transform, not a real subtitle track.
+            // Instead, use the actual selected subtitle ID or fall back to the first active subtitle.
+            (_, text) => {
+              const actualTrackId = selectedSub?.id || activeSubtitles[0]?.id;
+              if (actualTrackId) {
+                onSubtitleTextUpdate?.(actualTrackId, text);
+              }
             }
           }
-        }
-        onDragStateChange={onDragStateChange}
-        onEditModeChange={handleEditModeChange}
-        getTopElementAtPoint={getTopElementAtPoint}
-        selectedTrack={selectedSub}
-        appliedStyle={appliedEditStyle}
-      >
-        {activeSubtitles.map((track) =>
-          renderSubtitleContent(
-            track,
-            getTextStyleForSubtitle,
-            activeStyle,
-            renderScale,
-            globalSubtitlePosition.scale ?? 1,
-            onSubtitleSelect,
-            lockWidth,
-          ),
+          onDragStateChange={onDragStateChange}
+          onEditModeChange={handleEditModeChange}
+          getTopElementAtPoint={getTopElementAtPoint}
+          selectedTrack={selectedSub}
+          appliedStyle={appliedEditStyle}
+          contentOnly={hasSelected}
+          autoEnterEditMode={
+            !!selectedSubtitleId && pendingEditTextId === selectedSubtitleId
+          }
+          onEditStarted={onEditStarted}
+        >
+          {subtitleContentNodes}
+        </SubtitleTransformBoundary>
+
+        {hasSelected && (
+          <SubtitleTransformBoundary
+            key="global-subtitle-transform-boundary"
+            track={globalTrack}
+            isSelected={true}
+            isActive={true}
+            previewScale={previewScale}
+            videoWidth={baseVideoWidth}
+            videoHeight={baseVideoHeight}
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={panX}
+            panY={panY}
+            zIndexOverlay={9500}
+            renderScale={renderScale}
+            isTextEditMode={isTextEditMode}
+            interactionMode={interactionMode}
+            maxContainerWidth={storedMaxContainerWidth}
+            onTransformUpdate={(_, transform) => {
+              onSubtitleTransformUpdate(
+                selectedSub?.id || activeSubtitles[0].id,
+                transform,
+              );
+            }}
+            onSelect={() => onSubtitleSelect(activeSubtitles[0]?.id)}
+            onTextUpdate={(_, text) => {
+              const actualTrackId = selectedSub?.id || activeSubtitles[0]?.id;
+              if (actualTrackId) {
+                onSubtitleTextUpdate?.(actualTrackId, text);
+              }
+            }}
+            onDragStateChange={onDragStateChange}
+            onEditModeChange={handleEditModeChange}
+            getTopElementAtPoint={getTopElementAtPoint}
+            selectedTrack={selectedSub}
+            appliedStyle={appliedEditStyle}
+            boundaryOnly={true}
+            disableAutoSizeUpdates={true}
+            onRequestEditMode={() => {
+              if (selectedSubtitleId) {
+                onRequestTextEdit?.(selectedSubtitleId);
+              }
+            }}
+          >
+            {subtitleBoundaryMeasurementNodes}
+          </SubtitleTransformBoundary>
         )}
-      </SubtitleTransformBoundary>
+      </>
     );
   }, [
     activeSubtitles,
@@ -648,6 +727,9 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
     getTextStyleForSubtitle,
     activeStyle,
     getTopElementAtPoint,
+    pendingEditTextId,
+    onEditStarted,
+    onRequestTextEdit,
   ]);
 
   return (
@@ -1289,6 +1371,7 @@ function renderTextTrack(
   onEditModeChange: (e: boolean) => void,
   pendingEditTextId?: string | null,
   onEditStarted?: () => void,
+  onRequestTextEdit?: (trackId: string) => void,
   getTopElementAtPoint?: (screenX: number, screenY: number) => string | null,
 ) {
   const style = getTextStyleForTextClip(track);
@@ -1436,53 +1519,96 @@ function renderTextTrack(
   };
 
   return (
-    <div
-      key={`txt-${track.id}`}
-      className="absolute inset-0"
-      style={{
-        width: actualWidth,
-        height: actualHeight,
-        left: `calc(50% + ${panX}px)`,
-        top: `calc(50% + ${panY}px)`,
-        transform: 'translate(-50%, -50%)',
-        overflow: 'visible',
-        // When selected, z-index must be above SelectionHitTestLayer (9000)
-        // to allow transform handles to receive pointer events.
-        // Use 9500 to be above SelectionHitTestLayer but below TransformBoundaryLayer (10000).
-        zIndex: isSelected ? 9500 : zIndex,
-        // CRITICAL: pointer-events: none allows clicks to pass through
-        // the wrapper to lower z-index elements (like SelectionHitTestLayer).
-        // TextTransformBoundary's content and handles have pointer-events: auto
-        // so they can still receive events when clicked directly.
-        pointerEvents: 'none',
-      }}
-    >
-      <TextTransformBoundary
-        track={track}
-        isSelected={isSelected}
-        previewScale={previewScale}
-        videoWidth={baseVideoWidth}
-        videoHeight={baseVideoHeight}
-        renderScale={renderScale}
-        isTextEditMode={isTextEditMode}
-        interactionMode={interactionMode}
-        onTransformUpdate={onTransformUpdate}
-        onSelect={onSelect}
-        onTextUpdate={onTextUpdate}
-        onRotationStateChange={onRotationStateChange}
-        onDragStateChange={onDragStateChange}
-        onEditModeChange={onEditModeChange}
-        appliedStyle={complete}
-        clipContent={true}
-        clipWidth={actualWidth}
-        clipHeight={actualHeight}
-        disableScaleTransform={true}
-        autoEnterEditMode={pendingEditTextId === track.id}
-        onEditStarted={onEditStarted}
-        getTopElementAtPoint={getTopElementAtPoint}
+    <>
+      <div
+        key={`txt-${track.id}-content`}
+        className="absolute inset-0"
+        style={{
+          width: actualWidth,
+          height: actualHeight,
+          left: `calc(50% + ${panX}px)`,
+          top: `calc(50% + ${panY}px)`,
+          transform: 'translate(-50%, -50%)',
+          overflow: 'visible',
+          zIndex,
+          pointerEvents: 'none',
+        }}
       >
-        {renderTextContent()}
-      </TextTransformBoundary>
-    </div>
+        <TextTransformBoundary
+          track={track}
+          isSelected={isSelected}
+          previewScale={previewScale}
+          videoWidth={baseVideoWidth}
+          videoHeight={baseVideoHeight}
+          renderScale={renderScale}
+          isTextEditMode={isTextEditMode}
+          interactionMode={interactionMode}
+          onTransformUpdate={onTransformUpdate}
+          onSelect={onSelect}
+          onTextUpdate={onTextUpdate}
+          onRotationStateChange={onRotationStateChange}
+          onDragStateChange={onDragStateChange}
+          onEditModeChange={onEditModeChange}
+          appliedStyle={complete}
+          clipContent={true}
+          clipWidth={actualWidth}
+          clipHeight={actualHeight}
+          disableScaleTransform={true}
+          autoEnterEditMode={pendingEditTextId === track.id}
+          onEditStarted={onEditStarted}
+          getTopElementAtPoint={getTopElementAtPoint}
+          contentOnly={isSelected}
+        >
+          {renderTextContent()}
+        </TextTransformBoundary>
+      </div>
+
+      {isSelected && (
+        <div
+          key={`txt-${track.id}-boundary`}
+          className="absolute inset-0"
+          style={{
+            width: actualWidth,
+            height: actualHeight,
+            left: `calc(50% + ${panX}px)`,
+            top: `calc(50% + ${panY}px)`,
+            transform: 'translate(-50%, -50%)',
+            overflow: 'visible',
+            zIndex: 9500,
+            pointerEvents: 'none',
+          }}
+        >
+          <TextTransformBoundary
+            track={track}
+            isSelected={true}
+            previewScale={previewScale}
+            videoWidth={baseVideoWidth}
+            videoHeight={baseVideoHeight}
+            renderScale={renderScale}
+            isTextEditMode={isTextEditMode}
+            interactionMode={interactionMode}
+            onTransformUpdate={onTransformUpdate}
+            onSelect={onSelect}
+            onTextUpdate={onTextUpdate}
+            onRotationStateChange={onRotationStateChange}
+            onDragStateChange={onDragStateChange}
+            onEditModeChange={onEditModeChange}
+            appliedStyle={complete}
+            disableScaleTransform={true}
+            getTopElementAtPoint={getTopElementAtPoint}
+            boundaryOnly={true}
+            disableAutoSizeUpdates={true}
+            onRequestEditMode={onRequestTextEdit}
+          >
+            <div
+              style={{ visibility: 'hidden', pointerEvents: 'none' }}
+              aria-hidden="true"
+            >
+              {renderTextContent()}
+            </div>
+          </TextTransformBoundary>
+        </div>
+      )}
+    </>
   );
 }

@@ -489,13 +489,11 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
         setSelectedTracks([trackId]);
       }
 
-      // For text tracks, enter text edit mode by setting pending edit
-      if (track.type === 'text') {
+      // For text/subtitle tracks, enter text edit mode by setting pending edit
+      if (track.type === 'text' || track.type === 'subtitle') {
         setPreviewInteractionMode('text-edit');
         setPendingEditTextId(trackId);
       }
-      // For subtitle tracks, trigger subtitle edit mode
-      // (subtitles use a different editing mechanism)
     },
     [
       tracks,
@@ -882,6 +880,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
             onTextTransformUpdate={handleTextTransformUpdate}
             onTextSelect={handleTextSelect}
             onTextUpdate={handleTextUpdate}
+            onRequestTextEdit={handleHitTestDoubleClick}
             pendingEditTextId={pendingEditTextId}
             onEditStarted={handleEditStarted}
             onRotationStateChange={setIsRotating}

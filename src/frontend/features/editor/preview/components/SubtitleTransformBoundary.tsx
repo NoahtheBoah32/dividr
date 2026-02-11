@@ -38,6 +38,9 @@ interface SubtitleTransformBoundaryProps {
     position?: { x: number; y: number; width: number; height: number },
   ) => void;
   onEditModeChange?: (isEditing: boolean) => void; // Callback when edit mode changes
+  autoEnterEditMode?: boolean; // Auto-enter edit mode (for pending edit requests)
+  onEditStarted?: () => void; // Callback when auto-edit mode is triggered
+  onRequestEditMode?: (trackId: string) => void; // Request external edit-mode activation (used by boundary-only overlays)
   children: React.ReactNode;
   boundaryOnly?: boolean; // Whether to only render the boundary, not the content
   contentOnly?: boolean; // Whether to only render the content, not the boundary
@@ -56,6 +59,7 @@ interface SubtitleTransformBoundaryProps {
    * Used when user has not explicitly resized the subtitle box.
    */
   maxContainerWidth?: number;
+  disableAutoSizeUpdates?: boolean; // Skip auto width/height sync when rendering boundaries only
   /**
    * Callback to check if another element should receive this interaction.
    * Used for proper spatial hit-testing when elements overlap.
@@ -97,12 +101,16 @@ export const SubtitleTransformBoundary: React.FC<
   onTextUpdate,
   onDragStateChange,
   onEditModeChange,
+  autoEnterEditMode = false,
+  onEditStarted,
+  onRequestEditMode,
   children,
   boundaryOnly = false,
   contentOnly = false,
   selectedTrack,
   appliedStyle,
   maxContainerWidth,
+  disableAutoSizeUpdates = false,
   getTopElementAtPoint,
 }) => {
   // Use renderScale if provided (from coordinate system), otherwise fall back to previewScale
@@ -283,6 +291,8 @@ export const SubtitleTransformBoundary: React.FC<
   // Update dimensions in the store when content size changes
   // Skip updates when renderScale changes to prevent dimension recalculation on fullscreen toggle
   useEffect(() => {
+    if (disableAutoSizeUpdates) return;
+
     // Detect if renderScale changed (e.g., entering/exiting fullscreen)
     const renderScaleChanged =
       prevRenderScaleRef.current !== effectiveRenderScale;
@@ -315,6 +325,7 @@ export const SubtitleTransformBoundary: React.FC<
     track.id,
     onTransformUpdate,
     effectiveRenderScale,
+    disableAutoSizeUpdates,
   ]);
 
   // Helper to enter edit mode
@@ -344,6 +355,18 @@ export const SubtitleTransformBoundary: React.FC<
     [onEditModeChange, boundaryOnly],
   );
 
+  // Auto-enter edit mode when requested (for externally-triggered edit actions)
+  useEffect(() => {
+    if (autoEnterEditMode && isSelected && !isEditing) {
+      const timer = setTimeout(() => {
+        enterEditMode(true);
+        onEditStarted?.();
+      }, 50);
+
+      return () => clearTimeout(timer);
+    }
+  }, [autoEnterEditMode, isSelected, isEditing, enterEditMode, onEditStarted]);
+
   // Handle mouse down on the subtitle element (start dragging with delay to allow double-click)
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -369,7 +392,7 @@ export const SubtitleTransformBoundary: React.FC<
       // BUT skip this check when already selected - allow drag to proceed
       // This is necessary because subtitle uses synthetic "global-subtitle-transform" ID
       // but hit-test returns real subtitle track IDs
-      if (!isSelected && getTopElementAtPoint) {
+      if (!isSelected && !boundaryOnly && getTopElementAtPoint) {
         const topElementId = getTopElementAtPoint(e.clientX, e.clientY);
         if (topElementId && topElementId !== track.id) {
           e.stopPropagation();
@@ -398,8 +421,18 @@ export const SubtitleTransformBoundary: React.FC<
           onSelect(track.id);
         }
 
-        // Skip edit mode if boundaryOnly
-        if (boundaryOnly) return;
+        // Boundary-only overlays cannot enter inline edit mode directly.
+        // Request edit mode from parent so the visible content instance can enter edit.
+        if (boundaryOnly) {
+          if (transformDragStartedRef.current) {
+            transformDragStartedRef.current = false;
+            endDraggingTransform();
+          }
+          e.stopPropagation();
+          e.preventDefault();
+          onRequestEditMode?.(track.id);
+          return;
+        }
 
         e.stopPropagation();
         enterEditMode(true);
@@ -443,6 +476,8 @@ export const SubtitleTransformBoundary: React.FC<
       enterEditMode,
       boundaryOnly,
       getTopElementAtPoint,
+      endDraggingTransform,
+      onRequestEditMode,
     ],
   );
 
