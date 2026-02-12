@@ -1,70 +1,183 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
-import { useEffect } from 'react';
+import { hasPendingUnsavedChanges } from '@/frontend/hooks/unsavedChangesState';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker } from 'react-router-dom';
+
+type AppExitDecision = 'pending' | 'allow' | 'cancel';
+
+type AppExitRequestPayload = {
+  requestId?: number;
+  trigger?: string;
+};
+
+const getExitErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return 'Failed to save project. Please try again before exiting.';
+};
+
+const sendAppExitDecision = async (
+  requestId: number,
+  decision: AppExitDecision,
+): Promise<void> => {
+  await window.electronAPI.invoke('app-exit-decision', { requestId, decision });
+};
 
 export const useUnsavedChangesWarning = () => {
   const { hasUnsavedChanges, isSaving, saveProjectData } =
     useVideoEditorStore();
 
-  // Browser beforeunload warning
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges || isSaving) {
-        e.preventDefault();
-        // Modern browsers ignore custom messages, but setting returnValue triggers the dialog
-        e.returnValue = '';
-      }
-    };
+  const shouldWarnForUnsavedChanges = useMemo(
+    () => hasPendingUnsavedChanges(hasUnsavedChanges, isSaving),
+    [hasUnsavedChanges, isSaving],
+  );
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [hasUnsavedChanges, isSaving]);
+  const shouldWarnRef = useRef(shouldWarnForUnsavedChanges);
+  const activeExitRequestIdRef = useRef<number | null>(null);
+
+  const [isExitDialogOpen, setIsExitDialogOpen] = useState(false);
+  const [isExitActionRunning, setIsExitActionRunning] = useState(false);
+  const [exitErrorMessage, setExitErrorMessage] = useState<string | null>(null);
+  const [isNavigationActionRunning, setIsNavigationActionRunning] =
+    useState(false);
+  const [navigationErrorMessage, setNavigationErrorMessage] = useState<
+    string | null
+  >(null);
+
+  useEffect(() => {
+    shouldWarnRef.current = shouldWarnForUnsavedChanges;
+  }, [shouldWarnForUnsavedChanges]);
+
+  const closeExitDialog = useCallback(() => {
+    setIsExitDialogOpen(false);
+    setIsExitActionRunning(false);
+    setExitErrorMessage(null);
+  }, []);
+
+  const handleAppExitRequested = useCallback(
+    (_event: any, payload: AppExitRequestPayload) => {
+      const requestId = Number(payload?.requestId);
+      if (!Number.isInteger(requestId)) {
+        return;
+      }
+
+      activeExitRequestIdRef.current = requestId;
+
+      if (!shouldWarnRef.current) {
+        void sendAppExitDecision(requestId, 'allow');
+        return;
+      }
+
+      closeExitDialog();
+      setIsExitDialogOpen(true);
+      void sendAppExitDecision(requestId, 'pending');
+    },
+    [closeExitDialog],
+  );
+
+  useEffect(() => {
+    window.electronAPI.on('app-exit-requested', handleAppExitRequested);
+    return () => {
+      window.electronAPI.removeListener(
+        'app-exit-requested',
+        handleAppExitRequested,
+      );
+    };
+  }, [handleAppExitRequested]);
+
+  const respondToExitRequest = useCallback(
+    async (decision: AppExitDecision) => {
+      const requestId = activeExitRequestIdRef.current;
+      if (!Number.isInteger(requestId)) {
+        return;
+      }
+
+      await sendAppExitDecision(requestId, decision);
+      if (decision !== 'pending') {
+        activeExitRequestIdRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const handleCancelExit = useCallback(() => {
+    closeExitDialog();
+    void respondToExitRequest('cancel');
+  }, [closeExitDialog, respondToExitRequest]);
+
+  const handleExitWithoutSaving = useCallback(() => {
+    closeExitDialog();
+    void respondToExitRequest('allow');
+  }, [closeExitDialog, respondToExitRequest]);
+
+  const handleSaveAndExit = useCallback(async () => {
+    setIsExitActionRunning(true);
+    setExitErrorMessage(null);
+
+    try {
+      await saveProjectData();
+      closeExitDialog();
+      await respondToExitRequest('allow');
+    } catch (error) {
+      setIsExitDialogOpen(true);
+      setIsExitActionRunning(false);
+      setExitErrorMessage(getExitErrorMessage(error));
+    }
+  }, [closeExitDialog, respondToExitRequest, saveProjectData]);
 
   // React Router navigation blocker
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
-      (hasUnsavedChanges || isSaving) &&
+      shouldWarnForUnsavedChanges &&
       currentLocation.pathname !== nextLocation.pathname,
   );
 
-  // Handle Electron app quit (if you have IPC for this)
   useEffect(() => {
-    const handleAppQuit = async (e: any) => {
-      if (hasUnsavedChanges || isSaving) {
-        e.preventDefault();
+    if (blocker.state !== 'blocked') {
+      setIsNavigationActionRunning(false);
+      setNavigationErrorMessage(null);
+    }
+  }, [blocker.state]);
 
-        // Try to save before quitting
-        if (hasUnsavedChanges) {
-          try {
-            await saveProjectData();
-          } catch (error) {
-            console.error(
-              '[UseUnsavedChangesWarning] Failed to save before quit',
-              error,
-            );
-          }
-        }
+  const handleCancelNavigation = useCallback(() => {
+    setIsNavigationActionRunning(false);
+    setNavigationErrorMessage(null);
+    blocker.reset?.();
+  }, [blocker]);
 
-        // Show native dialog
-        const confirmed = window.confirm(
-          'You have unsaved changes. Are you sure you want to quit?',
-        );
+  const handleContinueWithoutSaving = useCallback(() => {
+    setIsNavigationActionRunning(false);
+    setNavigationErrorMessage(null);
+    blocker.proceed?.();
+  }, [blocker]);
 
-        if (confirmed) {
-          window.appControl?.quitApp();
-        }
-      }
-    };
+  const handleSaveAndContinue = useCallback(async () => {
+    setIsNavigationActionRunning(true);
+    setNavigationErrorMessage(null);
 
-    // Add Electron IPC listener if available
-    window.electronAPI.on('app-quit', handleAppQuit);
+    try {
+      await saveProjectData();
+      blocker.proceed?.();
+    } catch (error) {
+      setNavigationErrorMessage(getExitErrorMessage(error));
+      setIsNavigationActionRunning(false);
+    }
+  }, [blocker, saveProjectData]);
 
-    return () => {
-      // Cleanup if needed
-      window.electronAPI.removeListener('app-quit', handleAppQuit);
-    };
-  }, [hasUnsavedChanges, isSaving, saveProjectData]);
-
-  return { blocker };
+  return {
+    blocker,
+    isExitDialogOpen,
+    isExitActionRunning,
+    exitErrorMessage,
+    handleCancelExit,
+    handleExitWithoutSaving,
+    handleSaveAndExit,
+    isNavigationActionRunning,
+    navigationErrorMessage,
+    handleCancelNavigation,
+    handleContinueWithoutSaving,
+    handleSaveAndContinue,
+  };
 };

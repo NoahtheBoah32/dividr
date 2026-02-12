@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/frontend/components/ui/alert-dialog';
+import { Button } from '@/frontend/components/ui/button';
 import { useCallback, useState } from 'react';
 
 interface ConfirmationOptions {
@@ -20,6 +21,11 @@ interface ConfirmationOptions {
   confirmText?: string;
   cancelText?: string;
   variant?: 'default' | 'destructive';
+  secondaryAction?: {
+    text: string;
+    onClick: () => void;
+    variant?: 'default' | 'destructive';
+  };
 }
 
 export const useProjectShortcutDialog = () => {
@@ -49,6 +55,13 @@ export const useProjectShortcutDialog = () => {
     setDialogState({ open: false, options: null });
   }, []);
 
+  const handleSecondaryAction = useCallback(() => {
+    if (dialogState.options?.secondaryAction?.onClick) {
+      dialogState.options.secondaryAction.onClick();
+    }
+    setDialogState({ open: false, options: null });
+  }, [dialogState.options]);
+
   const ConfirmationDialog = useCallback(
     () => (
       <AlertDialog open={dialogState.open} onOpenChange={handleCancel}>
@@ -66,6 +79,19 @@ export const useProjectShortcutDialog = () => {
             <AlertDialogCancel onClick={handleCancel}>
               {dialogState.options?.cancelText || 'Cancel'}
             </AlertDialogCancel>
+            {dialogState.options?.secondaryAction && (
+              <Button
+                type="button"
+                onClick={handleSecondaryAction}
+                variant={
+                  dialogState.options.secondaryAction.variant === 'destructive'
+                    ? 'destructive'
+                    : 'outline'
+                }
+              >
+                {dialogState.options.secondaryAction.text}
+              </Button>
+            )}
             <AlertDialogAction
               onClick={handleConfirm}
               className={
@@ -80,7 +106,7 @@ export const useProjectShortcutDialog = () => {
         </AlertDialogContent>
       </AlertDialog>
     ),
-    [dialogState, handleConfirm, handleCancel],
+    [dialogState, handleConfirm, handleCancel, handleSecondaryAction],
   );
 
   return {

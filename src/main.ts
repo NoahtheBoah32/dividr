@@ -75,6 +75,11 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 // Global variables
 let mainWindow: BrowserWindow | null = null;
 const forceQuit = false;
+const EXIT_REQUEST_ACK_TIMEOUT_MS = 500;
+let allowAppClose = false;
+let activeExitRequestId: number | null = null;
+let nextExitRequestId = 0;
+let exitRequestAckTimeout: NodeJS.Timeout | null = null;
 let isWindowFocused = true;
 const STARTUP_BUDGET_MS = 5000;
 const startupStart = performance.now();
@@ -86,6 +91,64 @@ const startupMarks = new Map<string, number>();
 let lastStartupMark = startupStart;
 let startupCheckpointCounter = 0;
 let latestStartupPhase = 'process-start';
+
+type AppExitDecision = 'pending' | 'allow' | 'cancel';
+
+const clearExitRequestAckTimeout = (): void => {
+  if (!exitRequestAckTimeout) return;
+  clearTimeout(exitRequestAckTimeout);
+  exitRequestAckTimeout = null;
+};
+
+const clearActiveExitRequest = (): void => {
+  activeExitRequestId = null;
+  clearExitRequestAckTimeout();
+};
+
+const finalizeAppClose = (): void => {
+  clearActiveExitRequest();
+  allowAppClose = true;
+  app.quit();
+};
+
+const requestRendererExitValidation = (trigger: string): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    finalizeAppClose();
+    return;
+  }
+  if (mainWindow.webContents.isDestroyed()) {
+    finalizeAppClose();
+    return;
+  }
+  if (activeExitRequestId !== null) {
+    return;
+  }
+
+  const requestId = ++nextExitRequestId;
+  activeExitRequestId = requestId;
+
+  try {
+    mainWindow.webContents.send('app-exit-requested', {
+      requestId,
+      trigger,
+    });
+  } catch (error) {
+    console.warn('[Main] Failed to request renderer exit validation', error);
+    finalizeAppClose();
+    return;
+  }
+
+  clearExitRequestAckTimeout();
+  exitRequestAckTimeout = setTimeout(() => {
+    if (activeExitRequestId !== requestId) {
+      return;
+    }
+    console.warn(
+      '[Main] Renderer did not acknowledge app exit request, closing directly',
+    );
+    finalizeAppClose();
+  }, EXIT_REQUEST_ACK_TIMEOUT_MS);
+};
 
 const broadcastStartupPhase = (
   phase: string,
@@ -4663,21 +4726,33 @@ const createWindow = () => {
     }
 
     // Handle window close events - hide instead of close
-    mainWindow.on('close', async (event) => {
-      if (!forceQuit) {
-        // Get the real-time setting
-        const shouldRunInBackground = await getRunInBackgroundSetting();
-        console.log(
-          '[Main] Window closing, checking setting',
-          shouldRunInBackground,
-        );
-
-        if (shouldRunInBackground) {
-          event.preventDefault();
-          mainWindow?.hide();
-          return false;
-        }
+    mainWindow.on('close', (event) => {
+      if (allowAppClose) {
+        allowAppClose = false;
+        clearActiveExitRequest();
+        return;
       }
+
+      event.preventDefault();
+      void (async () => {
+        if (!forceQuit) {
+          // Get the real-time setting
+          const shouldRunInBackground = await getRunInBackgroundSetting();
+          console.log(
+            '[Main] Window closing, checking setting',
+            shouldRunInBackground,
+          );
+
+          if (shouldRunInBackground) {
+            mainWindow?.hide();
+            return;
+          }
+        }
+
+        requestRendererExitValidation('window-close');
+      })();
+
+      return false;
     });
 
     // Focus tracking for clipboard monitoring
@@ -4709,9 +4784,50 @@ const createWindow = () => {
 
 // MAIN FUNCTIONS FOR TITLE BAR
 ipcMain.on('close-btn', () => {
-  if (!mainWindow) return;
-  app.quit();
+  requestRendererExitValidation('custom-close-button');
 });
+
+ipcMain.on('request-app-exit', (_event, trigger?: string) => {
+  requestRendererExitValidation(trigger || 'renderer-request');
+});
+
+ipcMain.handle(
+  'app-exit-decision',
+  async (
+    _event,
+    payload: {
+      requestId?: number;
+      decision?: AppExitDecision;
+    } | null,
+  ) => {
+    const requestId = Number(payload?.requestId);
+    const decision = payload?.decision;
+    if (!Number.isInteger(requestId) || !decision) {
+      return { success: false };
+    }
+    if (activeExitRequestId !== requestId) {
+      return { success: false };
+    }
+
+    if (decision === 'pending') {
+      clearExitRequestAckTimeout();
+      return { success: true };
+    }
+
+    if (decision === 'cancel') {
+      clearActiveExitRequest();
+      allowAppClose = false;
+      return { success: true };
+    }
+
+    if (decision === 'allow') {
+      finalizeAppClose();
+      return { success: true };
+    }
+
+    return { success: false };
+  },
+);
 
 ipcMain.on('minimize-btn', () => {
   if (mainWindow) mainWindow.minimize();

@@ -14,7 +14,20 @@ interface VideoEditorProps {
 
 const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
   const { importMediaFromFiles, timeline, isSaving } = useVideoEditorStore();
-  const { blocker } = useUnsavedChangesWarning();
+  const {
+    blocker,
+    isExitDialogOpen,
+    isExitActionRunning,
+    exitErrorMessage,
+    isNavigationActionRunning,
+    navigationErrorMessage,
+    handleCancelNavigation,
+    handleContinueWithoutSaving,
+    handleSaveAndContinue,
+    handleCancelExit,
+    handleExitWithoutSaving,
+    handleSaveAndExit,
+  } = useUnsavedChangesWarning();
 
   // Listen for transcode progress and completion events
   useTranscodeListener();
@@ -66,10 +79,25 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
       </div>
 
       <NavigationBlockerDialog
+        mode="navigation"
         isOpen={blocker.state === 'blocked'}
-        onConfirm={() => blocker.proceed?.()}
-        onCancel={() => blocker.reset?.()}
+        onCancel={handleCancelNavigation}
+        onSaveAndContinue={handleSaveAndContinue}
+        onContinueWithoutSaving={handleContinueWithoutSaving}
         isSaving={isSaving}
+        isSubmitting={isNavigationActionRunning}
+        errorMessage={navigationErrorMessage}
+      />
+
+      <NavigationBlockerDialog
+        mode="exit"
+        isOpen={isExitDialogOpen}
+        onCancel={handleCancelExit}
+        onSaveAndExit={handleSaveAndExit}
+        onExitWithoutSaving={handleExitWithoutSaving}
+        isSaving={isSaving}
+        isSubmitting={isExitActionRunning}
+        errorMessage={exitErrorMessage}
       />
     </>
   );

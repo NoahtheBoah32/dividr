@@ -38,6 +38,7 @@ import {
 import { useProjectShortcutDialog } from '@/frontend/features/editor/stores/videoEditor/shortcuts/hooks/useProjectShortcutDialog';
 import { normalizeAutoSavePreferences } from '@/frontend/features/editor/stores/videoEditor/slices/projectSlice';
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
+import { hasPendingUnsavedChanges } from '@/frontend/hooks/unsavedChangesState';
 import { Check } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -93,6 +94,7 @@ const AppMenuBarComponent = () => {
   );
   const editorLastSavedAt = useVideoEditorStore((state) => state.lastSavedAt);
   const editorIsSaving = useVideoEditorStore((state) => state.isSaving);
+  const saveProjectData = useVideoEditorStore((state) => state.saveProjectData);
   const hasUnsavedChanges = useVideoEditorStore(
     (state) => state.hasUnsavedChanges,
   );
@@ -131,6 +133,41 @@ const AppMenuBarComponent = () => {
 
   // Setup confirmation dialog for close project
   const { showConfirmation, ConfirmationDialog } = useProjectShortcutDialog();
+
+  const runProjectSwitchWithUnsavedGuard = useCallback(
+    (actionLabel: string, action: () => Promise<void>) => {
+      if (!hasPendingUnsavedChanges(hasUnsavedChanges, editorIsSaving)) {
+        void action();
+        return;
+      }
+
+      showConfirmation({
+        title: 'You have unsaved changes.',
+        message: `Save your current project before you ${actionLabel}?`,
+        confirmText: 'Save & Continue',
+        cancelText: 'Cancel',
+        onConfirm: () => {
+          void (async () => {
+            try {
+              await saveProjectData();
+              await action();
+            } catch (error) {
+              console.error('[AppMenuBar] Save before switch failed', error);
+              toast.error('Failed to save project. Please try again.');
+            }
+          })();
+        },
+        secondaryAction: {
+          text: 'Continue Without Saving',
+          variant: 'destructive',
+          onClick: () => {
+            void action();
+          },
+        },
+      });
+    },
+    [editorIsSaving, hasUnsavedChanges, saveProjectData, showConfirmation],
+  );
 
   const handleOpenHotkeys = useCallback(() => {
     setShowHotkeys(true);
@@ -181,16 +218,16 @@ const AppMenuBarComponent = () => {
 
   // Project action handlers - memoized to prevent re-creation
   const handleNewProject = useCallback(() => {
-    newProjectAction(navigate).catch((error) =>
-      console.error('[AppMenuBar] Operation failed', error),
+    runProjectSwitchWithUnsavedGuard('create a new project', () =>
+      newProjectAction(navigate),
     );
-  }, [navigate]);
+  }, [navigate, runProjectSwitchWithUnsavedGuard]);
 
   const handleOpenProject = useCallback(() => {
-    openProjectAction(navigate).catch((error) =>
-      console.error('[AppMenuBar] Operation failed', error),
+    runProjectSwitchWithUnsavedGuard('open another project', () =>
+      openProjectAction(navigate),
     );
-  }, [navigate]);
+  }, [navigate, runProjectSwitchWithUnsavedGuard]);
 
   const handleSaveProject = useCallback(() => {
     saveProjectAction().catch((error) =>
@@ -215,10 +252,10 @@ const AppMenuBarComponent = () => {
   }, [tracksLength]);
 
   const handleCloseProject = useCallback(() => {
-    closeProjectAction(navigate, showConfirmation).catch((error) =>
-      console.error('[AppMenuBar] Operation failed', error),
+    runProjectSwitchWithUnsavedGuard('close this project', () =>
+      closeProjectAction(navigate, showConfirmation),
     );
-  }, [navigate, showConfirmation]);
+  }, [navigate, runProjectSwitchWithUnsavedGuard, showConfirmation]);
 
   // Edit action handlers - memoized to prevent re-creation
   const handleUndo = useCallback(() => {
