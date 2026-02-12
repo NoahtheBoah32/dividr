@@ -40,7 +40,6 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
   const isWindows =
     typeof navigator !== 'undefined' &&
     /Windows/i.test(navigator.userAgent || '');
-  const isDev = (import.meta as any).env?.DEV === true;
   const titlebarRef = React.useRef<HTMLDivElement>(null);
 
   // Determine context based on current route
@@ -221,23 +220,21 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
             {/* Dark Mode/Light Mode Toggle */}
             <div className="flex items-center gap-7">
               {/* Test Tools - Only show in development */}
-              {isDev && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-1">
-                      Dev Tools
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem asChild>
-                      <Link to="/dev-tools">Media Tools</Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem asChild>
-                      <Link to="/dialogs-test">Dialogs Showcase</Link>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="gap-1">
+                    Dev Tools
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link to="/dev-tools">Media Tools</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/dialogs-test">Dialogs Showcase</Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <ModeToggle />
             </div>
 
