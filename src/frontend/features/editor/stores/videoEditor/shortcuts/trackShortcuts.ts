@@ -224,10 +224,15 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     category: 'Track Properties',
     scope: 'track',
     handler: () => {
-      const selectedTracks = store.timeline.selectedTrackIds;
+      const freshState = useVideoEditorStore.getState();
+      const selectedTracks = freshState.timeline.selectedTrackIds || [];
+      if (selectedTracks.length === 0) return;
+
+      freshState.beginGroup?.('Toggle Selected Track Mute');
       selectedTracks.forEach((trackId: string) =>
-        store.toggleTrackMute(trackId),
+        freshState.toggleTrackMute(trackId),
       );
+      freshState.endGroup?.();
     },
   },
   {

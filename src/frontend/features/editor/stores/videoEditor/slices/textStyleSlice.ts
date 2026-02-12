@@ -122,6 +122,11 @@ export const createTextStyleSlice: StateCreator<
   // Text Style Actions
   setActiveTextStyle: (styleId: string) =>
     set((state: any) => {
+      if (state.textStyle.activeStyle === styleId) {
+        return state;
+      }
+
+      state.recordAction?.('Change Subtitle Style Preset');
       state.markUnsavedChanges?.();
       return {
         textStyle: {
@@ -134,6 +139,15 @@ export const createTextStyleSlice: StateCreator<
   // Style application mode setter
   setStyleApplicationMode: (mode: 'all' | 'selected') =>
     set((state: any) => {
+      if (state.textStyle.styleApplicationMode === mode) {
+        return state;
+      }
+
+      state.recordAction?.(
+        mode === 'all'
+          ? 'Switch to Global Subtitle Styling'
+          : 'Switch to Per-Clip Subtitle Styling',
+      );
       state.markUnsavedChanges?.();
 
       // When switching TO 'selected' mode, snapshot current global styles
@@ -149,8 +163,6 @@ export const createTextStyleSlice: StateCreator<
         );
 
         if (hasSelectedSubtitles) {
-          state.recordAction?.('Switch to Per-Clip Styling');
-
           const updatedTracks = state.tracks.map((track: any) => {
             if (
               track.type === 'subtitle' &&

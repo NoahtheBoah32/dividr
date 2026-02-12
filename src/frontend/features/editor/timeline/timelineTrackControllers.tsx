@@ -116,21 +116,27 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
     }, [rowDef.id, tracks, allTracks]);
 
     const handleToggleVisibility = useCallback(() => {
+      const { beginGroup, endGroup } = useVideoEditorStore.getState();
+      const targetTracks = tracks.filter((track) => track.type !== 'audio');
+      if (targetTracks.length === 0) return;
+
+      // Batch row-level visibility toggle into a single undo entry.
+      beginGroup?.('Toggle Row Visibility');
       // Only handle visibility for non-audio tracks (video, image, subtitle)
-      tracks.forEach((track) => {
-        if (track.type !== 'audio') {
-          toggleTrackVisibility(track.id);
-        }
-      });
+      targetTracks.forEach((track) => toggleTrackVisibility(track.id));
+      endGroup?.();
     }, [tracks, toggleTrackVisibility]);
 
     const handleToggleMute = useCallback(() => {
+      const { beginGroup, endGroup } = useVideoEditorStore.getState();
+      const targetTracks = tracks.filter((track) => track.type === 'audio');
+      if (targetTracks.length === 0) return;
+
+      // Batch row-level mute toggle into a single undo entry.
+      beginGroup?.('Toggle Row Mute');
       // Handle mute for audio tracks only
-      tracks.forEach((track) => {
-        if (track.type === 'audio') {
-          toggleTrackMute(track.id);
-        }
-      });
+      targetTracks.forEach((track) => toggleTrackMute(track.id));
+      endGroup?.();
     }, [tracks, toggleTrackMute]);
 
     const handleDeleteAllTracks = useCallback(() => {

@@ -2120,6 +2120,9 @@ export const createTracksSlice: StateCreator<
 
     const newVisibleState = !targetTrack.visible;
 
+    // Record action for undo/redo BEFORE state change
+    state.recordAction?.('Toggle Track Visibility');
+
     set((state: any) => ({
       tracks: state.tracks.map((track: VideoTrack) => {
         if (track.id === trackId) {
@@ -2140,6 +2143,9 @@ export const createTracksSlice: StateCreator<
     if (targetTrack.type !== 'audio') return;
 
     const newMutedState = !targetTrack.muted;
+
+    // Record action for undo/redo BEFORE state change
+    state.recordAction?.('Toggle Track Mute');
 
     set((state: any) => ({
       tracks: state.tracks.map((track: VideoTrack) => {
@@ -2225,6 +2231,9 @@ export const createTracksSlice: StateCreator<
     if (!videoTrack?.isLinked || !videoTrack.linkedTrackId) return;
 
     const newMutedState = !videoTrack.muted;
+
+    // Record action for undo/redo BEFORE state change
+    state.recordAction?.('Toggle Linked Audio Mute');
 
     set((state: any) => ({
       tracks: state.tracks.map((track: VideoTrack) => {
