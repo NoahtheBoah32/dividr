@@ -34,6 +34,16 @@ function logValidationFailure(
   }
 }
 
+function normalizeIpcArgs(args: unknown[]): unknown[] {
+  // Electron invoke/send calls often include explicit trailing `undefined`
+  // for optional params; trim these so tuple/union schemas remain strict.
+  let end = args.length;
+  while (end > 0 && args[end - 1] === undefined) {
+    end -= 1;
+  }
+  return end === args.length ? args : args.slice(0, end);
+}
+
 export function installIpcValidation(): void {
   const globalState = globalThis as MutableGlobal;
   if (globalState[IPC_VALIDATION_INSTALLED_KEY]) {
@@ -55,7 +65,7 @@ export function installIpcValidation(): void {
     return originalHandle(
       channel,
       async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-        const parsed = schema.safeParse(args);
+        const parsed = schema.safeParse(normalizeIpcArgs(args));
         if (!parsed.success) {
           logValidationFailure(
             channel,
@@ -83,7 +93,7 @@ export function installIpcValidation(): void {
     }
 
     return originalOn(channel, (event: IpcMainEvent, ...args: unknown[]) => {
-      const parsed = schema.safeParse(args);
+      const parsed = schema.safeParse(normalizeIpcArgs(args));
       if (!parsed.success) {
         logValidationFailure(
           channel,
