@@ -1031,6 +1031,13 @@ interface TrackRowProps {
   isPlaceholder?: boolean;
 }
 
+type TranscribingTrackLoader = {
+  trackId: string;
+  subtitleRowIndex: number;
+  startFrame: number;
+  endFrame: number;
+};
+
 const TrackRow: React.FC<TrackRowProps> = React.memo(
   ({
     rowDef,
@@ -1067,6 +1074,12 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
     const transcribingSubtitleRowIndex = useVideoEditorStore(
       (state) => state.transcribingSubtitleRowIndex,
     );
+    const transcribingTrackLoaders = useVideoEditorStore(
+      (state) => state.transcribingTrackLoaders || [],
+    );
+    const currentTranscribingTrackId = useVideoEditorStore(
+      (state) => state.currentTranscribingTrackId,
+    );
     const isTranscribing = useVideoEditorStore((state) => state.isTranscribing);
     const addTrackFromMediaLibrary = useVideoEditorStore(
       (state) => state.addTrackFromMediaLibrary,
@@ -1088,11 +1101,92 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
       return parsed;
     }, [rowDef.id, rowDef.trackTypes]);
 
-    const isSubtitleRowTranscribing =
-      rowDef.trackTypes.includes('subtitle') &&
-      isTranscribing &&
-      transcribingSubtitleRowIndex !== null &&
-      parsedRow.rowIndex === transcribingSubtitleRowIndex;
+    const subtitleTrackLoadersInRow = useMemo(() => {
+      if (!rowDef.trackTypes.includes('subtitle')) return [];
+
+      const matchedLoaders = (
+        transcribingTrackLoaders as TranscribingTrackLoader[]
+      ).filter((loader) => loader.subtitleRowIndex === parsedRow.rowIndex);
+
+      const hasWindow = typeof window !== 'undefined';
+      const viewportWidth = hasWindow ? window.innerWidth : timelineWidth;
+      const viewportStart = scrollX;
+      const viewportEnd = scrollX + viewportWidth;
+      const bufferSize = viewportWidth * 0.5;
+
+      return matchedLoaders
+        .map((loader) => {
+          const liveTrack = allTracks.find(
+            (track) => track.id === loader.trackId,
+          );
+          const startFrame = Math.max(
+            0,
+            liveTrack?.startFrame ?? loader.startFrame,
+          );
+          const rawEndFrame = liveTrack?.endFrame ?? loader.endFrame;
+          const endFrame = Math.max(startFrame + 1, rawEndFrame);
+          const left = startFrame * frameWidth;
+          const width = Math.max(1, (endFrame - startFrame) * frameWidth);
+          const right = left + width;
+
+          return {
+            trackId: loader.trackId,
+            left,
+            width,
+            right,
+          };
+        })
+        .filter(
+          (loader) =>
+            loader.right >= viewportStart - bufferSize &&
+            loader.left <= viewportEnd + bufferSize,
+        );
+    }, [
+      rowDef.trackTypes,
+      transcribingTrackLoaders,
+      parsedRow.rowIndex,
+      allTracks,
+      frameWidth,
+      scrollX,
+      timelineWidth,
+    ]);
+
+    const fallbackSubtitleLoaderInRow = useMemo(() => {
+      if (!rowDef.trackTypes.includes('subtitle')) return null;
+      if (subtitleTrackLoadersInRow.length > 0) return null;
+      if (!isTranscribing || transcribingSubtitleRowIndex === null) return null;
+      if (parsedRow.rowIndex !== transcribingSubtitleRowIndex) return null;
+
+      if (!currentTranscribingTrackId) return null;
+
+      const liveTrack = allTracks.find(
+        (track) => track.id === currentTranscribingTrackId,
+      );
+      if (!liveTrack) return null;
+
+      const startFrame = Math.max(0, liveTrack.startFrame);
+      const endFrame = Math.max(startFrame + 1, liveTrack.endFrame);
+      return {
+        trackId: currentTranscribingTrackId,
+        left: startFrame * frameWidth,
+        width: Math.max(1, (endFrame - startFrame) * frameWidth),
+      };
+    }, [
+      rowDef.trackTypes,
+      subtitleTrackLoadersInRow.length,
+      isTranscribing,
+      transcribingSubtitleRowIndex,
+      parsedRow.rowIndex,
+      currentTranscribingTrackId,
+      allTracks,
+      frameWidth,
+    ]);
+
+    const subtitleSkeletonLoaders = useMemo(() => {
+      if (subtitleTrackLoadersInRow.length > 0)
+        return subtitleTrackLoadersInRow;
+      return fallbackSubtitleLoaderInRow ? [fallbackSubtitleLoaderInRow] : [];
+    }, [subtitleTrackLoadersInRow, fallbackSubtitleLoaderInRow]);
 
     const hasTracks = tracks.length > 0;
     const isRowSelected = useMemo(
@@ -1363,47 +1457,36 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
         /> */}
 
         <div className="h-full flex items-center relative z-10">
-          {isSubtitleRowTranscribing ? (
-            <div className="h-full w-full flex items-center gap-2 px-2">
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[120px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[80px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[150px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[100px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[90px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[110px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[130px] rounded')}
-              />
+          {visibleTracks.map((track) => (
+            <TrackItem
+              key={`${track.id}-${track.source}-${track.name}`}
+              track={track}
+              frameWidth={frameWidth}
+              zoomLevel={zoomLevel}
+              isSelected={selectedTrackIds.includes(track.id)}
+              onSelect={(multiSelect) => onTrackSelect(track.id, multiSelect)}
+              onMove={(newStartFrame) => onTrackMove(track.id, newStartFrame)}
+              onResize={(newStartFrame, newEndFrame) =>
+                onTrackResize(track.id, newStartFrame, newEndFrame)
+              }
+              isSplitModeActive={isSplitModeActive}
+            />
+          ))}
+          {subtitleSkeletonLoaders.map((loader) => (
+            <div
+              key={`subtitle-loader-${loader.trackId}`}
+              className={cn(
+                'absolute z-20 rounded overflow-hidden pointer-events-none',
+                skeletonHeightClass,
+              )}
+              style={{
+                transform: `translate3d(${loader.left}px, 0, 0)`,
+                width: `${loader.width}px`,
+              }}
+            >
+              <Skeleton className="h-full w-full rounded" />
             </div>
-          ) : (
-            visibleTracks.map((track) => (
-              <TrackItem
-                key={`${track.id}-${track.source}-${track.name}`}
-                track={track}
-                frameWidth={frameWidth}
-                zoomLevel={zoomLevel}
-                isSelected={selectedTrackIds.includes(track.id)}
-                onSelect={(multiSelect) => onTrackSelect(track.id, multiSelect)}
-                onMove={(newStartFrame) => onTrackMove(track.id, newStartFrame)}
-                onResize={(newStartFrame, newEndFrame) =>
-                  onTrackResize(track.id, newStartFrame, newEndFrame)
-                }
-                isSplitModeActive={isSplitModeActive}
-              />
-            ))
-          )}
+          ))}
         </div>
 
         {isBaseVideoRow && !hasVideoTracks && (
@@ -1512,6 +1595,9 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
     const transcribingSubtitleRowIndex = useVideoEditorStore(
       (state) => state.transcribingSubtitleRowIndex,
     );
+    const transcribingTrackLoaders = useVideoEditorStore(
+      (state) => state.transcribingTrackLoaders || [],
+    );
 
     const isEmptyTimeline = tracks.length === 0;
     const hasVideoTracks = tracks.some((track) => track.type === 'video');
@@ -1550,8 +1636,11 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
       () =>
         generateDynamicRows(migratedTracks, {
           transcribingSubtitleRowIndex,
+          transcribingSubtitleRowIndices: (
+            transcribingTrackLoaders as TranscribingTrackLoader[]
+          ).map((loader) => loader.subtitleRowIndex),
         }),
-      [migratedTracks, transcribingSubtitleRowIndex],
+      [migratedTracks, transcribingSubtitleRowIndex, transcribingTrackLoaders],
     );
 
     const [subtitleImportConfirmation, setSubtitleImportConfirmation] =

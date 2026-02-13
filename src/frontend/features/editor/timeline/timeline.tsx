@@ -138,6 +138,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const transcribingSubtitleRowIndex = useVideoEditorStore(
       (state) => state.transcribingSubtitleRowIndex,
     );
+    const transcribingTrackLoaders = useVideoEditorStore(
+      (state) => state.transcribingTrackLoaders || [],
+    );
     const lastInsertedTrackId = useVideoEditorStore(
       (state) => state.lastInsertedTrackId,
     );
@@ -159,8 +162,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       () =>
         generateDynamicRows(migratedTracks, {
           transcribingSubtitleRowIndex,
+          transcribingSubtitleRowIndices: transcribingTrackLoaders.map(
+            (loader) => loader.subtitleRowIndex,
+          ),
         }),
-      [migratedTracks, transcribingSubtitleRowIndex],
+      [migratedTracks, transcribingSubtitleRowIndex, transcribingTrackLoaders],
     );
     const setCurrentFrame = useVideoEditorStore(
       (state) => state.setCurrentFrame,

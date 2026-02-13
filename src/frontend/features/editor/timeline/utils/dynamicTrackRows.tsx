@@ -116,7 +116,10 @@ export const BASE_TRACKS = {
  */
 export function generateDynamicRows(
   tracks: VideoTrack[],
-  options?: { transcribingSubtitleRowIndex?: number | null },
+  options?: {
+    transcribingSubtitleRowIndex?: number | null;
+    transcribingSubtitleRowIndices?: number[];
+  },
 ): TrackRowDefinition[] {
   // CRITICAL: Enforce track hierarchy before generating rows
   const hierarchyEnforcedTracks = enforceTrackHierarchy(tracks);
@@ -151,16 +154,27 @@ export function generateDynamicRows(
     nonAudioRowMap.set('video-0', []);
   }
 
-  // Inject transient subtitle row for in-progress generation directly into the map
-  // so it participates in the same sorted ordering as real rows
-  const transcribingSubtitleRowIndex =
-    options?.transcribingSubtitleRowIndex ?? null;
-  if (transcribingSubtitleRowIndex !== null) {
-    const transientRowId = `subtitle-${transcribingSubtitleRowIndex}`;
+  // Inject transient subtitle rows for in-progress generation directly into the map
+  // so they participate in the same sorted ordering as real rows.
+  const transientSubtitleRowIndices = new Set<number>();
+  if (
+    options?.transcribingSubtitleRowIndex !== null &&
+    options?.transcribingSubtitleRowIndex !== undefined
+  ) {
+    transientSubtitleRowIndices.add(options.transcribingSubtitleRowIndex);
+  }
+  (options?.transcribingSubtitleRowIndices || []).forEach((rowIndex) => {
+    if (Number.isFinite(rowIndex)) {
+      transientSubtitleRowIndices.add(rowIndex);
+    }
+  });
+
+  transientSubtitleRowIndices.forEach((rowIndex) => {
+    const transientRowId = `subtitle-${rowIndex}`;
     if (!nonAudioRowMap.has(transientRowId)) {
       nonAudioRowMap.set(transientRowId, []);
     }
-  }
+  });
 
   // Convert to array and sort by rowIndex (descending - higher rows first)
   const nonAudioRowEntries = Array.from(nonAudioRowMap.entries()).sort(

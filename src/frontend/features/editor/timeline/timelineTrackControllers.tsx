@@ -492,6 +492,9 @@ export const TimelineTrackControllers: React.FC<TimelineTrackControllersProps> =
       const transcribingSubtitleRowIndex = useVideoEditorStore(
         (state) => state.transcribingSubtitleRowIndex,
       );
+      const transcribingTrackLoaders = useVideoEditorStore(
+        (state) => state.transcribingTrackLoaders || [],
+      );
 
       // Migrate tracks to ensure they have trackRowIndex
       const migratedTracks = useMemo(
@@ -504,8 +507,15 @@ export const TimelineTrackControllers: React.FC<TimelineTrackControllersProps> =
         () =>
           generateDynamicRows(migratedTracks, {
             transcribingSubtitleRowIndex,
+            transcribingSubtitleRowIndices: transcribingTrackLoaders.map(
+              (loader) => loader.subtitleRowIndex,
+            ),
           }),
-        [migratedTracks, transcribingSubtitleRowIndex],
+        [
+          migratedTracks,
+          transcribingSubtitleRowIndex,
+          transcribingTrackLoaders,
+        ],
       );
 
       // Calculate placeholder rows needed - MUST MATCH timelineTracks.tsx
