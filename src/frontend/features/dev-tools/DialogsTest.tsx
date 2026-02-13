@@ -346,8 +346,9 @@ export const DialogsTest = () => {
               ? 'Done'
               : 'Error'
         }
-        currentTime="00:00:45.00"
-        duration="00:01:30.00"
+        elapsedSeconds={45}
+        etaState={renderState === 'rendering' ? 'ready' : 'calculating'}
+        etaSeconds={renderState === 'rendering' ? 30 : 0}
         errorMessage={
           renderState === 'failed' ? 'FFmpeg exited with code 1' : undefined
         }

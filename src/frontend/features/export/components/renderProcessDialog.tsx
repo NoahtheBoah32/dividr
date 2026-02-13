@@ -7,6 +7,7 @@ import {
   AlertDialogTitle,
 } from '@/frontend/components/ui/alert-dialog';
 import { Button } from '@/frontend/components/ui/button';
+import type { RenderEtaState } from '@/frontend/features/editor/stores/videoEditor/types/render.types';
 import { CheckCircle2, FolderOpen, Loader2, XCircle } from 'lucide-react';
 import React from 'react';
 
@@ -17,8 +18,9 @@ interface RenderProcessDialogProps {
   state: RenderState;
   progress: number;
   status: string;
-  currentTime: string;
-  duration: string;
+  elapsedSeconds?: number;
+  etaSeconds?: number;
+  etaState: RenderEtaState;
   errorMessage?: string;
   outputFilePath?: string;
   onCancel: () => void;
@@ -31,26 +33,36 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
   state,
   progress,
   status,
-  currentTime,
-  duration,
+  elapsedSeconds,
+  etaSeconds,
+  etaState,
   errorMessage,
   outputFilePath,
   onCancel,
   onClose,
   onRetry,
 }) => {
-  const normalizeTimeDisplay = (value: string | undefined): string => {
-    if (!value) return '00:00:00';
-    const match = value.trim().match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/);
-    if (match) {
-      return `${match[1]}:${match[2]}:${match[3]}`;
+  const formatClock = (seconds?: number): string => {
+    if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
+      return '00:00:00';
     }
-    return value;
+    const safeSeconds = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const remainingSeconds = safeSeconds % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes
+      .toString()
+      .padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
   const safeProgress = Number.isFinite(progress)
     ? Math.max(0, Math.min(100, progress))
     : 0;
+  const elapsedLabel = formatClock(elapsedSeconds);
+  const remainingLabel =
+    etaState === 'ready' && Number.isFinite(etaSeconds)
+      ? formatClock(etaSeconds)
+      : 'Calculating...';
 
   // Lock the state when user dismisses to prevent flashing
   const [lockedState, setLockedState] = React.useState<RenderState>(state);
@@ -125,11 +137,8 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
                     <p className="text-xs text-muted-foreground">
                       {status || 'Preparing render...'}
                     </p>
-                    {/* Time Display */}
-                    <div className="flex justify-end items-center gap-2 text-xs font-mono text-muted-foreground">
-                      <span>{normalizeTimeDisplay(currentTime)}</span>
-                      <span>/</span>
-                      <span>{normalizeTimeDisplay(duration)}</span>
+                    <div className="text-xs font-mono text-muted-foreground">
+                      {safeProgress.toFixed(1)}%
                     </div>
                   </div>
                   <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
@@ -139,6 +148,17 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
                         width: `${safeProgress}%`,
                       }}
                     />
+                  </div>
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 pt-1 text-xs font-mono text-muted-foreground">
+                    <div className="flex items-center justify-between bg-muted/40 rounded px-2 py-1">
+                      <span>Elapsed</span>
+                      <span>{elapsedLabel}</span>
+                    </div>
+                    <span>/</span>
+                    <div className="flex items-center justify-between bg-muted/40 rounded px-2 py-1">
+                      <span>Remaining</span>
+                      <span>{remainingLabel}</span>
+                    </div>
                   </div>
                 </div>
               </AlertDialogDescription>
@@ -165,7 +185,7 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
                   Your video has been successfully exported.
                 </p>
                 <div className="text-xs text-muted-foreground font-mono bg-muted p-2 rounded">
-                  Duration: {normalizeTimeDisplay(duration)}
+                  Render Time: {elapsedLabel}
                 </div>
                 {outputFilePath && (
                   <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded break-all">

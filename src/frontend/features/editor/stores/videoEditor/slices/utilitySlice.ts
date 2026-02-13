@@ -55,6 +55,7 @@ export const createUtilitySlice: StateCreator<
         progress: 0,
         status: 'ready',
         currentTime: undefined,
+        metrics: undefined,
         currentJob: undefined,
       },
       textStyle: getDefaultTextStyleState(), // Reset text styles to defaults

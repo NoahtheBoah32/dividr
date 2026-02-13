@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { StateCreator } from 'zustand';
-import { RenderState } from '../types/render.types';
+import { RenderMetrics, RenderState } from '../types/render.types';
 
 export interface RenderSlice {
   render: RenderState;
@@ -13,6 +13,7 @@ export interface RenderSlice {
     progress: number,
     status: string,
     currentTime?: string,
+    metrics?: Partial<RenderMetrics>,
   ) => void;
   finishRender: () => void;
   cancelRender: () => void;
@@ -40,13 +41,28 @@ export const createRenderSlice: StateCreator<
         progress: 0,
         status: 'Starting render...',
         currentTime: '00:00:00',
+        metrics: {
+          elapsedSeconds: 0,
+          etaState: 'calculating',
+        },
         currentJob: job,
       },
     })),
 
-  updateRenderProgress: (progress, status, currentTime) =>
+  updateRenderProgress: (progress, status, currentTime, metrics) =>
     set((state: any) => ({
-      render: { ...state.render, progress, status, currentTime },
+      render: {
+        ...state.render,
+        progress,
+        status,
+        currentTime,
+        metrics: metrics
+          ? {
+              ...state.render.metrics,
+              ...metrics,
+            }
+          : state.render.metrics,
+      },
     })),
 
   finishRender: () =>
@@ -56,7 +72,6 @@ export const createRenderSlice: StateCreator<
         isRendering: false,
         progress: 100,
         status: 'Render complete',
-        currentTime: undefined,
         currentJob: undefined,
       },
     })),
@@ -69,6 +84,7 @@ export const createRenderSlice: StateCreator<
         progress: 0,
         status: 'Render cancelled',
         currentTime: undefined,
+        metrics: undefined,
         currentJob: undefined,
       },
     })),

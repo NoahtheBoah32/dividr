@@ -9,9 +9,13 @@ export interface FfmpegProgress {
   bitrate: string;
   totalSize: string;
   outTime: string;
+  outTimeSeconds?: number;
   speed: string;
+  speedMultiplier?: number;
   progress: string;
   percentage?: number;
+  totalDurationSeconds?: number;
+  estimatedTotalFrames?: number;
 }
 
 export interface FfmpegCallbacks {
@@ -49,6 +53,16 @@ const parseTimeToSeconds = (value: string): number | null => {
     return null;
   }
   return hours * 3600 + minutes * 60 + seconds;
+};
+
+const parseSpeedMultiplier = (value: string): number | null => {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase().replace(/x$/, '');
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+  return numeric;
 };
 
 const estimateJobDurationSeconds = (job: VideoEditJob): number => {
@@ -198,7 +212,12 @@ export async function runFfmpegWithProgress(
   }
   console.log('[FfmpegRunner] Electron environment confirmed');
 
-  const estimatedDuration = estimateJobDurationSeconds(job);
+  const totalDurationSeconds = estimateJobDurationSeconds(job);
+  const targetFps = job.operations?.targetFrameRate || 30;
+  const estimatedTotalFrames =
+    totalDurationSeconds > 0
+      ? Math.max(1, Math.round(totalDurationSeconds * targetFps))
+      : undefined;
   const progressState: Partial<FfmpegProgress> = {};
   let lastOutTimeSeconds = 0;
   let lastPercentage = 0;
@@ -209,6 +228,7 @@ export async function runFfmpegWithProgress(
     if (!Number.isFinite(seconds) || seconds < 0) return;
     lastOutTimeSeconds = Math.max(lastOutTimeSeconds, seconds);
     progressState.outTime = formatSecondsToTime(lastOutTimeSeconds);
+    progressState.outTimeSeconds = lastOutTimeSeconds;
   };
 
   const processProgressLine = (line: string, type: 'stdout' | 'stderr') => {
@@ -255,6 +275,8 @@ export async function runFfmpegWithProgress(
         }
         case 'speed':
           progressState.speed = value;
+          progressState.speedMultiplier =
+            parseSpeedMultiplier(value) ?? undefined;
           return;
         case 'progress':
           progressState.progress = value;
@@ -281,6 +303,8 @@ export async function runFfmpegWithProgress(
     }
     if (typeof fallback.speed === 'string') {
       progressState.speed = fallback.speed;
+      progressState.speedMultiplier =
+        parseSpeedMultiplier(fallback.speed) ?? undefined;
     }
     if (typeof fallback.progress === 'string') {
       progressState.progress = fallback.progress;
@@ -328,14 +352,14 @@ export async function runFfmpegWithProgress(
     }
 
     const percentage =
-      estimatedDuration > 0
+      totalDurationSeconds > 0
         ? Math.max(
             0,
             Math.min(
               100,
               Math.max(
                 lastPercentage,
-                (Math.max(0, lastOutTimeSeconds) / estimatedDuration) * 100,
+                (Math.max(0, lastOutTimeSeconds) / totalDurationSeconds) * 100,
               ),
             ),
           )
@@ -350,9 +374,14 @@ export async function runFfmpegWithProgress(
       bitrate: progressState.bitrate || '',
       totalSize: progressState.totalSize || '',
       outTime: progressState.outTime || '',
+      outTimeSeconds: progressState.outTimeSeconds,
       speed: progressState.speed || '',
+      speedMultiplier: progressState.speedMultiplier,
       progress: progressState.progress || '',
       percentage,
+      totalDurationSeconds:
+        totalDurationSeconds > 0 ? totalDurationSeconds : undefined,
+      estimatedTotalFrames,
     });
   });
 
