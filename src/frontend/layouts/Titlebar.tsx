@@ -33,6 +33,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
   const { createNewProject, openProject, importProject } = useProjectStore();
   const { theme, resolvedTheme } = useTheme();
   const { projects } = useProjectStore();
+  const isDev = (import.meta as any).env?.DEV === true;
 
   const location = useLocation();
 
@@ -220,21 +221,23 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
             {/* Dark Mode/Light Mode Toggle */}
             <div className="flex items-center gap-7">
               {/* Test Tools - Only show in development */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="gap-1">
-                    Dev Tools
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem asChild>
-                    <Link to="/dev-tools">Media Tools</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/dialogs-test">Dialogs Showcase</Link>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {isDev && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="gap-1">
+                      Dev Tools
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem asChild>
+                      <Link to="/dev-tools">Media Tools</Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link to="/dialogs-test">Dialogs Showcase</Link>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
               <ModeToggle />
             </div>
 
