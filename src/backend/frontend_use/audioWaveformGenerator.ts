@@ -370,19 +370,7 @@ class AudioWaveformGenerator {
 
     try {
       // Run FFmpeg and capture output
-      const result = await (
-        window.electronAPI as unknown as {
-          runCustomFFmpeg: (
-            args: string[],
-            outputDir?: string,
-          ) => Promise<{
-            success: boolean;
-            output?: string;
-            stderr?: string;
-            error?: string;
-          }>;
-        }
-      ).runCustomFFmpeg(ffmpegArgs, '');
+      const result = await window.electronAPI.runCustomFFmpeg(ffmpegArgs, '');
 
       if (!result.success) {
         // astats filter might not give us the output we need in all cases

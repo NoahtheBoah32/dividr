@@ -39,6 +39,7 @@ export const createRenderSlice: StateCreator<
         isRendering: true,
         progress: 0,
         status: 'Starting render...',
+        currentTime: '00:00:00',
         currentJob: job,
       },
     })),

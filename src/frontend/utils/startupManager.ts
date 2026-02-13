@@ -64,10 +64,9 @@ class StartupManager {
     this.listeners.forEach((listener) => listener(stage, progress));
 
     if (typeof window !== 'undefined') {
-      const electronAPI = (window as any).electronAPI;
-      if (electronAPI?.invoke) {
-        void electronAPI
-          .invoke('startup:mark', stage, {
+      if (window.appControl?.startupMark) {
+        void window.appControl
+          .startupMark(stage, {
             duration,
             delta,
           })

@@ -543,8 +543,7 @@ export class VideoThumbnailGenerator {
     }
 
     // Check if the custom FFmpeg method is available (requires app restart)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (!(window.electronAPI as any).runCustomFFmpeg) {
+    if (!window.electronAPI.runCustomFFmpeg) {
       console.warn(
         '[VideoThumbnailGenerator] FFmpeg thumbnail extraction not available, using placeholders',
       );
@@ -578,8 +577,7 @@ export class VideoThumbnailGenerator {
 
     try {
       // Use the electron API to run the custom FFmpeg command
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (window.electronAPI as any).runCustomFFmpeg(
+      const result = await window.electronAPI.runCustomFFmpeg(
         thumbnailCommand,
         outputDir,
       );

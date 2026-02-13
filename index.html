@@ -522,17 +522,17 @@
           }
         }, 450);
 
-        if (window.electronAPI && window.electronAPI.on) {
-          const phaseListener = function (_event, payload) {
-            if (!payload || typeof payload.phase !== 'string') return;
-            applyPhase(payload.phase);
-          };
+        if (window.electronAPI && window.electronAPI.onStartupPhase) {
+          const offStartupPhase = window.electronAPI.onStartupPhase(
+            function (payload) {
+              if (!payload || typeof payload.phase !== 'string') return;
+              applyPhase(payload.phase);
+            },
+          );
 
-          window.electronAPI.on('startup:phase', phaseListener);
-
-          if (window.electronAPI.invoke) {
+          if (window.electronAPI.startupGetState) {
             window.electronAPI
-              .invoke('startup:get-state')
+              .startupGetState()
               .then(function (state) {
                 if (!state || !state.success) return;
                 if (state.latestPhase) {
@@ -543,8 +543,8 @@
           }
 
           window.addEventListener('beforeunload', function () {
-            if (window.electronAPI && window.electronAPI.removeListener) {
-              window.electronAPI.removeListener('startup:phase', phaseListener);
+            if (typeof offStartupPhase === 'function') {
+              offStartupPhase();
             }
           });
         }

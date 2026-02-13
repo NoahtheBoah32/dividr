@@ -1,18 +1,42 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { VideoEditJob } from './backend/ffmpeg/schema/ffmpegConfig';
-import { FfmpegEventHandlers } from './preload';
+import type {
+  AppExitDecisionRequest,
+  AppExitDecisionResponse,
+  AppExitRequestedEvent,
+  FfmpegEventHandlers,
+  ProxyProgressEvent,
+} from './shared/ipc/contracts';
 
 // Type definitions for the exposed API
 declare global {
   interface Window {
     electronAPI: {
-      // General IPC methods
-      invoke: (channel: string, ...args: any[]) => Promise<any>;
-      on: (channel: string, listener: (...args: any[]) => void) => void;
-      removeListener: (
-        channel: string,
-        listener: (...args: any[]) => void,
+      appExitDecision: (
+        payload: AppExitDecisionRequest,
+      ) => Promise<AppExitDecisionResponse>;
+      onAppExitRequested: (
+        callback: (payload: AppExitRequestedEvent) => void,
       ) => void;
+      offAppExitRequested: () => void;
+      onProxyProgress: (
+        callback: (payload: ProxyProgressEvent) => void,
+      ) => void;
+      offProxyProgress: () => void;
+      onStartupPhase: (
+        callback: (payload: {
+          phase: string;
+          sinceStart: number;
+          sinceLast: number;
+          meta?: Record<string, unknown> | null;
+        }) => void,
+      ) => () => void;
+      startupGetState: () => Promise<{
+        success: boolean;
+        latestPhase: string;
+        phases: Record<string, number>;
+        elapsedMs: number;
+      }>;
 
       // File dialog methods
       openFileDialog: (options?: {
@@ -141,7 +165,9 @@ declare global {
 
       ffmpegRun: (job: VideoEditJob) => Promise<{
         success: boolean;
-        result?: { command: string; logs: string };
+        logs?: string;
+        cancelled?: boolean;
+        message?: string;
         error?: string;
       }>;
       runFfmpeg: (job: VideoEditJob) => Promise<{
@@ -149,6 +175,7 @@ declare global {
         result?: { command: string; logs: string };
         error?: string;
       }>;
+      detectVideoFrameRate: (videoPath: string) => Promise<number>;
 
       // Proxy generation (with hybrid encoder support)
       generateProxy: (inputPath: string) => Promise<{
@@ -200,7 +227,7 @@ declare global {
         result?: { command: string; logs: string };
         error?: string;
       }>;
-      cancelFfmpeg: () => Promise<{
+      cancelFfmpegExport: () => Promise<{
         success: boolean;
         message?: string;
       }>;
@@ -209,9 +236,16 @@ declare global {
         outputDir: string,
       ) => Promise<{
         success: boolean;
+        stderr?: string;
         error?: string;
         output?: string[];
       }>;
+      onFfmpegRunProgress: (
+        callback: (payload: {
+          type: 'stdout' | 'stderr';
+          data: string;
+        }) => void,
+      ) => () => void;
 
       // Audio extraction method
       extractAudioFromVideo: (
@@ -271,10 +305,10 @@ declare global {
           outputFiles: string[];
           outputDir: string;
         }) => void,
-      ) => void;
+      ) => () => void;
       onSpriteSheetJobError: (
         callback: (data: { jobId: string; error: string }) => void,
-      ) => void;
+      ) => () => void;
       // Progressive loading: Per-sheet ready event
       onSpriteSheetSheetReady: (
         callback: (data: {
@@ -283,7 +317,7 @@ declare global {
           totalSheets: number;
           sheetPath: string;
         }) => void,
-      ) => void;
+      ) => () => void;
       removeSpriteSheetListeners: () => void;
 
       // ========================================================================
@@ -749,6 +783,10 @@ declare global {
         height?: number;
       }) => Promise<boolean>;
       setWindowFullscreen: (isFullscreen: boolean) => Promise<boolean>;
+      startupMark: (
+        phase: string,
+        meta?: Record<string, unknown>,
+      ) => Promise<{ success: boolean }>;
       openExternalLink: (link: string) => Promise<void>;
       getMaximizeState: () => Promise<boolean>;
       onMaximizeChanged: (callback: (isMaximized: boolean) => void) => void;

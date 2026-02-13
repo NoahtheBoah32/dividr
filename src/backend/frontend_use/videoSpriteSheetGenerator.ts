@@ -98,10 +98,7 @@ export class VideoSpriteSheetGenerator {
       }
 
       const durationPromise = window.electronAPI.getDuration(videoPath);
-      const fpsPromise = window.electronAPI.invoke(
-        'ffmpeg:detect-frame-rate',
-        videoPath,
-      );
+      const fpsPromise = window.electronAPI.detectVideoFrameRate(videoPath);
 
       const [durationResult, fpsResult] = await Promise.allSettled([
         durationPromise,
@@ -484,10 +481,7 @@ export class VideoSpriteSheetGenerator {
       }
 
       // Check if the custom FFmpeg method is available
-      if (
-        !(window.electronAPI as unknown as { runCustomFFmpeg?: unknown })
-          .runCustomFFmpeg
-      ) {
+      if (!window.electronAPI.runCustomFFmpeg) {
         throw new Error(
           'Sprite sheet generation requires app restart to enable new IPC handlers',
         );
@@ -653,21 +647,13 @@ export class VideoSpriteSheetGenerator {
       // Start background generation
       const jobId = `sprite_${cacheKey}_${Date.now()}`;
 
-      const backgroundResult = await (
-        window.electronAPI as unknown as {
-          generateSpriteSheetBackground: (options: {
-            jobId: string;
-            videoPath: string;
-            outputDir: string;
-            commands: string[][];
-          }) => Promise<{ success: boolean; error?: string; jobId?: string }>;
-        }
-      ).generateSpriteSheetBackground({
-        jobId,
-        videoPath,
-        outputDir,
-        commands,
-      });
+      const backgroundResult =
+        await window.electronAPI.generateSpriteSheetBackground({
+          jobId,
+          videoPath,
+          outputDir,
+          commands,
+        });
 
       if (!backgroundResult.success) {
         throw new Error(
@@ -835,21 +821,17 @@ export class VideoSpriteSheetGenerator {
       let isResolved = false;
       let pollTimer: ReturnType<typeof setTimeout> | null = null;
       let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+      let offCompleted: () => void = () => undefined;
+      let offError: () => void = () => undefined;
 
       const cleanup = () => {
         if (pollTimer) clearTimeout(pollTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
-        window.electronAPI.removeListener(
-          'sprite-sheet-job-completed',
-          handleCompleted,
-        );
-        window.electronAPI.removeListener(
-          'sprite-sheet-job-error',
-          handleError,
-        );
+        offCompleted();
+        offError();
       };
 
-      const handleCompleted = (_event: unknown, data: { jobId: string }) => {
+      const handleCompleted = (data: { jobId: string }) => {
         if (data.jobId === actualJobId && !isResolved) {
           isResolved = true;
           cleanup();
@@ -860,10 +842,7 @@ export class VideoSpriteSheetGenerator {
         }
       };
 
-      const handleError = (
-        _event: unknown,
-        data: { jobId: string; error: string },
-      ) => {
+      const handleError = (data: { jobId: string; error: string }) => {
         if (data.jobId === actualJobId && !isResolved) {
           isResolved = true;
           cleanup();
@@ -876,23 +855,17 @@ export class VideoSpriteSheetGenerator {
       };
 
       // Set up event listeners for job completion
-      window.electronAPI.on('sprite-sheet-job-completed', handleCompleted);
-      window.electronAPI.on('sprite-sheet-job-error', handleError);
+      offCompleted =
+        window.electronAPI.onSpriteSheetJobCompleted(handleCompleted);
+      offError = window.electronAPI.onSpriteSheetJobError(handleError);
 
       // Progress polling as fallback
       const pollProgress = async () => {
         if (isResolved) return;
 
         try {
-          const progressResult = await (
-            window.electronAPI as unknown as {
-              getSpriteSheetProgress: (jobId: string) => Promise<{
-                success: boolean;
-                progress?: { current: number; total: number; stage: string };
-                error?: string;
-              }>;
-            }
-          ).getSpriteSheetProgress(actualJobId);
+          const progressResult =
+            await window.electronAPI.getSpriteSheetProgress(actualJobId);
 
           if (progressResult.success && progressResult.progress) {
             const { current, total, stage } = progressResult.progress;

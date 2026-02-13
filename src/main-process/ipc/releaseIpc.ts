@@ -4,19 +4,20 @@ import {
   getInstalledReleaseDetails,
   readReleaseUpdateCache,
 } from '../../backend/release/releaseUpdateService';
+import { IPC_CHANNELS } from '../../shared/ipc/channels';
 
 export function registerReleaseIpc(): void {
-  ipcMain.handle('release:check-updates', async () => {
+  ipcMain.handle(IPC_CHANNELS.RELEASE_CHECK_UPDATES, async () => {
     console.log('[Main] MAIN PROCESS: release:check-updates handler called');
     return checkForReleaseUpdates();
   });
 
-  ipcMain.handle('release:get-update-cache', async () => {
+  ipcMain.handle(IPC_CHANNELS.RELEASE_GET_UPDATE_CACHE, async () => {
     console.log('[Main] MAIN PROCESS: release:get-update-cache handler called');
     return readReleaseUpdateCache();
   });
 
-  ipcMain.handle('release:get-installed-release', async () => {
+  ipcMain.handle(IPC_CHANNELS.RELEASE_GET_INSTALLED_RELEASE, async () => {
     console.log(
       '[Main] MAIN PROCESS: release:get-installed-release handler called',
     );

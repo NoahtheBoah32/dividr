@@ -2,11 +2,12 @@ import { dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { IPC_CHANNELS } from '../../shared/ipc/channels';
 
 export function registerSystemFileIpc(): void {
   // IPC Handler for opening file dialog
   ipcMain.handle(
-    'open-file-dialog',
+    IPC_CHANNELS.OPEN_FILE_DIALOG,
     async (
       event,
       options?: {
@@ -90,7 +91,7 @@ export function registerSystemFileIpc(): void {
 
   // IPC Handler for save dialog
   ipcMain.handle(
-    'show-save-dialog',
+    IPC_CHANNELS.SHOW_SAVE_DIALOG,
     async (
       event,
       options?: {
@@ -135,7 +136,7 @@ export function registerSystemFileIpc(): void {
   );
 
   // IPC Handler for getting downloads directory
-  ipcMain.handle('get-downloads-directory', async () => {
+  ipcMain.handle(IPC_CHANNELS.GET_DOWNLOADS_DIRECTORY, async () => {
     try {
       return {
         success: true,
@@ -147,25 +148,28 @@ export function registerSystemFileIpc(): void {
   });
 
   // IPC Handler for showing file in folder/explorer
-  ipcMain.handle('show-item-in-folder', async (event, filePath: string) => {
-    try {
-      if (!filePath) {
-        return { success: false, error: 'No file path provided' };
+  ipcMain.handle(
+    IPC_CHANNELS.SHOW_ITEM_IN_FOLDER,
+    async (event, filePath: string) => {
+      try {
+        if (!filePath) {
+          return { success: false, error: 'No file path provided' };
+        }
+
+        // Check if file exists
+        if (!fs.existsSync(filePath)) {
+          return { success: false, error: 'File not found' };
+        }
+
+        // Show item in folder (works cross-platform)
+        shell.showItemInFolder(filePath);
+
+        console.log('[Main] Opened file location', filePath);
+        return { success: true };
+      } catch (error) {
+        console.error('[Main] Failed to show file in folder', error);
+        return { success: false, error: error.message };
       }
-
-      // Check if file exists
-      if (!fs.existsSync(filePath)) {
-        return { success: false, error: 'File not found' };
-      }
-
-      // Show item in folder (works cross-platform)
-      shell.showItemInFolder(filePath);
-
-      console.log('[Main] Opened file location', filePath);
-      return { success: true };
-    } catch (error) {
-      console.error('[Main] Failed to show file in folder', error);
-      return { success: false, error: error.message };
-    }
-  });
+    },
+  );
 }

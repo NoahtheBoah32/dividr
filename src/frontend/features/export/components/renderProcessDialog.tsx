@@ -39,6 +39,19 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
   onClose,
   onRetry,
 }) => {
+  const normalizeTimeDisplay = (value: string | undefined): string => {
+    if (!value) return '00:00:00';
+    const match = value.trim().match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/);
+    if (match) {
+      return `${match[1]}:${match[2]}:${match[3]}`;
+    }
+    return value;
+  };
+
+  const safeProgress = Number.isFinite(progress)
+    ? Math.max(0, Math.min(100, progress))
+    : 0;
+
   // Lock the state when user dismisses to prevent flashing
   const [lockedState, setLockedState] = React.useState<RenderState>(state);
   const [isClosing, setIsClosing] = React.useState(false);
@@ -114,16 +127,16 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
                     </p>
                     {/* Time Display */}
                     <div className="flex justify-end items-center gap-2 text-xs font-mono text-muted-foreground">
-                      <span>{currentTime || '00:00:00.00'}</span>
+                      <span>{normalizeTimeDisplay(currentTime)}</span>
                       <span>/</span>
-                      <span>{duration || '00:00:00.00'}</span>
+                      <span>{normalizeTimeDisplay(duration)}</span>
                     </div>
                   </div>
                   <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                     <div
                       className="h-full bg-secondary transition-all duration-300 ease-out"
                       style={{
-                        width: `${Math.min(100, Math.max(0, progress))}%`,
+                        width: `${safeProgress}%`,
                       }}
                     />
                   </div>
@@ -152,7 +165,7 @@ export const RenderProcessDialog: React.FC<RenderProcessDialogProps> = ({
                   Your video has been successfully exported.
                 </p>
                 <div className="text-xs text-muted-foreground font-mono bg-muted p-2 rounded">
-                  Duration: {duration || '00:00:00.00'}
+                  Duration: {normalizeTimeDisplay(duration)}
                 </div>
                 {outputFilePath && (
                   <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded break-all">

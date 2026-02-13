@@ -85,30 +85,41 @@ export const useExportHandler = () => {
         // Add gaps to job
         job.gaps = gaps;
 
-        // Track current time to avoid race conditions
-        let latestCurrentTime = render.currentTime;
+        // Track values locally to avoid stale closure regressions
+        let latestCurrentTime = '00:00:00';
+        let latestProgressValue = 0;
 
         const callbacks: FfmpegCallbacks = {
           onProgress: (progress) => {
+            const nextProgress =
+              typeof progress.percentage === 'number' &&
+              Number.isFinite(progress.percentage)
+                ? Math.max(0, Math.min(100, progress.percentage))
+                : latestProgressValue;
+
+            latestProgressValue = Math.max(latestProgressValue, nextProgress);
+
             if (progress.outTime) {
               latestCurrentTime = progress.outTime;
               updateRenderProgress(
-                progress.percentage || render.progress,
-                progress.percentage
-                  ? `Rendering... ${progress.percentage.toFixed(1)}%`
-                  : render.status,
+                latestProgressValue,
+                `Rendering... ${latestProgressValue.toFixed(1)}%`,
                 progress.outTime,
               );
-            } else if (progress.percentage) {
+            } else {
               updateRenderProgress(
-                progress.percentage,
-                `Rendering... ${progress.percentage.toFixed(1)}%`,
+                latestProgressValue,
+                `Rendering... ${latestProgressValue.toFixed(1)}%`,
                 latestCurrentTime,
               );
             }
           },
           onStatus: (status) => {
-            updateRenderProgress(render.progress, status, latestCurrentTime);
+            updateRenderProgress(
+              latestProgressValue,
+              status,
+              latestCurrentTime,
+            );
             // Progress handled via state updates.
           },
           onLog: () => {
@@ -182,7 +193,7 @@ export const useExportHandler = () => {
 
       // Call IPC to kill FFmpeg process
 
-      await window.electronAPI.invoke('ffmpeg:cancel');
+      await window.electronAPI.cancelFfmpegExport();
 
       // Update UI state
       cancelRender();

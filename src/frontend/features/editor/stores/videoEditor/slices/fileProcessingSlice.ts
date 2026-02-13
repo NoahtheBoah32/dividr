@@ -3,6 +3,7 @@
 import { generateContentSignatureFromPath } from '@/frontend/utils/contentSignature';
 import { FileIntegrityValidator } from '@/frontend/utils/fileValidator';
 import { showImportLimitationToast } from '@/frontend/utils/mediaLimitations';
+import type { ProxyProgressEvent } from '@/shared/ipc/contracts';
 import { toast } from 'sonner';
 import { StateCreator } from 'zustand';
 import {
@@ -255,13 +256,10 @@ interface ProcessImportResult {
 // Shared helper function to process imported files
 // Listen for proxy progress events
 if (typeof window !== 'undefined' && window.electronAPI) {
-  window.electronAPI.on(
-    'proxy-progress',
-    (event: any, data: { path: string; log: string }) => {
-      // TODO: Dispatch update to media store if we want to show exact percentage
-      // For now just log to verify progress
-    },
-  );
+  window.electronAPI.onProxyProgress((_data: ProxyProgressEvent) => {
+    // TODO: Dispatch update to media store if we want to show exact percentage
+    // For now just log to verify progress
+  });
 }
 const processImportedFile = async (
   fileInfo: any,

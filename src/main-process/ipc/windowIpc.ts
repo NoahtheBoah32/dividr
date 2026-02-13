@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron';
+import { IPC_CHANNELS } from '../../shared/ipc/channels';
 import {
   MEDIA_SERVER_PORT,
   applyTitlebarOverlay,
@@ -12,23 +13,23 @@ import {
 } from '../mainProcessApp';
 
 export function registerWindowIpc(): void {
-  ipcMain.on('close-btn', () => {
+  ipcMain.on(IPC_CHANNELS.CLOSE_BTN, () => {
     requestRendererExitValidation('custom-close-button');
   });
 
-  ipcMain.on('request-app-exit', (_event, trigger?: string) => {
+  ipcMain.on(IPC_CHANNELS.REQUEST_APP_EXIT, (_event, trigger?: string) => {
     requestRendererExitValidation(trigger || 'renderer-request');
   });
 
-  ipcMain.handle('app-exit-decision', async (_event, payload) => {
+  ipcMain.handle(IPC_CHANNELS.APP_EXIT_DECISION, async (_event, payload) => {
     return resolveAppExitDecision(payload);
   });
 
-  ipcMain.on('minimize-btn', () => {
+  ipcMain.on(IPC_CHANNELS.MINIMIZE_BTN, () => {
     if (mainWindow) mainWindow.minimize();
   });
 
-  ipcMain.on('maximize-btn', () => {
+  ipcMain.on(IPC_CHANNELS.MAXIMIZE_BTN, () => {
     if (!mainWindow) return;
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
@@ -37,13 +38,13 @@ export function registerWindowIpc(): void {
     }
   });
 
-  ipcMain.handle('get-maximize-state', () => {
+  ipcMain.handle(IPC_CHANNELS.GET_MAXIMIZE_STATE, () => {
     if (!mainWindow) return false;
     return mainWindow.isMaximized();
   });
 
   ipcMain.handle(
-    'set-titlebar-overlay',
+    IPC_CHANNELS.SET_TITLEBAR_OVERLAY,
     (
       _event,
       options: { color?: string; symbolColor?: string; height?: number },
@@ -53,26 +54,29 @@ export function registerWindowIpc(): void {
     },
   );
 
-  ipcMain.handle('set-window-fullscreen', (_event, isFullscreen: boolean) => {
-    if (!mainWindow) return false;
-    const nextState = Boolean(isFullscreen);
-    if (process.platform === 'darwin') {
-      const macWindow = mainWindow as BrowserWindow & {
-        setSimpleFullScreen?: (v: boolean) => void;
-      };
-      if (typeof macWindow.setSimpleFullScreen === 'function') {
-        macWindow.setSimpleFullScreen(nextState);
-      } else {
-        mainWindow.setFullScreen(nextState);
+  ipcMain.handle(
+    IPC_CHANNELS.SET_WINDOW_FULLSCREEN,
+    (_event, isFullscreen: boolean) => {
+      if (!mainWindow) return false;
+      const nextState = Boolean(isFullscreen);
+      if (process.platform === 'darwin') {
+        const macWindow = mainWindow as BrowserWindow & {
+          setSimpleFullScreen?: (v: boolean) => void;
+        };
+        if (typeof macWindow.setSimpleFullScreen === 'function') {
+          macWindow.setSimpleFullScreen(nextState);
+        } else {
+          mainWindow.setFullScreen(nextState);
+        }
+        return true;
       }
+
+      mainWindow.setFullScreen(nextState);
       return true;
-    }
+    },
+  );
 
-    mainWindow.setFullScreen(nextState);
-    return true;
-  });
-
-  ipcMain.handle('media:ensure-server', async () => {
+  ipcMain.handle(IPC_CHANNELS.MEDIA_ENSURE_SERVER, async () => {
     try {
       await ensureMediaServer();
       return { success: true, port: MEDIA_SERVER_PORT };
@@ -86,7 +90,7 @@ export function registerWindowIpc(): void {
   });
 
   ipcMain.handle(
-    'startup:mark',
+    IPC_CHANNELS.STARTUP_MARK,
     async (_event, phase: string, meta?: Record<string, unknown>) => {
       if (typeof phase === 'string' && phase.length > 0) {
         markStartupPhase(phase, meta);
@@ -99,7 +103,7 @@ export function registerWindowIpc(): void {
     },
   );
 
-  ipcMain.handle('startup:get-state', async () => {
+  ipcMain.handle(IPC_CHANNELS.STARTUP_GET_STATE, async () => {
     return getStartupState();
   });
 }

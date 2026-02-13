@@ -25,6 +25,64 @@ const isElectron = () => {
   return typeof window !== 'undefined' && window.electronAPI;
 };
 
+const formatSecondsToTime = (totalSeconds: number): string => {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes
+    .toString()
+    .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+};
+
+const parseTimeToSeconds = (value: string): number | null => {
+  if (!value) return null;
+  const parts = value.split(':');
+  if (parts.length !== 3) return null;
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  const seconds = Number(parts[2]);
+  if (![hours, minutes, seconds].every(Number.isFinite)) {
+    return null;
+  }
+  if (hours < 0 || minutes < 0 || seconds < 0) {
+    return null;
+  }
+  return hours * 3600 + minutes * 60 + seconds;
+};
+
+const estimateJobDurationSeconds = (job: VideoEditJob): number => {
+  const targetFps = job.operations?.targetFrameRate || 30;
+  let maxEndFrame = 0;
+  for (const input of job.inputs || []) {
+    if (typeof input !== 'object' || input === null) continue;
+    const track = input as {
+      timelineEndFrame?: number;
+      duration?: number;
+      startTime?: number;
+    };
+    if (
+      Number.isFinite(track.timelineEndFrame) &&
+      (track.timelineEndFrame as number) > maxEndFrame
+    ) {
+      maxEndFrame = track.timelineEndFrame as number;
+    }
+  }
+  if (maxEndFrame > 0) {
+    return maxEndFrame / targetFps;
+  }
+
+  let fallback = 0;
+  for (const input of job.inputs || []) {
+    if (typeof input !== 'object' || input === null) continue;
+    const track = input as { duration?: number; startTime?: number };
+    const duration = Number(track.duration) || 0;
+    const startTime = Number(track.startTime) || 0;
+    fallback = Math.max(fallback, startTime + duration);
+  }
+  return fallback;
+};
+
 // Detect video frame rate using IPC
 export async function detectVideoFrameRate(videoPath: string): Promise<number> {
   if (!isElectron()) {
@@ -35,10 +93,7 @@ export async function detectVideoFrameRate(videoPath: string): Promise<number> {
   }
 
   try {
-    return await window.electronAPI.invoke(
-      'ffmpeg:detect-frame-rate',
-      videoPath,
-    );
+    return await window.electronAPI.detectVideoFrameRate(videoPath);
   } catch (error) {
     console.error('[FfmpegRunner] Failed to detect video frame rate', error);
     return 30; // Fallback
@@ -84,7 +139,9 @@ export function cancelCurrentFfmpeg(): Promise<boolean> {
     return Promise.resolve(false);
   }
 
-  return window.electronAPI.invoke('ffmpeg:cancel');
+  return window.electronAPI
+    .cancelFfmpegExport()
+    .then((result) => result.success);
 }
 
 // Check if FFmpeg is currently running
@@ -106,7 +163,7 @@ export function parseFfmpegProgress(
     frame: /frame=\s*(\d+)/,
     fps: /fps=\s*([\d.]+)/,
     bitrate: /bitrate=\s*([\d.]+\w+)/,
-    outTime: /time=(\d{2}:\d{2}:\d{2}\.\d{2})/,
+    outTime: /time=(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/,
     totalSize: /size=\s*(\d+\w+)/,
     speed: /speed=\s*([\d.]+x)/,
     progress: /progress=(\w+)/,
@@ -141,67 +198,180 @@ export async function runFfmpegWithProgress(
   }
   console.log('[FfmpegRunner] Electron environment confirmed');
 
-  return new Promise((resolve, reject) => {
-    console.log('[FfmpegRunner] Setting up IPC communication');
-    // Set up progress listener
-    const handleProgress = (
-      event: any,
-      data: { type: string; data: string },
-    ) => {
-      if (data.type === 'stdout') {
-        callbacks?.onLog?.(data.data, 'stdout');
+  const estimatedDuration = estimateJobDurationSeconds(job);
+  const progressState: Partial<FfmpegProgress> = {};
+  let lastOutTimeSeconds = 0;
+  let lastPercentage = 0;
+  let stdoutLineBuffer = '';
+  let stderrLineBuffer = '';
 
-        // Parse progress information
-        const progress = parseFfmpegProgress(data.data);
-        if (Object.keys(progress).length > 0) {
-          callbacks?.onProgress?.(progress as FfmpegProgress);
-        }
+  const applyOutTimeSeconds = (seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    lastOutTimeSeconds = Math.max(lastOutTimeSeconds, seconds);
+    progressState.outTime = formatSecondsToTime(lastOutTimeSeconds);
+  };
 
-        // Check for status updates
-        if (data.data.includes('progress=')) {
-          const status = data.data.match(/progress=(\w+)/)?.[1];
-          if (status) {
-            callbacks?.onStatus?.(
-              status === 'end'
-                ? 'Processing complete'
-                : `In-progress: ${status}`,
-            );
+  const processProgressLine = (line: string, type: 'stdout' | 'stderr') => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex > 0 && type === 'stdout') {
+      const key = trimmed.slice(0, separatorIndex);
+      const value = trimmed.slice(separatorIndex + 1);
+
+      switch (key) {
+        case 'frame':
+          progressState.frame = Number(value) || progressState.frame || 0;
+          return;
+        case 'fps':
+          progressState.fps = Number(value) || progressState.fps || 0;
+          return;
+        case 'bitrate':
+          progressState.bitrate = value;
+          return;
+        case 'total_size':
+          progressState.totalSize = value;
+          return;
+        case 'out_time': {
+          const parsed = parseTimeToSeconds(value);
+          if (parsed !== null) {
+            applyOutTimeSeconds(parsed);
           }
+          return;
         }
-      } else if (data.type === 'stderr') {
-        callbacks?.onLog?.(data.data, 'stderr');
+        case 'out_time_us':
+        case 'out_time_ms': {
+          const microseconds = Number(value);
+          const seconds = microseconds / 1_000_000;
+          applyOutTimeSeconds(seconds);
+          return;
+        }
+        case 'out_time_ns': {
+          const nanoseconds = Number(value);
+          const seconds = nanoseconds / 1_000_000_000;
+          applyOutTimeSeconds(seconds);
+          return;
+        }
+        case 'speed':
+          progressState.speed = value;
+          return;
+        case 'progress':
+          progressState.progress = value;
+          callbacks?.onStatus?.(
+            value === 'end' ? 'Processing complete' : 'Rendering...',
+          );
+          return;
       }
-    };
+    }
 
-    // Register progress listener
-    console.log('[FfmpegRunner] Registering progress listener');
-    window.electronAPI.on('ffmpeg:progress', handleProgress);
+    // Fallback parser for stderr "time=..." lines (and any non-keyvalue lines)
+    const fallback = parseFfmpegProgress(trimmed);
+    if (typeof fallback.frame === 'number') {
+      progressState.frame = fallback.frame;
+    }
+    if (typeof fallback.fps === 'number') {
+      progressState.fps = fallback.fps;
+    }
+    if (typeof fallback.bitrate === 'string') {
+      progressState.bitrate = fallback.bitrate;
+    }
+    if (typeof fallback.totalSize === 'string') {
+      progressState.totalSize = fallback.totalSize;
+    }
+    if (typeof fallback.speed === 'string') {
+      progressState.speed = fallback.speed;
+    }
+    if (typeof fallback.progress === 'string') {
+      progressState.progress = fallback.progress;
+      callbacks?.onStatus?.(
+        fallback.progress === 'end' ? 'Processing complete' : 'Rendering...',
+      );
+    }
+    if (typeof fallback.outTime === 'string') {
+      const parsed = parseTimeToSeconds(fallback.outTime);
+      if (parsed !== null) {
+        applyOutTimeSeconds(parsed);
+      }
+    }
+  };
 
-    // Start FFmpeg process
-    console.log('[FfmpegRunner] Invoking ffmpegRun in main process');
-    window.electronAPI
-      .invoke('ffmpegRun', job)
-      .then((result: any) => {
-        console.log(
-          '[FfmpegRunner] FFmpeg process completed successfully',
-          result,
-        );
-        // Clean up listener
-        window.electronAPI.removeListener('ffmpeg:progress', handleProgress);
-        resolve({
-          command: 'ffmpeg-via-ipc',
-          logs: result.logs,
-          cancelled: result.cancelled,
-          message: result.message,
-        });
-      })
-      .catch((error: any) => {
-        console.error('[FfmpegRunner] FFmpeg process failed', error);
-        // Clean up listener
-        window.electronAPI.removeListener('ffmpeg:progress', handleProgress);
-        reject(error);
-      });
+  const offProgress = window.electronAPI.onFfmpegRunProgress((payload) => {
+    callbacks?.onLog?.(payload.data, payload.type);
+    const targetBuffer =
+      payload.type === 'stdout' ? stdoutLineBuffer : stderrLineBuffer;
+    const combined = `${targetBuffer}${payload.data}`;
+    const lines = combined.split(/\r?\n/);
+    const remaining = lines.pop() ?? '';
+
+    if (payload.type === 'stdout') {
+      stdoutLineBuffer = remaining;
+    } else {
+      stderrLineBuffer = remaining;
+    }
+
+    for (const line of lines) {
+      processProgressLine(line, payload.type);
+    }
+
+    // Process completed line when ffmpeg emits CR-only updates
+    if (
+      (payload.data.includes('\r') || payload.data.includes('\n')) &&
+      remaining
+    ) {
+      processProgressLine(remaining, payload.type);
+      if (payload.type === 'stdout') {
+        stdoutLineBuffer = '';
+      } else {
+        stderrLineBuffer = '';
+      }
+    }
+
+    const percentage =
+      estimatedDuration > 0
+        ? Math.max(
+            0,
+            Math.min(
+              100,
+              Math.max(
+                lastPercentage,
+                (Math.max(0, lastOutTimeSeconds) / estimatedDuration) * 100,
+              ),
+            ),
+          )
+        : undefined;
+    if (percentage !== undefined && Number.isFinite(percentage)) {
+      lastPercentage = percentage;
+    }
+
+    callbacks?.onProgress?.({
+      frame: progressState.frame || 0,
+      fps: progressState.fps || 0,
+      bitrate: progressState.bitrate || '',
+      totalSize: progressState.totalSize || '',
+      outTime: progressState.outTime || '',
+      speed: progressState.speed || '',
+      progress: progressState.progress || '',
+      percentage,
+    });
   });
+
+  try {
+    const result = await window.electronAPI.ffmpegRun(job);
+
+    if (result.success) {
+      return {
+        command: 'ffmpeg-via-ipc',
+        logs: result.logs || '',
+        cancelled: result.cancelled,
+        message: result.message,
+      };
+    }
+
+    throw new Error(result.error || 'FFmpeg execution failed');
+  } finally {
+    offProgress();
+  }
 }
 
 // Keep original function for backward compatibility
@@ -211,7 +381,10 @@ export async function runFfmpeg(
   const result = await window.electronAPI.ffmpegRun(job);
 
   if (result.success) {
-    return result.result;
+    return {
+      command: 'ffmpeg-via-ipc',
+      logs: result.logs || '',
+    };
   } else {
     throw new Error(result.error || 'FFmpeg execution failed');
   }
@@ -229,7 +402,11 @@ export async function generateProxy(
   }
 
   try {
-    return await window.electronAPI.invoke('generate-proxy', inputPath);
+    const result = await window.electronAPI.generateProxy(inputPath);
+    if (result.success && result.proxyPath) {
+      return { success: true, proxyPath: result.proxyPath };
+    }
+    throw new Error(result.error || 'Failed to generate proxy');
   } catch (error) {
     console.error('[FfmpegRunner] Failed to generate proxy', error);
     throw error;

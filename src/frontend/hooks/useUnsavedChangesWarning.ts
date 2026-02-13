@@ -1,15 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
 import { hasPendingUnsavedChanges } from '@/frontend/hooks/unsavedChangesState';
+import type {
+  AppExitDecision,
+  AppExitRequestedEvent,
+} from '@/shared/ipc/contracts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker } from 'react-router-dom';
-
-type AppExitDecision = 'pending' | 'allow' | 'cancel';
-
-type AppExitRequestPayload = {
-  requestId?: number;
-  trigger?: string;
-};
 
 const getExitErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -22,7 +19,7 @@ const sendAppExitDecision = async (
   requestId: number,
   decision: AppExitDecision,
 ): Promise<void> => {
-  await window.electronAPI.invoke('app-exit-decision', { requestId, decision });
+  await window.electronAPI.appExitDecision({ requestId, decision });
 };
 
 export const useUnsavedChangesWarning = () => {
@@ -57,7 +54,7 @@ export const useUnsavedChangesWarning = () => {
   }, []);
 
   const handleAppExitRequested = useCallback(
-    (_event: any, payload: AppExitRequestPayload) => {
+    (payload: AppExitRequestedEvent) => {
       const requestId = Number(payload?.requestId);
       if (!Number.isInteger(requestId)) {
         return;
@@ -78,12 +75,9 @@ export const useUnsavedChangesWarning = () => {
   );
 
   useEffect(() => {
-    window.electronAPI.on('app-exit-requested', handleAppExitRequested);
+    window.electronAPI.onAppExitRequested(handleAppExitRequested);
     return () => {
-      window.electronAPI.removeListener(
-        'app-exit-requested',
-        handleAppExitRequested,
-      );
+      window.electronAPI.offAppExitRequested();
     };
   }, [handleAppExitRequested]);
 

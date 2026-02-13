@@ -57,20 +57,35 @@ const ExportButton: React.FC<ExportButtonProps> = ({
     outputPath: string;
   } | null>(null);
 
-  // Parse FFmpeg time format (HH:MM:SS.FF) to seconds
-  const parseTimeToSeconds = useCallback((timeString: string): number => {
-    if (!timeString) return 0;
+  // Parse FFmpeg time format (HH:MM:SS or HH:MM:SS.xxx) to seconds
+  const parseTimeToSeconds = useCallback(
+    (timeString: string): number | null => {
+      if (!timeString) return null;
 
-    const match = timeString.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
-    if (!match) return 0;
+      const match = timeString
+        .trim()
+        .match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/);
+      if (!match) return null;
 
-    const hours = parseInt(match[1], 10);
-    const minutes = parseInt(match[2], 10);
-    const seconds = parseInt(match[3], 10);
-    const centiseconds = parseInt(match[4], 10);
+      const hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      const seconds = Number(match[3]);
+      const fraction = match[4] ? Number(`0.${match[4]}`) : 0;
 
-    return hours * 3600 + minutes * 60 + seconds + centiseconds / 100;
-  }, []);
+      if (
+        ![hours, minutes, seconds, fraction].every(Number.isFinite) ||
+        minutes < 0 ||
+        minutes > 59 ||
+        seconds < 0 ||
+        seconds > 59
+      ) {
+        return null;
+      }
+
+      return hours * 3600 + minutes * 60 + seconds + fraction;
+    },
+    [],
+  );
 
   // Calculate time-based progress percentage
   const calculateTimeProgress = useCallback((): number => {
@@ -79,6 +94,9 @@ const ExportButton: React.FC<ExportButtonProps> = ({
     }
 
     const currentSeconds = parseTimeToSeconds(render.currentTime);
+    if (currentSeconds === null) {
+      return render.progress;
+    }
     const progressPercentage = (currentSeconds / duration.totalSeconds) * 100;
 
     return Math.min(100, Math.max(0, progressPercentage));

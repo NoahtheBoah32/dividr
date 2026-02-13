@@ -1,4 +1,5 @@
 import { app } from 'electron';
+import { IPC_CHANNELS } from '../../shared/ipc/channels';
 import { mainWindow, setPendingFilePath } from '../mainProcessApp';
 
 function getFileFromArgs(args: string[] = process.argv): string | null {
@@ -33,7 +34,10 @@ export function registerProjectLifecycleEvents(): void {
 
     const filePath = getFileFromArgs(commandLine);
     if (filePath) {
-      mainWindow.webContents.send('open-project-file', filePath);
+      mainWindow.webContents.send(
+        IPC_CHANNELS.EVENT_OPEN_PROJECT_FILE,
+        filePath,
+      );
     }
   });
 
@@ -42,7 +46,10 @@ export function registerProjectLifecycleEvents(): void {
     if (!filePath.endsWith('.dividr')) return;
 
     if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('open-project-file', filePath);
+      mainWindow.webContents.send(
+        IPC_CHANNELS.EVENT_OPEN_PROJECT_FILE,
+        filePath,
+      );
       return;
     }
 

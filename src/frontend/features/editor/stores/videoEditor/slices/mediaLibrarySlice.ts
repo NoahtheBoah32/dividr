@@ -1071,7 +1071,7 @@ export const createMediaLibrarySlice: StateCreator<
       };
 
       // Register the global listener
-      (window.electronAPI as any).onSpriteSheetSheetReady(handleSheetReady);
+      window.electronAPI.onSpriteSheetSheetReady(handleSheetReady);
     }
 
     try {

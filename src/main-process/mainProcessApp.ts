@@ -10,6 +10,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileIOManager } from '../backend/io/FileIOManager';
+import { IPC_CHANNELS } from '../shared/ipc/channels';
+import type {
+  AppExitDecisionRequest,
+  AppExitDecisionResponse,
+} from '../shared/ipc/contracts';
 import { registerProjectLifecycleEvents } from './ipc/projectLifecycle';
 import { registerIpcModules } from './ipc/registerIpcModules';
 
@@ -53,8 +58,6 @@ let lastStartupMark = startupStart;
 let startupCheckpointCounter = 0;
 let latestStartupPhase = 'process-start';
 
-export type AppExitDecision = 'pending' | 'allow' | 'cancel';
-
 const clearExitRequestAckTimeout = (): void => {
   if (!exitRequestAckTimeout) return;
   clearTimeout(exitRequestAckTimeout);
@@ -89,7 +92,7 @@ export const requestRendererExitValidation = (trigger: string): void => {
   activeExitRequestId = requestId;
 
   try {
-    mainWindow.webContents.send('app-exit-requested', {
+    mainWindow.webContents.send(IPC_CHANNELS.EVENT_APP_EXIT_REQUESTED, {
       requestId,
       trigger,
     });
@@ -121,7 +124,7 @@ const broadcastStartupPhase = (
   if (mainWindow.webContents.isDestroyed()) return;
 
   try {
-    mainWindow.webContents.send('startup:phase', {
+    mainWindow.webContents.send(IPC_CHANNELS.EVENT_STARTUP_PHASE, {
       phase,
       sinceStart,
       sinceLast,
@@ -1368,11 +1371,8 @@ export function setPendingFilePath(filePath: string | null): void {
 }
 
 export function resolveAppExitDecision(
-  payload: {
-    requestId?: number;
-    decision?: AppExitDecision;
-  } | null,
-): { success: boolean } {
+  payload: AppExitDecisionRequest | null,
+): AppExitDecisionResponse {
   const requestId = Number(payload?.requestId);
   const decision = payload?.decision;
   if (!Number.isInteger(requestId) || !decision) {
@@ -1477,7 +1477,10 @@ const createWindow = () => {
 
       // Send pending file path to renderer if app was opened with a .dividr file
       if (pendingFilePath && mainWindow) {
-        mainWindow.webContents.send('open-project-file', pendingFilePath);
+        mainWindow.webContents.send(
+          IPC_CHANNELS.EVENT_OPEN_PROJECT_FILE,
+          pendingFilePath,
+        );
         pendingFilePath = null;
       }
     });
@@ -1580,11 +1583,17 @@ const createWindow = () => {
 
     // Maximize state change events
     mainWindow.on('maximize', () => {
-      mainWindow?.webContents.send('window-maximize-changed', true);
+      mainWindow?.webContents.send(
+        IPC_CHANNELS.EVENT_WINDOW_MAXIMIZE_CHANGED,
+        true,
+      );
     });
 
     mainWindow.on('unmaximize', () => {
-      mainWindow?.webContents.send('window-maximize-changed', false);
+      mainWindow?.webContents.send(
+        IPC_CHANNELS.EVENT_WINDOW_MAXIMIZE_CHANGED,
+        false,
+      );
     });
 
     // Prevent navigation to external URLs
