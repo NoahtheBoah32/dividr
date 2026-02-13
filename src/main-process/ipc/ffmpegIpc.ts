@@ -1215,7 +1215,7 @@ export function registerFfmpegIpc(): void {
 
   // FFmpeg IPC handlers
   ipcMain.handle(
-    'ffmpeg:detect-frame-rate',
+    IPC_CHANNELS.FFMPEG_DETECT_FRAME_RATE,
     async (event, videoPath: string) => {
       return new Promise((resolve, reject) => {
         if (!ffprobePath?.path) {
