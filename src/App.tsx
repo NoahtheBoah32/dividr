@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { RouterProvider } from 'react-router-dom';
-import { toast, Toaster } from 'sonner';
+import { toast } from 'sonner';
 import { RuntimeDownloadModal } from './frontend/components/custom/RuntimeDownloadModal';
 import { RuntimeMissingBanner } from './frontend/components/custom/RuntimeMissingBanner';
 import StartupLoader from './frontend/components/custom/StartupLoader';
+import { Toaster } from './frontend/components/ui/sonner';
 import { useShortcutRegistryInit } from './frontend/features/editor/stores/videoEditor';
 import { useProjectStore } from './frontend/features/projects/store/projectStore';
 import { RuntimeStatusProvider } from './frontend/providers/RuntimeStatusProvider';
