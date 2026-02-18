@@ -13,13 +13,11 @@ import { createTimelineShortcuts } from '../shortcuts/timelineShortcuts';
  * These shortcuts are active when the timeline is focused
  */
 export const useTimelineShortcutsV2 = () => {
-  const timeline = useVideoEditorStore((state) => state.timeline);
-  const tracks = useVideoEditorStore((state) => state.tracks);
   const isCapturing = useShortcutCaptureState();
 
   // Create timeline shortcuts - pass getState so handlers always get fresh state
   const timelineShortcuts = useMemo(
-    () => createTimelineShortcuts(useVideoEditorStore.getState()),
+    () => createTimelineShortcuts(useVideoEditorStore.getState),
     [],
   );
 
@@ -49,7 +47,7 @@ export const useTimelineShortcutsV2 = () => {
     zoomInKeys,
     timelineShortcuts[0].handler,
     { ...timelineShortcuts[0].options, enabled: !isCapturing },
-    [timeline.zoom, isCapturing],
+    [isCapturing],
   );
 
   // Zoom out
@@ -57,7 +55,7 @@ export const useTimelineShortcutsV2 = () => {
     zoomOutKeys,
     timelineShortcuts[1].handler,
     { ...timelineShortcuts[1].options, enabled: !isCapturing },
-    [timeline.zoom, isCapturing],
+    [isCapturing],
   );
 
   // Zoom reset
@@ -65,7 +63,7 @@ export const useTimelineShortcutsV2 = () => {
     zoomResetKeys,
     timelineShortcuts[2].handler,
     { ...timelineShortcuts[2].options, enabled: !isCapturing },
-    [timeline.zoom, isCapturing],
+    [isCapturing],
   );
 
   // Toggle snap
@@ -73,7 +71,7 @@ export const useTimelineShortcutsV2 = () => {
     toggleSnapKeys,
     timelineShortcuts[3].handler,
     { ...timelineShortcuts[3].options, enabled: !isCapturing },
-    [timeline.snapEnabled, isCapturing],
+    [isCapturing],
   );
 
   // Note: B, C, V, K tool switching shortcuts are registered in useTrackShortcuts to avoid conflicts
@@ -84,7 +82,7 @@ export const useTimelineShortcutsV2 = () => {
     selectAllKeys,
     timelineShortcuts[8].handler,
     { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
-    [tracks.length, timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   return {

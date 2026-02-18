@@ -1,14 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ShortcutConfig } from './types';
 
-// Import the store directly to avoid stale closures
-import { useVideoEditorStore } from '../index';
-
 /**
  * Timeline shortcuts - active when timeline is focused
  * These include zoom, in/out points, snapping, and split mode
  */
-export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
+export const createTimelineShortcuts = (
+  getStore: () => any,
+): ShortcutConfig[] => [
   {
     id: 'timeline-zoom-in',
     keys: 'equal',
@@ -16,6 +15,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     category: 'Timeline Zoom',
     scope: 'timeline',
     handler: () => {
+      const store = getStore();
       const currentZoom = store.timeline.zoom;
       store.setZoom(Math.min(currentZoom * 1.2, 10));
     },
@@ -27,6 +27,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     category: 'Timeline Zoom',
     scope: 'timeline',
     handler: () => {
+      const store = getStore();
       const currentZoom = store.timeline.zoom;
       store.setZoom(Math.max(currentZoom / 1.2, 0.1));
     },
@@ -38,6 +39,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     category: 'Timeline Zoom',
     scope: 'timeline',
     handler: () => {
+      const store = getStore();
       store.setZoom(1);
     },
   },
@@ -48,6 +50,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     category: 'Timeline Tools',
     scope: 'timeline',
     handler: () => {
+      const store = getStore();
       store.toggleSnap();
     },
   },
@@ -59,8 +62,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'timeline',
     handler: (e) => {
       e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       if (freshState.render?.isRendering) return;
       freshState.toggleSplitMode();
     },
@@ -73,8 +75,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'timeline',
     handler: (e) => {
       e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       if (freshState.render?.isRendering) return;
       freshState.toggleSplitMode();
     },
@@ -87,8 +88,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'timeline',
     handler: (e) => {
       e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       if (freshState.render?.isRendering) return;
       freshState.splitAtPlayhead();
     },
@@ -101,8 +101,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'timeline',
     handler: (e) => {
       e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       if (freshState.render?.isRendering) return;
       freshState.setSplitMode(false);
     },
@@ -115,8 +114,7 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'timeline',
     handler: (e) => {
       e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       if (freshState.render?.isRendering) return;
       const allTrackIds = freshState.tracks.map((track: any) => track.id);
       freshState.setSelectedTracks(allTrackIds);

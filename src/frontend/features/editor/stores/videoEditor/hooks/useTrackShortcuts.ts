@@ -13,14 +13,13 @@ import { createTrackShortcuts } from '../shortcuts/trackShortcuts';
  * These shortcuts are active when tracks are selected or focused
  */
 export const useTrackShortcuts = () => {
-  const timeline = useVideoEditorStore((state) => state.timeline);
   const isCapturing = useShortcutCaptureState();
 
-  // Get the store instance for creating shortcuts
-  const store = useVideoEditorStore.getState();
-
   // Create track shortcuts
-  const trackShortcuts = useMemo(() => createTrackShortcuts(store), []);
+  const trackShortcuts = useMemo(
+    () => createTrackShortcuts(useVideoEditorStore.getState),
+    [],
+  );
 
   const sliceKeys = useShortcutKeys(
     'track-slice-playhead',
@@ -58,7 +57,7 @@ export const useTrackShortcuts = () => {
       ...trackShortcuts[0].options,
       enabled: !isCapturing,
     },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Duplicate track
@@ -66,7 +65,7 @@ export const useTrackShortcuts = () => {
     duplicateKeys,
     trackShortcuts[1].handler,
     { ...trackShortcuts[1].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Copy track
@@ -74,7 +73,7 @@ export const useTrackShortcuts = () => {
     copyKeys,
     trackShortcuts[2].handler,
     { ...trackShortcuts[2].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Cut track
@@ -82,7 +81,7 @@ export const useTrackShortcuts = () => {
     cutKeys,
     trackShortcuts[3].handler,
     { ...trackShortcuts[3].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Paste track
@@ -90,7 +89,7 @@ export const useTrackShortcuts = () => {
     pasteKeys,
     trackShortcuts[4].handler,
     { ...trackShortcuts[4].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Selection tool
@@ -98,7 +97,7 @@ export const useTrackShortcuts = () => {
     selectionToolKeys,
     trackShortcuts[5].handler,
     { ...trackShortcuts[5].options, enabled: !isCapturing },
-    [timeline.isSplitModeActive, isCapturing],
+    [isCapturing],
   );
 
   // Toggle split mode
@@ -106,7 +105,7 @@ export const useTrackShortcuts = () => {
     toggleSplitKeys,
     trackShortcuts[6].handler,
     { ...trackShortcuts[6].options, enabled: !isCapturing },
-    [timeline.isSplitModeActive, isCapturing],
+    [isCapturing],
   );
 
   // Toggle mute
@@ -114,7 +113,7 @@ export const useTrackShortcuts = () => {
     muteKeys,
     trackShortcuts[7].handler,
     { ...trackShortcuts[7].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Delete tracks
@@ -122,7 +121,7 @@ export const useTrackShortcuts = () => {
     deleteKeys,
     trackShortcuts[8].handler,
     { ...trackShortcuts[8].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Deselect all
@@ -130,7 +129,7 @@ export const useTrackShortcuts = () => {
     deselectKeys,
     trackShortcuts[9].handler,
     { ...trackShortcuts[9].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Link clips
@@ -138,7 +137,7 @@ export const useTrackShortcuts = () => {
     linkKeys,
     trackShortcuts[10].handler,
     { ...trackShortcuts[10].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   // Unlink clips
@@ -146,7 +145,7 @@ export const useTrackShortcuts = () => {
     unlinkKeys,
     trackShortcuts[11].handler,
     { ...trackShortcuts[11].options, enabled: !isCapturing },
-    [timeline.selectedTrackIds, isCapturing],
+    [isCapturing],
   );
 
   return {

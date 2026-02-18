@@ -1,14 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ShortcutConfig } from './types';
 
-// Import the store directly to avoid stale closures
-import { useVideoEditorStore } from '../index';
-
 /**
  * Track shortcuts - active when tracks are selected or focused
  * These include split, delete, duplicate, visibility, and mute operations
  */
-export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
+export const createTrackShortcuts = (getStore: () => any): ShortcutConfig[] => [
   {
     id: 'track-slice-playhead',
     keys: ['ctrl+b', 'cmd+b', 'k', 'ctrl+k', 'cmd+k'],
@@ -17,7 +14,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.splitAtPlayhead();
+      getStore().splitAtPlayhead();
     },
     options: {
       preventDefault: true,
@@ -33,9 +30,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      // CRITICAL: Always get fresh state directly from the store
-      // This bypasses any stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       const selectedTracks = freshState.timeline?.selectedTrackIds || [];
       const allTracks = freshState.tracks || [];
 
@@ -128,7 +123,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       const selectedTracks = freshState.timeline?.selectedTrackIds || [];
 
       if (selectedTracks.length === 0) {
@@ -152,7 +147,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       const selectedTracks = freshState.timeline?.selectedTrackIds || [];
 
       if (selectedTracks.length === 0) {
@@ -176,7 +171,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
 
       if (!freshState.hasClipboardData()) {
         console.warn('[Paste] No clipboard data to paste');
@@ -199,8 +194,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
       // Exit split mode to return to selection tool
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       freshState.setSplitMode(false);
     },
   },
@@ -212,8 +206,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       freshState.toggleSplitMode();
     },
   },
@@ -223,8 +216,9 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     description: 'Toggle Track Mute',
     category: 'Track Properties',
     scope: 'track',
-    handler: () => {
-      const freshState = useVideoEditorStore.getState();
+    handler: (e) => {
+      e?.preventDefault();
+      const freshState = getStore();
       const selectedTracks = freshState.timeline.selectedTrackIds || [];
       if (selectedTracks.length === 0) return;
 
@@ -252,7 +246,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
 
       if (!isEditingText) {
         e?.preventDefault();
-        store.removeSelectedTracks();
+        getStore().removeSelectedTracks();
       }
     },
     options: {
@@ -267,7 +261,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.setSelectedTracks([]);
+      getStore().setSelectedTracks([]);
     },
   },
   {
@@ -278,7 +272,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.linkSelectedTracks();
+      getStore().linkSelectedTracks();
     },
   },
   {
@@ -289,7 +283,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.unlinkSelectedTracks();
+      getStore().unlinkSelectedTracks();
     },
   },
 ];
