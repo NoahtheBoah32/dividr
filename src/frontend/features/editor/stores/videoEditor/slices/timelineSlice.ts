@@ -92,11 +92,17 @@ export const createTimelineSlice: StateCreator<
         state.tracks?.length > 0
           ? Math.max(...state.tracks.map((track: any) => track.endFrame))
           : state.timeline.totalFrames;
+      const clampedFrame = Math.max(0, Math.min(frame, effectiveEndFrame));
+
+      // Prevent store updates when frame is unchanged (critical for playback smoothness).
+      if (clampedFrame === state.timeline.currentFrame) {
+        return state;
+      }
 
       return {
         timeline: {
           ...state.timeline,
-          currentFrame: Math.max(0, Math.min(frame, effectiveEndFrame)),
+          currentFrame: clampedFrame,
         },
       };
     }),

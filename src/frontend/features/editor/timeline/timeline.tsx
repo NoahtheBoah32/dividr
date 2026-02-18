@@ -237,6 +237,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       const bufferFrames = Math.max(baseBufferFrames, percentageBuffer);
       return Math.max(timeline.totalFrames, effectiveEndFrame + bufferFrames);
     }, [effectiveEndFrame, timeline.totalFrames]);
+    const playbackDisplayFps = useMemo(() => getDisplayFps(tracks), [tracks]);
 
     const parseMediaDropPayload = useCallback((dataTransfer: DataTransfer) => {
       const jsonPayload = dataTransfer.getData('application/json');
@@ -555,14 +556,19 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
       const startTime = performance.now();
       const startFrame = lastFrameUpdateRef.current;
+      const commitFrame = (frame: number) => {
+        if (frame === lastFrameUpdateRef.current) return;
+        lastFrameUpdateRef.current = frame;
+        setCurrentFrame(frame);
+      };
 
       // Use RAF for smooth playback that matches video timing
       const animate = () => {
         if (!playback.isPlaying) return;
 
-        const displayFps = getDisplayFps(tracks);
         const elapsed = (performance.now() - startTime) / 1000; // elapsed seconds
-        const frameAdvance = elapsed * displayFps * playback.playbackRate;
+        const frameAdvance =
+          elapsed * playbackDisplayFps * playback.playbackRate;
         const targetFrame = Math.floor(startFrame + frameAdvance);
 
         // Linear playback - respect gaps like Premiere Pro
@@ -572,8 +578,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           const finalFrame = playback.isLooping
             ? 0
             : Math.max(0, displayedTotalFrames - 1);
-          lastFrameUpdateRef.current = finalFrame;
-          setCurrentFrame(finalFrame);
+          commitFrame(finalFrame);
 
           if (playback.isLooping) {
             // Restart the animation from frame 0
@@ -582,10 +587,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               const newAnimate = () => {
                 if (!playback.isPlaying) return;
 
-                const displayFps = getDisplayFps(tracks);
                 const newElapsed = (performance.now() - newStartTime) / 1000;
                 const newFrameAdvance =
-                  newElapsed * displayFps * playback.playbackRate;
+                  newElapsed * playbackDisplayFps * playback.playbackRate;
                 const newTargetFrame = Math.floor(newFrameAdvance);
 
                 if (newTargetFrame < displayedTotalFrames) {
@@ -593,8 +597,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                     0,
                     Math.min(newTargetFrame, displayedTotalFrames - 1),
                   );
-                  lastFrameUpdateRef.current = clampedFrame;
-                  setCurrentFrame(clampedFrame);
+                  commitFrame(clampedFrame);
                   playbackIntervalRef.current =
                     requestAnimationFrame(newAnimate);
                 }
@@ -610,8 +613,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
             0,
             Math.min(targetFrame, displayedTotalFrames - 1),
           );
-          lastFrameUpdateRef.current = clampedFrame;
-          setCurrentFrame(clampedFrame);
+          commitFrame(clampedFrame);
           playbackIntervalRef.current = requestAnimationFrame(animate);
         }
       };
@@ -629,8 +631,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       playback.isLooping,
       playback.playbackRate,
       displayedTotalFrames,
+      playbackDisplayFps,
       setCurrentFrame,
-      tracks,
     ]);
 
     // Sync lastFrameUpdateRef with actual currentFrame changes

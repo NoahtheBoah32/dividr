@@ -5,6 +5,7 @@ import {
 } from '@/frontend/features/editor/shortcuts/shortcutHooks';
 import { useMemo } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
+import { useShallow } from 'zustand/react/shallow';
 import { useVideoEditorStore } from '../index';
 import { createGlobalShortcuts } from '../shortcuts/globalShortcuts';
 import { useProjectShortcutDialog } from '../shortcuts/hooks/useProjectShortcutDialog';
@@ -15,8 +16,13 @@ import { useProjectShortcutHandlers } from '../shortcuts/hooks/useProjectShortcu
  * These shortcuts are always active regardless of focus state
  */
 export const useGlobalShortcuts = () => {
-  const timeline = useVideoEditorStore((state) => state.timeline);
-  const tracks = useVideoEditorStore((state) => state.tracks);
+  const totalFrames = useVideoEditorStore(
+    (state) => state.timeline.totalFrames,
+  );
+  const timelineFps = useVideoEditorStore((state) => state.timeline.fps);
+  const trackEndFrames = useVideoEditorStore(
+    useShallow((state) => state.tracks.map((track) => track.endFrame)),
+  );
   const isCapturing = useShortcutCaptureState();
 
   // Setup project shortcut dialog
@@ -29,10 +35,10 @@ export const useGlobalShortcuts = () => {
   const effectiveEndFrame = useMemo(() => {
     // When tracks exist, use the maximum track end frame
     // Only use totalFrames as fallback when no tracks exist
-    return tracks.length > 0
-      ? Math.max(...tracks.map((track) => track.endFrame))
-      : timeline.totalFrames;
-  }, [tracks, timeline.totalFrames]);
+    return trackEndFrames.length > 0
+      ? Math.max(...trackEndFrames)
+      : totalFrames;
+  }, [trackEndFrames, totalFrames]);
 
   // Create global shortcuts with a getter function to always access fresh state
   const globalShortcuts = useMemo(
@@ -112,7 +118,7 @@ export const useGlobalShortcuts = () => {
     playbackKeys,
     globalShortcuts[7].handler,
     { ...globalShortcuts[7].options, enabled: !isCapturing },
-    [effectiveEndFrame, timeline.currentFrame, isCapturing],
+    [effectiveEndFrame, isCapturing],
   );
 
   // Navigate frame prev
@@ -120,7 +126,7 @@ export const useGlobalShortcuts = () => {
     prevFrameKeys,
     globalShortcuts[8].handler,
     { ...globalShortcuts[8].options, enabled: !isCapturing },
-    [effectiveEndFrame, timeline.currentFrame, isCapturing],
+    [effectiveEndFrame, isCapturing],
   );
 
   // Navigate frame next
@@ -128,7 +134,7 @@ export const useGlobalShortcuts = () => {
     nextFrameKeys,
     globalShortcuts[9].handler,
     { ...globalShortcuts[9].options, enabled: !isCapturing },
-    [effectiveEndFrame, timeline.currentFrame, isCapturing],
+    [effectiveEndFrame, isCapturing],
   );
 
   // Navigate frame prev fast (Shift+Left)
@@ -136,7 +142,7 @@ export const useGlobalShortcuts = () => {
     prevFrameFastKeys,
     globalShortcuts[10].handler,
     { ...globalShortcuts[10].options, enabled: !isCapturing },
-    [effectiveEndFrame, timeline.currentFrame, timeline.fps, isCapturing],
+    [effectiveEndFrame, timelineFps, isCapturing],
   );
 
   // Navigate frame next fast (Shift+Right)
@@ -144,7 +150,7 @@ export const useGlobalShortcuts = () => {
     nextFrameFastKeys,
     globalShortcuts[11].handler,
     { ...globalShortcuts[11].options, enabled: !isCapturing },
-    [effectiveEndFrame, timeline.currentFrame, timeline.fps, isCapturing],
+    [effectiveEndFrame, timelineFps, isCapturing],
   );
 
   // Navigate to next edit point (Down)
@@ -152,7 +158,7 @@ export const useGlobalShortcuts = () => {
     nextEditPointKeys,
     globalShortcuts[12].handler,
     { ...globalShortcuts[12].options, enabled: !isCapturing },
-    [effectiveEndFrame, timeline.currentFrame, tracks, isCapturing],
+    [effectiveEndFrame, isCapturing],
   );
 
   // Navigate to previous edit point (Up)
@@ -160,7 +166,7 @@ export const useGlobalShortcuts = () => {
     prevEditPointKeys,
     globalShortcuts[13].handler,
     { ...globalShortcuts[13].options, enabled: !isCapturing },
-    [effectiveEndFrame, timeline.currentFrame, tracks, isCapturing],
+    [effectiveEndFrame, isCapturing],
   );
 
   // Toggle Fullscreen (F)

@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { importMediaFromDialogUnified } from '../services/mediaImportService';
 import { usePreviewShortcuts } from '../stores/videoEditor/hooks/usePreviewShortcuts';
 import { useVideoEditorStore } from '../stores/videoEditor/index';
@@ -77,9 +78,47 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     removeTrack,
     beginGroup,
     endGroup,
-  } = useVideoEditorStore();
+    pause,
+  } = useVideoEditorStore(
+    useShallow((state) => ({
+      tracks: state.tracks,
+      timeline: state.timeline,
+      playback: state.playback,
+      preview: state.preview,
+      textStyle: state.textStyle,
+      getTextStyleForSubtitle: state.getTextStyleForSubtitle,
+      setGlobalSubtitlePosition: state.setGlobalSubtitlePosition,
+      importMediaFromDialog: state.importMediaFromDialog,
+      importMediaFromDrop: state.importMediaFromDrop,
+      importMediaToTimeline: state.importMediaToTimeline,
+      addTrackFromMediaLibrary: state.addTrackFromMediaLibrary,
+      setCurrentFrame: state.setCurrentFrame,
+      setPreviewPan: state.setPreviewPan,
+      setPreviewScale: state.setPreviewScale,
+      setPreviewInteractionMode: state.setPreviewInteractionMode,
+      updateTrack: state.updateTrack,
+      updateTrackProperty: state.updateTrackProperty,
+      setSelectedTracks: state.setSelectedTracks,
+      currentTranscribingTrackId: state.currentTranscribingTrackId,
+      transcriptionProgress: state.transcriptionProgress,
+      addTextClip: state.addTextClip,
+      removeTrack: state.removeTrack,
+      beginGroup: state.beginGroup,
+      endGroup: state.endGroup,
+      pause: state.pause,
+    })),
+  );
 
   const hasTracks = tracks.length > 0;
+  const lastVisibleTrackEndFrame = useMemo(() => {
+    let maxEndFrame = -1;
+    for (const track of tracks) {
+      if (track.visible && track.endFrame > maxEndFrame) {
+        maxEndFrame = track.endFrame;
+      }
+    }
+    return maxEndFrame;
+  }, [tracks]);
 
   const {
     activeVideoTrack,
@@ -142,20 +181,19 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
 
   // Pause playback at end of all tracks
   useEffect(() => {
-    if (!playback.isPlaying) return;
-
-    const visibleTracks = tracks
-      .filter((track) => track.visible)
-      .sort((a, b) => a.endFrame - b.endFrame);
-    const lastTrack = visibleTracks[visibleTracks.length - 1];
-
-    if (lastTrack && timeline.currentFrame >= lastTrack.endFrame) {
-      playback.isPlaying = false;
+    if (!playback.isPlaying || lastVisibleTrackEndFrame < 0) return;
+    if (timeline.currentFrame >= lastVisibleTrackEndFrame) {
+      pause();
       if (videoRef.current && !videoRef.current.paused) {
         videoRef.current.pause();
       }
     }
-  }, [timeline.currentFrame, tracks, playback, videoRef]);
+  }, [
+    timeline.currentFrame,
+    playback.isPlaying,
+    lastVisibleTrackEndFrame,
+    pause,
+  ]);
 
   // Resize observer
   useEffect(() => {

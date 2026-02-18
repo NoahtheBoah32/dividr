@@ -13,7 +13,13 @@ interface VideoEditorProps {
 }
 
 const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
-  const { importMediaFromFiles, timeline, isSaving } = useVideoEditorStore();
+  const importMediaFromFiles = useVideoEditorStore(
+    (state) => state.importMediaFromFiles,
+  );
+  const isSaving = useVideoEditorStore((state) => state.isSaving);
+  const hasSelectedTracks = useVideoEditorStore(
+    (state) => state.timeline.selectedTrackIds.length > 0,
+  );
   const {
     blocker,
     isExitDialogOpen,
@@ -54,9 +60,6 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
   }, []);
-
-  // Check if any tracks are selected
-  const hasSelectedTracks = timeline.selectedTrackIds.length > 0;
 
   return (
     <>

@@ -427,6 +427,32 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
     allTracks,
   ]);
 
+  const activeAudioTracksForMixer = useMemo(
+    () =>
+      allTracks.filter(
+        (track) =>
+          track.type === 'audio' &&
+          track.visible &&
+          currentFrame >= track.startFrame &&
+          currentFrame < track.endFrame,
+      ),
+    [allTracks, currentFrame],
+  );
+
+  const mixerAudioTracks = useMemo(() => {
+    if (USE_FRAME_DRIVEN_PLAYBACK) {
+      return activeAudioTracksForMixer;
+    }
+    return (
+      activeIndependentAudioTracks ||
+      (independentAudioTrack ? [independentAudioTrack] : [])
+    );
+  }, [
+    activeAudioTracksForMixer,
+    activeIndependentAudioTracks,
+    independentAudioTrack,
+  ]);
+
   const shouldVideoHandleAudio = useCallback(
     (trackIndex: number): boolean => {
       return trackIndex === videoIndexWithAudio;
@@ -850,12 +876,9 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
         ))
       )}
 
-      {(activeIndependentAudioTracks?.length || independentAudioTrack) && (
+      {mixerAudioTracks.length > 0 && (
         <MultiAudioPlayer
-          audioTracks={
-            activeIndependentAudioTracks ||
-            (independentAudioTrack ? [independentAudioTrack] : [])
-          }
+          audioTracks={mixerAudioTracks}
           currentFrame={currentFrame}
           fps={fps}
           isPlaying={isPlaying}
