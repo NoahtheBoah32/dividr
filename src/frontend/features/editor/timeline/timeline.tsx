@@ -19,6 +19,7 @@ import {
   VideoTrack,
 } from '../stores/videoEditor/index';
 import { getDisplayFps } from '../stores/videoEditor/types/timeline.types';
+import { canSplitClip } from '../stores/videoEditor/utils/splitUtils';
 import { DragGhost } from './dragGhost';
 import { DropZoneIndicator } from './dropZoneIndicator';
 import { useAutoScroll } from './hooks/useAutoScroll';
@@ -1522,8 +1523,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           (track) =>
             track.type === hoveredRow.type &&
             (track.trackRowIndex ?? 0) === hoveredRow.rowIndex &&
-            targetFrame > track.startFrame &&
-            targetFrame < track.endFrame,
+            canSplitClip(track, targetFrame),
         );
 
         if (!trackAtFrame) {
@@ -1550,11 +1550,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           const linkedTrack = tracks.find(
             (t) => t.id === trackAtFrame.linkedTrackId,
           );
-          if (
-            linkedTrack &&
-            targetFrame > linkedTrack.startFrame &&
-            targetFrame < linkedTrack.endFrame
-          ) {
+          if (linkedTrack && canSplitClip(linkedTrack, targetFrame)) {
             // Add indicator for the linked track
             indicators.push({
               rowId: getTrackRowId(linkedTrack),
@@ -1998,8 +1994,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               (track) =>
                 track.type === hoveredRow.type &&
                 (track.trackRowIndex ?? 0) === hoveredRow.rowIndex &&
-                frame > track.startFrame &&
-                frame < track.endFrame,
+                canSplitClip(track, frame),
             );
 
             if (trackToSplit) {
@@ -2156,8 +2151,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           (track) =>
             track.type === parsed.type &&
             (track.trackRowIndex ?? 0) === parsed.rowIndex &&
-            frame > track.startFrame &&
-            frame < track.endFrame,
+            canSplitClip(track, frame),
         );
 
         if (!trackToSplit) return;

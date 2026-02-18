@@ -8,6 +8,7 @@ import {
 } from '@/frontend/components/ui/context-menu';
 import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
 import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
+import { canSplitClip } from '@/frontend/features/editor/stores/videoEditor/utils/splitUtils';
 import {
   Copy,
   Eye,
@@ -49,7 +50,7 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
       return {
         removeTrack: state.removeTrack,
         duplicateTrack: state.duplicateTrack,
-        splitTrack: state.splitTrack,
+        splitAtPosition: state.splitAtPosition,
         toggleTrackVisibility: state.toggleTrackVisibility,
         toggleTrackMute: state.toggleTrackMute,
         setSelectedTracks: state.setSelectedTracks,
@@ -60,11 +61,8 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
     const hasMultipleSelected = selectedCount > 1;
 
     const canSplit = useMemo(
-      () =>
-        currentFrame > track.startFrame &&
-        currentFrame < track.endFrame &&
-        !track.locked,
-      [currentFrame, track.startFrame, track.endFrame, track.locked],
+      () => canSplitClip(track, currentFrame),
+      [track, currentFrame],
     );
 
     // Only audio tracks get mute option
@@ -113,7 +111,7 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
         e.preventDefault();
         e.stopPropagation();
         if (canSplit) {
-          storeActions.splitTrack(track.id, currentFrame);
+          storeActions.splitAtPosition(currentFrame, track.id);
         }
       },
       [track.id, currentFrame, canSplit, storeActions],
@@ -166,10 +164,7 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
             </ContextMenuShortcut>
           </ContextMenuItem>
 
-          <ContextMenuItem
-            onClick={handleSplitTrack}
-            disabled={!canSplit || track.locked}
-          >
+          <ContextMenuItem onClick={handleSplitTrack} disabled={!canSplit}>
             <Scissors className="mr-2" />
             Split at Playhead
             <ContextMenuShortcut>

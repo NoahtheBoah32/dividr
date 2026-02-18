@@ -18,6 +18,7 @@ import {
 import { VideoTrack } from '../types';
 import { detectAspectRatio } from '../utils/aspectRatioHelpers';
 import { SUBTITLE_EXTENSIONS } from '../utils/constants';
+import { canSplitClip } from '../utils/splitUtils';
 import { processSubtitleFile } from '../utils/subtitleParser';
 import {
   findLastEndFrameForType,
@@ -1858,7 +1859,7 @@ export const createTracksSlice: StateCreator<
   splitTrack: (trackId, frame) => {
     const state = get() as any;
     const track = state.tracks.find((t: VideoTrack) => t.id === trackId);
-    if (!track || frame <= track.startFrame || frame >= track.endFrame) return;
+    if (!track || !canSplitClip(track, frame)) return;
 
     const splitTimeInSeconds = (frame - track.startFrame) / state.timeline.fps;
     const originalSourceStartTime = track.sourceStartTime || 0;
@@ -1948,9 +1949,6 @@ export const createTracksSlice: StateCreator<
   splitAtPlayhead: () => {
     const state = get() as any;
 
-    // Record action for undo/redo BEFORE checking tracks
-    state.recordAction?.('Split at Playhead');
-
     const currentFrame = state.timeline.currentFrame;
     const selectedTrackIds = state.timeline.selectedTrackIds;
 
@@ -1960,8 +1958,7 @@ export const createTracksSlice: StateCreator<
       const selectedTracks = state.tracks.filter(
         (track: VideoTrack) =>
           selectedTrackIds.includes(track.id) &&
-          currentFrame > track.startFrame &&
-          currentFrame < track.endFrame,
+          canSplitClip(track, currentFrame),
       );
 
       const processedTrackIds = new Set<string>();
@@ -1974,7 +1971,11 @@ export const createTracksSlice: StateCreator<
             (t: VideoTrack) => t.id === track.linkedTrackId,
           );
 
-          if (linkedTrack && selectedTrackIds.includes(linkedTrack.id)) {
+          if (
+            linkedTrack &&
+            selectedTrackIds.includes(linkedTrack.id) &&
+            canSplitClip(linkedTrack, currentFrame)
+          ) {
             tracksToSplit.push(track, linkedTrack);
             processedTrackIds.add(track.id);
             processedTrackIds.add(linkedTrack.id);
@@ -1988,9 +1989,8 @@ export const createTracksSlice: StateCreator<
         }
       });
     } else {
-      const intersectingTracks = state.tracks.filter(
-        (track: VideoTrack) =>
-          currentFrame > track.startFrame && currentFrame < track.endFrame,
+      const intersectingTracks = state.tracks.filter((track: VideoTrack) =>
+        canSplitClip(track, currentFrame),
       );
 
       const processedTrackIds = new Set<string>();
@@ -2003,11 +2003,7 @@ export const createTracksSlice: StateCreator<
             (t: VideoTrack) => t.id === track.linkedTrackId,
           );
 
-          if (
-            linkedTrack &&
-            currentFrame > linkedTrack.startFrame &&
-            currentFrame < linkedTrack.endFrame
-          ) {
+          if (linkedTrack && canSplitClip(linkedTrack, currentFrame)) {
             tracksToSplit.push(track, linkedTrack);
             processedTrackIds.add(track.id);
             processedTrackIds.add(linkedTrack.id);
@@ -2020,6 +2016,8 @@ export const createTracksSlice: StateCreator<
     }
 
     if (tracksToSplit.length === 0) return false;
+
+    state.recordAction?.('Split at Playhead');
 
     const processedIds = new Set<string>();
 
@@ -2035,39 +2033,27 @@ export const createTracksSlice: StateCreator<
   splitAtPosition: (frame, trackId) => {
     const state = get() as any;
 
-    // Record action for undo/redo BEFORE checking tracks
-    state.recordAction?.('Split at Position');
-
     let tracksToSplit: VideoTrack[] = [];
 
     if (trackId) {
       const targetTrack = state.tracks.find(
         (track: VideoTrack) => track.id === trackId,
       );
-      if (
-        targetTrack &&
-        frame > targetTrack.startFrame &&
-        frame < targetTrack.endFrame
-      ) {
+      if (targetTrack && canSplitClip(targetTrack, frame)) {
         tracksToSplit = [targetTrack];
 
         if (targetTrack.isLinked && targetTrack.linkedTrackId) {
           const linkedTrack = state.tracks.find(
             (t: VideoTrack) => t.id === targetTrack.linkedTrackId,
           );
-          if (
-            linkedTrack &&
-            frame > linkedTrack.startFrame &&
-            frame < linkedTrack.endFrame
-          ) {
+          if (canSplitClip(linkedTrack, frame)) {
             tracksToSplit.push(linkedTrack);
           }
         }
       }
     } else {
-      const intersectingTracks = state.tracks.filter(
-        (track: VideoTrack) =>
-          frame > track.startFrame && frame < track.endFrame,
+      const intersectingTracks = state.tracks.filter((track: VideoTrack) =>
+        canSplitClip(track, frame),
       );
 
       const processedTrackIds = new Set<string>();
@@ -2079,11 +2065,7 @@ export const createTracksSlice: StateCreator<
           const linkedTrack = state.tracks.find(
             (t: VideoTrack) => t.id === track.linkedTrackId,
           );
-          if (
-            linkedTrack &&
-            frame > linkedTrack.startFrame &&
-            frame < linkedTrack.endFrame
-          ) {
+          if (canSplitClip(linkedTrack, frame)) {
             tracksToSplit.push(track, linkedTrack);
             processedTrackIds.add(track.id);
             processedTrackIds.add(linkedTrack.id);
@@ -2099,6 +2081,8 @@ export const createTracksSlice: StateCreator<
     }
 
     if (tracksToSplit.length === 0) return false;
+
+    state.recordAction?.('Split at Position');
 
     const processedIds = new Set<string>();
 
