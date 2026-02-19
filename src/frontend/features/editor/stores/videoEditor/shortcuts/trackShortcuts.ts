@@ -246,7 +246,16 @@ export const createTrackShortcuts = (getStore: () => any): ShortcutConfig[] => [
 
       if (!isEditingText) {
         e?.preventDefault();
-        getStore().removeSelectedTracks();
+        const freshState = getStore();
+        if (freshState.timeline?.selectedMarkerId) {
+          freshState.removeSelectedMarker?.();
+          return;
+        }
+
+        const selectedTracks = freshState.timeline?.selectedTrackIds || [];
+        if (selectedTracks.length > 0) {
+          freshState.removeSelectedTracks();
+        }
       }
     },
     options: {

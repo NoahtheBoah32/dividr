@@ -17,6 +17,12 @@ export interface TimelineSlice {
   setInPoint: (frame?: number) => void;
   setOutPoint: (frame?: number) => void;
   setSelectedTracks: (trackIds: string[]) => void;
+  addMarkerAtPlayhead: () => void;
+  addMarkerAtFrame: (frame: number) => void;
+  setSelectedMarker: (markerId: string | null) => void;
+  removeMarker: (markerId: string) => void;
+  removeSelectedMarker: () => void;
+  clearMarkers: () => void;
   toggleSnap: () => void;
   toggleSplitMode: () => void;
   setSplitMode: (active: boolean) => void;
@@ -71,6 +77,8 @@ export const createTimelineSlice: StateCreator<
     zoom: 1,
     scrollX: 0,
     selectedTrackIds: [],
+    markers: [],
+    selectedMarkerId: null,
     playheadVisible: true,
     snapEnabled: true,
     isSplitModeActive: false,
@@ -161,8 +169,131 @@ export const createTimelineSlice: StateCreator<
 
   setSelectedTracks: (trackIds) =>
     set((state) => ({
-      timeline: { ...state.timeline, selectedTrackIds: trackIds },
+      timeline: {
+        ...state.timeline,
+        selectedTrackIds: trackIds,
+        // Track selection should own the active selection state.
+        selectedMarkerId: null,
+      },
     })),
+
+  addMarkerAtPlayhead: () => {
+    const state = get() as any;
+    state.addMarkerAtFrame(state.timeline?.currentFrame ?? 0);
+  },
+
+  addMarkerAtFrame: (frame: number) => {
+    if (!Number.isFinite(frame)) return;
+    const normalizedFrame = Math.max(0, Math.floor(frame));
+    const state = get() as any;
+    if (state.render?.isRendering) return;
+
+    const nextMarker = {
+      id:
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      frame: normalizedFrame,
+    };
+
+    state.recordAction?.('Add Marker', {
+      tracks: false,
+      mediaLibrary: false,
+      timeline: true,
+      preview: false,
+      textStyle: false,
+    });
+
+    set((current: any) => ({
+      timeline: {
+        ...current.timeline,
+        markers: [...(current.timeline.markers || []), nextMarker].sort(
+          (a: { frame: number }, b: { frame: number }) => a.frame - b.frame,
+        ),
+        selectedMarkerId: nextMarker.id,
+      },
+    }));
+
+    state.markUnsavedChanges?.();
+  },
+
+  setSelectedMarker: (markerId: string | null) =>
+    set((state) => {
+      if (state.timeline.selectedMarkerId === markerId) {
+        return state;
+      }
+      return {
+        timeline: {
+          ...state.timeline,
+          selectedMarkerId: markerId,
+        },
+      };
+    }),
+
+  removeMarker: (markerId: string) => {
+    const state = get() as any;
+    const currentMarkers = state.timeline?.markers || [];
+    if (!markerId || currentMarkers.length === 0) return;
+
+    const markerExists = currentMarkers.some(
+      (marker: { id: string }) => marker.id === markerId,
+    );
+    if (!markerExists) return;
+
+    state.recordAction?.('Delete Marker', {
+      tracks: false,
+      mediaLibrary: false,
+      timeline: true,
+      preview: false,
+      textStyle: false,
+    });
+
+    set((current: any) => ({
+      timeline: {
+        ...current.timeline,
+        markers: (current.timeline.markers || []).filter(
+          (marker: { id: string }) => marker.id !== markerId,
+        ),
+        selectedMarkerId:
+          current.timeline.selectedMarkerId === markerId
+            ? null
+            : current.timeline.selectedMarkerId,
+      },
+    }));
+
+    state.markUnsavedChanges?.();
+  },
+
+  removeSelectedMarker: () => {
+    const state = get() as any;
+    const selectedMarkerId = state.timeline?.selectedMarkerId;
+    if (!selectedMarkerId) return;
+    state.removeMarker(selectedMarkerId);
+  },
+
+  clearMarkers: () => {
+    const state = get() as any;
+    const currentMarkers = state.timeline?.markers || [];
+    if (!currentMarkers.length) return;
+
+    state.recordAction?.('Delete All Markers', {
+      tracks: false,
+      mediaLibrary: false,
+      timeline: true,
+      preview: false,
+      textStyle: false,
+    });
+
+    set((current: any) => ({
+      timeline: {
+        ...current.timeline,
+        markers: [],
+        selectedMarkerId: null,
+      },
+    }));
+
+    state.markUnsavedChanges?.();
+  },
 
   toggleSnap: () =>
     set((state) => ({

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { StateCreator } from 'zustand';
-import { MediaLibraryItem, VideoTrack } from '../types';
+import { MediaLibraryItem, TimelineMarker, VideoTrack } from '../types';
 
 /**
  * UndoableState - Represents the state that can be undone/redone
@@ -16,6 +16,8 @@ export interface UndoableState {
     inPoint?: number;
     outPoint?: number;
     selectedTrackIds: string[];
+    markers: TimelineMarker[];
+    selectedMarkerId: string | null;
   };
   preview: {
     canvasWidth: number;
@@ -392,6 +394,8 @@ export const createUndoRedoSlice: StateCreator<
         inPoint: state.timeline.inPoint,
         outPoint: state.timeline.outPoint,
         selectedTrackIds: [...(state.timeline.selectedTrackIds || [])],
+        markers: deepClone(state.timeline.markers || []),
+        selectedMarkerId: state.timeline.selectedMarkerId || null,
       };
     }
 
@@ -454,6 +458,8 @@ export const createUndoRedoSlice: StateCreator<
           inPoint: undoableState.timeline.inPoint,
           outPoint: undoableState.timeline.outPoint,
           selectedTrackIds: [...undoableState.timeline.selectedTrackIds],
+          markers: deepClone(undoableState.timeline.markers || []),
+          selectedMarkerId: undoableState.timeline.selectedMarkerId || null,
         };
       }
 

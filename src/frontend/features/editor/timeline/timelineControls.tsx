@@ -24,6 +24,8 @@ import {
   CopyPlus,
   Link,
   Magnet,
+  MapPin,
+  MapPinMinus,
   Maximize,
   Minimize,
   MousePointer2,
@@ -224,6 +226,56 @@ const DeleteButton: React.FC = React.memo(() => {
         </Button>
       </TooltipTrigger>
       <TooltipContent>{tooltipText}</TooltipContent>
+    </Tooltip>
+  );
+});
+
+// Marker control (single dynamic add/remove action at playhead)
+const MarkerControls: React.FC = React.memo(() => {
+  const addMarkerAtPlayhead = useVideoEditorStore(
+    (state) => state.addMarkerAtPlayhead,
+  );
+  const removeMarker = useVideoEditorStore((state) => state.removeMarker);
+  const currentFrame = useVideoEditorStore(
+    (state) => state.timeline.currentFrame,
+  );
+  const markers = useVideoEditorStore((state) => state.timeline.markers);
+  const markerAtPlayhead = useMemo(
+    () => markers.find((marker) => marker.frame === currentFrame) ?? null,
+    [markers, currentFrame],
+  );
+  const addMarkerKeys = useShortcutKeys('timeline-add-marker', ['shift+m']);
+  const addMarkerShortcutText = formatShortcutCombos(addMarkerKeys);
+  const isOnMarker = !!markerAtPlayhead;
+
+  const handleMarkerAction = useCallback(() => {
+    if (markerAtPlayhead) {
+      removeMarker(markerAtPlayhead.id);
+      return;
+    }
+    addMarkerAtPlayhead();
+  }, [addMarkerAtPlayhead, markerAtPlayhead, removeMarker]);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="native"
+          onClick={handleMarkerAction}
+          className={isOnMarker ? 'text-primary' : ''}
+          aria-label={isOnMarker ? 'Remove Marker' : 'Add Marker'}
+        >
+          {isOnMarker ? (
+            <MapPinMinus className="size-4" />
+          ) : (
+            <MapPin className="size-4" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {isOnMarker ? 'Remove Marker' : 'Add Marker'}
+        {addMarkerShortcutText ? ` (${addMarkerShortcutText})` : ''}
+      </TooltipContent>
     </Tooltip>
   );
 });
@@ -999,6 +1051,7 @@ export const TimelineControls: React.FC = React.memo(
                   : 'Split at Playhead'}
               </TooltipContent>
             </Tooltip>
+            <MarkerControls />
             <DuplicateButton />
             <DeleteButton />
             <Tooltip>
@@ -1096,5 +1149,6 @@ export const TimelineControls: React.FC = React.memo(
 );
 
 ModeSelector.displayName = 'ModeSelector';
+MarkerControls.displayName = 'MarkerControls';
 ZoomSlider.displayName = 'ZoomSlider';
 FullscreenButton.displayName = 'FullscreenButton';

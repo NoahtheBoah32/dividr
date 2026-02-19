@@ -31,6 +31,8 @@ export const createUtilitySlice: StateCreator<
         currentFrame: 0,
         ...DEFAULT_TIMELINE_CONFIG,
         selectedTrackIds: [],
+        markers: [],
+        selectedMarkerId: null,
         playheadVisible: true,
         snapEnabled: true,
         isSplitModeActive: false,

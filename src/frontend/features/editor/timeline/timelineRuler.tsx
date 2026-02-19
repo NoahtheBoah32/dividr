@@ -1,7 +1,18 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/frontend/components/ui/context-menu';
 import { VideoTrack } from '@/frontend/features/editor/stores/videoEditor/index';
-import { getDisplayFps } from '@/frontend/features/editor/stores/videoEditor/types/timeline.types';
+import {
+  getDisplayFps,
+  TimelineMarker,
+} from '@/frontend/features/editor/stores/videoEditor/types/timeline.types';
 import { cn } from '@/frontend/utils/utils';
+import { MapPin } from 'lucide-react';
 import React, { useCallback, useMemo } from 'react';
 import { TIMELINE_HEADER_HEIGHT_CLASSES } from './utils/timelineConstants';
 
@@ -13,6 +24,11 @@ interface TimelineRulerProps {
   tracks: VideoTrack[];
   inPoint?: number;
   outPoint?: number;
+  markers?: TimelineMarker[];
+  selectedMarkerId?: string | null;
+  onMarkerSelect?: (markerId: string | null) => void;
+  onMarkerDelete?: (markerId: string) => void;
+  onDeleteAllMarkers?: () => void;
   onClick?: (e: React.MouseEvent) => void;
   className?: string;
   timelineScrollElement?: HTMLElement | null;
@@ -28,6 +44,11 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
     tracks,
     inPoint,
     outPoint,
+    markers = [],
+    selectedMarkerId = null,
+    onMarkerSelect,
+    onMarkerDelete,
+    onDeleteAllMarkers,
     onClick,
     className,
     timelineScrollElement,
@@ -228,6 +249,32 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
         );
     }, [tracks, frameWidth, scrollX, timelineScrollElement]);
 
+    const visibleMarkers = useMemo(() => {
+      if (!markers.length) return [];
+
+      const currentScrollX = timelineScrollElement?.scrollLeft ?? scrollX;
+      const viewportWidth =
+        (timelineScrollElement?.clientWidth ?? window.innerWidth) + 100;
+      const viewportStartFrame = Math.max(
+        0,
+        Math.floor((currentScrollX - 50) / frameWidth),
+      );
+      const viewportEndFrame = Math.ceil(
+        (currentScrollX + viewportWidth) / frameWidth,
+      );
+
+      return markers.filter(
+        (marker) =>
+          marker.frame >= viewportStartFrame &&
+          marker.frame <= viewportEndFrame,
+      );
+    }, [markers, timelineScrollElement, scrollX, frameWidth]);
+
+    const markerTimeFormatter = useCallback(
+      (frame: number) => formatTime(frame, frameWidth * displayFps),
+      [formatTime, frameWidth, displayFps],
+    );
+
     return (
       <div
         className={cn(
@@ -387,6 +434,87 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
           />
         )}
 
+        {visibleMarkers.map((marker) => {
+          const markerX =
+            marker.frame * frameWidth -
+            (timelineScrollElement?.scrollLeft ?? scrollX);
+          const isSelected = marker.id === selectedMarkerId;
+
+          return (
+            <div
+              key={marker.id}
+              className="absolute top-0 z-20 pointer-events-auto"
+              style={{
+                left: markerX,
+                transform: 'translateX(-50%)',
+              }}
+            >
+              <ContextMenu>
+                <ContextMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      'relative h-4 w-4 flex items-center justify-center rounded-sm outline-none',
+                      isSelected ? 'text-primary' : 'text-primary/75',
+                    )}
+                    title={markerTimeFormatter(marker.frame)}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      if (e.button === 0) {
+                        onMarkerSelect?.(marker.id);
+                      }
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onMarkerSelect?.(marker.id);
+                    }}
+                    onContextMenu={(e) => {
+                      e.stopPropagation();
+                      onMarkerSelect?.(marker.id);
+                    }}
+                    aria-label={`Marker at ${markerTimeFormatter(marker.frame)}`}
+                  >
+                    <MapPin
+                      size={14}
+                      strokeWidth={1.8}
+                      className={cn(
+                        'transition-transform fill-secondary text-secondary duration-150 ease-out origin-center',
+                        isSelected ? 'scale-110' : 'hover:scale-110',
+                      )}
+                    />
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent
+                  className="w-44"
+                  onCloseAutoFocus={(e) => e.preventDefault()}
+                >
+                  <ContextMenuItem
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onMarkerDelete?.(marker.id);
+                    }}
+                  >
+                    Delete Marker
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onDeleteAllMarkers?.();
+                    }}
+                    disabled={markers.length === 0}
+                  >
+                    Delete All Markers
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            </div>
+          );
+        })}
+
         {/* Note: Playhead is handled by TimelinePlayhead component */}
       </div>
     );
@@ -399,6 +527,8 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
     // fps prop is no longer used (getDisplayFps is used instead), so skip this check
     if (prevProps.inPoint !== nextProps.inPoint) return false;
     if (prevProps.outPoint !== nextProps.outPoint) return false;
+    if (prevProps.selectedMarkerId !== nextProps.selectedMarkerId) return false;
+    if (!areMarkersEqual(prevProps.markers, nextProps.markers)) return false;
 
     // Check tracks - only properties that affect ruler display
     if (prevProps.tracks.length !== nextProps.tracks.length) return false;
@@ -416,3 +546,21 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
     return !tracksChanged;
   },
 );
+
+const areMarkersEqual = (
+  prevMarkers?: TimelineMarker[],
+  nextMarkers?: TimelineMarker[],
+) => {
+  if (prevMarkers === nextMarkers) return true;
+
+  const prev = prevMarkers || [];
+  const next = nextMarkers || [];
+
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i += 1) {
+    if (prev[i].id !== next[i].id || prev[i].frame !== next[i].frame) {
+      return false;
+    }
+  }
+  return true;
+};

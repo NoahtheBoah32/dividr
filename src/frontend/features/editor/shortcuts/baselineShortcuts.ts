@@ -196,6 +196,13 @@ export const baselineShortcuts: BaselineShortcut[] = [
     scope: 'timeline',
     keys: ['escape'],
   },
+  {
+    id: 'timeline-add-marker',
+    action: 'Add Marker at Playhead',
+    category: 'Timeline Tools',
+    scope: 'timeline',
+    keys: ['shift+m'],
+  },
 
   // Timeline Selection
   {

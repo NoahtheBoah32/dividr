@@ -181,6 +181,14 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const removeSelectedTracks = useVideoEditorStore(
       (state) => state.removeSelectedTracks,
     );
+    const setSelectedMarker = useVideoEditorStore(
+      (state) => state.setSelectedMarker,
+    );
+    const removeMarker = useVideoEditorStore((state) => state.removeMarker);
+    const removeSelectedMarker = useVideoEditorStore(
+      (state) => state.removeSelectedMarker,
+    );
+    const clearMarkers = useVideoEditorStore((state) => state.clearMarkers);
     const isSplitModeActive = useVideoEditorStore(
       (state) => state.timeline.isSplitModeActive,
     );
@@ -687,6 +695,10 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     // This ensures delete works even when react-hotkeys-hook might not catch it
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.defaultPrevented) {
+          return;
+        }
+
         // Check if user is editing text in an input, textarea, or contenteditable element
         const target = e.target as HTMLElement;
         const isEditingText =
@@ -697,14 +709,23 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
         // Only trigger delete if not editing text
         if (!isEditingText && (e.key === 'Delete' || e.key === 'Backspace')) {
-          e.preventDefault();
-          removeSelectedTracks();
+          const state = useVideoEditorStore.getState();
+          if (state.timeline.selectedMarkerId) {
+            e.preventDefault();
+            removeSelectedMarker();
+            return;
+          }
+
+          if (state.timeline.selectedTrackIds.length > 0) {
+            e.preventDefault();
+            removeSelectedTracks();
+          }
         }
       };
 
       document.addEventListener('keydown', handleKeyDown);
       return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [timeline.selectedTrackIds, removeSelectedTracks]);
+    }, [removeSelectedTracks, removeSelectedMarker]);
 
     // Cleanup timeouts and intervals on unmount
     useEffect(() => {
@@ -1973,6 +1994,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           return;
         }
 
+        // Clear marker selection when interacting with non-marker timeline areas.
+        if (e.button === 0 && timeline.selectedMarkerId) {
+          setSelectedMarker(null);
+        }
+
         // Split mode: cut at playhead time when near playhead, otherwise cut at mouse frame
         if (isSplitModeActive) {
           if (e.button !== 0) return;
@@ -2079,10 +2105,12 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         interactionRowBounds,
         splitAtPosition,
         timeline.currentFrame,
+        timeline.selectedMarkerId,
         visibleTrackRows,
         dynamicRowsWithPlaceholders,
         previewInteractionMode,
         setPreviewInteractionMode,
+        setSelectedMarker,
       ],
     );
 
@@ -2230,6 +2258,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   tracks={tracks}
                   inPoint={timeline.inPoint}
                   outPoint={timeline.outPoint}
+                  markers={timeline.markers}
+                  selectedMarkerId={timeline.selectedMarkerId}
+                  onMarkerSelect={setSelectedMarker}
+                  onMarkerDelete={removeMarker}
+                  onDeleteAllMarkers={clearMarkers}
                   onClick={undefined}
                   timelineScrollElement={tracksRef.current}
                 />

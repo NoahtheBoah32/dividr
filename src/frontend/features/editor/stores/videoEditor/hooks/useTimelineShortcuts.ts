@@ -41,6 +41,10 @@ export const useTimelineShortcutsV2 = () => {
     'timeline-select-all',
     timelineShortcuts[8].keys,
   );
+  const addMarkerKeys = useShortcutKeys(
+    'timeline-add-marker',
+    timelineShortcuts[9].keys,
+  );
 
   // Zoom in
   useHotkeys(
@@ -82,6 +86,14 @@ export const useTimelineShortcutsV2 = () => {
     selectAllKeys,
     timelineShortcuts[8].handler,
     { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
+  );
+
+  // Add marker at playhead
+  useHotkeys(
+    addMarkerKeys,
+    timelineShortcuts[9].handler,
+    { ...timelineShortcuts[9].options, enabled: !isCapturing },
     [isCapturing],
   );
 

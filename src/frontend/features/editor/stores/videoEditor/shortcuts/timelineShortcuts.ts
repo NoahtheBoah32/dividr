@@ -124,4 +124,21 @@ export const createTimelineShortcuts = (
       enableOnFormTags: false,
     },
   },
+  {
+    id: 'timeline-add-marker',
+    keys: ['shift+m'],
+    description: 'Add Marker at Playhead',
+    category: 'Timeline Tools',
+    scope: 'timeline',
+    handler: (e) => {
+      e?.preventDefault();
+      const freshState = getStore();
+      if (freshState.render?.isRendering) return;
+      freshState.addMarkerAtPlayhead?.();
+    },
+    options: {
+      preventDefault: true,
+      enableOnFormTags: false,
+    },
+  },
 ];

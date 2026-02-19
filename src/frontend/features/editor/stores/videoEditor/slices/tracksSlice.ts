@@ -463,6 +463,7 @@ export const createTracksSlice: StateCreator<
         timeline: {
           ...state.timeline,
           selectedTrackIds: [id, audioId],
+          selectedMarkerId: null,
         },
       }));
 
@@ -589,6 +590,7 @@ export const createTracksSlice: StateCreator<
         timeline: {
           ...state.timeline,
           selectedTrackIds: [id],
+          selectedMarkerId: null,
         },
       }));
 
@@ -764,11 +766,12 @@ export const createTracksSlice: StateCreator<
       }
 
       // Single state update for all tracks
-      set((state) => ({
+      set((state: any) => ({
         tracks: [...state.tracks, ...newTracks],
         timeline: {
           ...state.timeline,
           selectedTrackIds: lastInsertedSelection,
+          selectedMarkerId: null,
         },
       }));
 
@@ -997,6 +1000,7 @@ export const createTracksSlice: StateCreator<
         selectedTrackIds: state.timeline.selectedTrackIds.filter(
           (id: string) => !tracksToRemove.has(id),
         ),
+        selectedMarkerId: null,
       },
     }));
 
@@ -1048,6 +1052,7 @@ export const createTracksSlice: StateCreator<
       timeline: {
         ...state.timeline,
         selectedTrackIds: [],
+        selectedMarkerId: null,
       },
     }));
 
