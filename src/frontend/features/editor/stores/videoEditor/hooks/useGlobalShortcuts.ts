@@ -79,6 +79,14 @@ export const useGlobalShortcuts = () => {
     'navigate-prev-edit-point',
     globalShortcuts[13].keys,
   );
+  const nextEditPointHotkeys = useMemo(
+    () => Array.from(new Set([...nextEditPointKeys, 'shift+down'])),
+    [nextEditPointKeys],
+  );
+  const prevEditPointHotkeys = useMemo(
+    () => Array.from(new Set([...prevEditPointKeys, 'shift+up'])),
+    [prevEditPointKeys],
+  );
   const fullscreenKeys = useShortcutKeys(
     'preview-toggle-fullscreen',
     globalShortcuts[14].keys,
@@ -155,18 +163,18 @@ export const useGlobalShortcuts = () => {
 
   // Navigate to next edit point (Down)
   useHotkeys(
-    nextEditPointKeys,
+    nextEditPointHotkeys,
     globalShortcuts[12].handler,
     { ...globalShortcuts[12].options, enabled: !isCapturing },
-    [effectiveEndFrame, isCapturing],
+    [effectiveEndFrame, isCapturing, nextEditPointHotkeys],
   );
 
   // Navigate to previous edit point (Up)
   useHotkeys(
-    prevEditPointKeys,
+    prevEditPointHotkeys,
     globalShortcuts[13].handler,
     { ...globalShortcuts[13].options, enabled: !isCapturing },
-    [effectiveEndFrame, isCapturing],
+    [effectiveEndFrame, isCapturing, prevEditPointHotkeys],
   );
 
   // Toggle Fullscreen (F)

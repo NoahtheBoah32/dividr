@@ -134,6 +134,7 @@ export const createDefaultProject = (
         panX: 0,
         panY: 0,
         interactionMode: 'select',
+        activeInteractionArea: 'other',
         showGrid: false,
         showSafeZones: false,
         backgroundColor: '#000000',

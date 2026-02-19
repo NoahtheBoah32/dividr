@@ -20,6 +20,9 @@ const VideoEditorLayoutComponent = () => {
   const setPreviewInteractionMode = useVideoEditorStore(
     (state) => state.setPreviewInteractionMode,
   );
+  const setActiveInteractionArea = useVideoEditorStore(
+    (state) => state.setActiveInteractionArea,
+  );
 
   useEffect(() => {
     startupManager.logStage('editor-init');
@@ -56,10 +59,31 @@ const VideoEditorLayoutComponent = () => {
     [previewInteractionMode, setPreviewInteractionMode],
   );
 
+  const handleInteractionContextCapture = useCallback(
+    (target: EventTarget | null) => {
+      const element = target instanceof HTMLElement ? target : null;
+
+      if (element?.closest('[data-preview-canvas="true"]')) {
+        setActiveInteractionArea('preview');
+        return;
+      }
+
+      if (element?.closest('.timeline-container')) {
+        setActiveInteractionArea('timeline');
+        return;
+      }
+
+      setActiveInteractionArea('other');
+    },
+    [setActiveInteractionArea],
+  );
+
   return (
     <ProjectGuard>
       <div
         className="h-screen flex flex-col text-foreground bg-background p-4"
+        onMouseDownCapture={(e) => handleInteractionContextCapture(e.target)}
+        onFocusCapture={(e) => handleInteractionContextCapture(e.target)}
         onMouseDown={handleLayoutClick}
       >
         <TitleBar className="relative z-10 -mx-4 px-4 -mt-4 py-2" />

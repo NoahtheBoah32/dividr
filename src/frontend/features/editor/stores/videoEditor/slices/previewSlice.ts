@@ -16,6 +16,7 @@ export interface PreviewSlice {
   setPreviewPan: (panX: number, panY: number) => void;
   resetPreviewPan: () => void;
   setPreviewInteractionMode: (mode: 'select' | 'pan' | 'text-edit') => void;
+  setActiveInteractionArea: (area: 'preview' | 'timeline' | 'other') => void;
   toggleGrid: () => void;
   toggleSafeZones: () => void;
   setBackgroundColor: (color: string) => void;
@@ -34,6 +35,7 @@ export const createPreviewSlice: StateCreator<
 > = (set, get) => ({
   preview: {
     ...DEFAULT_PREVIEW_CONFIG,
+    activeInteractionArea: 'other',
     showGrid: false,
     showSafeZones: false,
     isFullscreen: false,
@@ -176,6 +178,14 @@ export const createPreviewSlice: StateCreator<
       preview: {
         ...state.preview,
         interactionMode: mode,
+      },
+    })),
+
+  setActiveInteractionArea: (area) =>
+    set((state: any) => ({
+      preview: {
+        ...state.preview,
+        activeInteractionArea: area,
       },
     })),
 
