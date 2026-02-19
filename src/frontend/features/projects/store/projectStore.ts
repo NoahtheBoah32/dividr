@@ -4,6 +4,7 @@ import { sanitizeFilename } from '@/frontend/utils/filenameSanitizer';
 import {
   createDefaultProject,
   ProjectData,
+  ProjectExportData,
   ProjectSummary,
 } from '@/shared/types/project.types';
 import { create } from 'zustand';
@@ -50,6 +51,36 @@ const writeProjectsCache = (projects: ProjectSummary[]): void => {
   }
 };
 
+const normalizePathForComparison = (filePath?: string): string | null => {
+  if (!filePath) return null;
+  const trimmed = filePath.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\\/g, '/').toLowerCase();
+};
+
+const getFileNameFromPath = (filePath: string): string => {
+  const segments = filePath.split(/[/\\]/).filter(Boolean);
+  return segments[segments.length - 1] || filePath;
+};
+
+const getFileNameWithoutExtension = (filePath: string): string => {
+  const fileName = getFileNameFromPath(filePath).trim();
+  if (!fileName) return 'Untitled Project';
+
+  const lastDotIndex = fileName.lastIndexOf('.');
+  if (lastDotIndex <= 0) return fileName;
+
+  const base = fileName.slice(0, lastDotIndex).trim();
+  return base || 'Untitled Project';
+};
+
+const toProjectExportData = (project: ProjectData): ProjectExportData => ({
+  metadata: project.metadata,
+  videoEditor: project.videoEditor,
+  version: project.version,
+  exportedAt: new Date().toISOString(),
+});
+
 // Current project state
 interface ProjectStore {
   // Current project being edited
@@ -79,7 +110,12 @@ interface ProjectStore {
   loadProjects: () => Promise<void>;
   createNewProject: (title: string, description?: string) => Promise<string>;
   openProject: (id: string) => Promise<void>;
+  openProjectFromPath: (filePath: string) => Promise<string>;
   saveCurrentProject: () => Promise<void>;
+  saveProjectToSourceFile: (
+    projectId: string,
+    projectOverride?: ProjectData,
+  ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   renameProject: (id: string, newTitle: string) => Promise<void>;
   duplicateProject: (id: string, newTitle?: string) => Promise<string>;
@@ -238,6 +274,16 @@ export const useProjectStore = create<ProjectStore>()(
       }
     },
 
+    openProjectFromPath: async (filePath) => {
+      if (!get().isInitialized) {
+        await get().initializeProjects();
+      }
+
+      const projectId = await get().importProjectFromPath(filePath);
+      await get().openProject(projectId);
+      return projectId;
+    },
+
     saveCurrentProject: async () => {
       const state = get();
       if (!state.currentProject) {
@@ -248,12 +294,55 @@ export const useProjectStore = create<ProjectStore>()(
 
       try {
         await projectService.updateProject(state.currentProject);
+        await get().saveProjectToSourceFile(
+          state.currentProject.id,
+          state.currentProject,
+        );
         await get().loadProjects();
 
         // Update last saved timestamp
         set({ lastSavedAt: new Date().toISOString() });
       } finally {
         set({ isSaving: false });
+      }
+    },
+
+    saveProjectToSourceFile: async (projectId, projectOverride) => {
+      const project =
+        projectOverride ?? (await projectService.getProject(projectId));
+      if (!project) {
+        throw new Error('Project not found');
+      }
+
+      const sourceFilePath = project.metadata.sourceFilePath?.trim();
+      if (!sourceFilePath) {
+        return;
+      }
+      if (typeof window === 'undefined' || !window.electronAPI?.writeFile) {
+        return;
+      }
+
+      const sourceFileName = getFileNameFromPath(sourceFilePath);
+      const normalizedProject: ProjectData = {
+        ...project,
+        metadata: {
+          ...project.metadata,
+          sourceFilePath,
+          sourceFileName,
+        },
+      };
+
+      const result = await window.electronAPI.writeFile(
+        sourceFilePath,
+        JSON.stringify(toProjectExportData(normalizedProject), null, 2),
+      );
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to write project file');
+      }
+
+      const state = get();
+      if (state.currentProject?.id === normalizedProject.id) {
+        set({ currentProject: normalizedProject });
       }
     },
 
@@ -402,8 +491,12 @@ export const useProjectStore = create<ProjectStore>()(
       try {
         const text = await file.text();
         const exportData = JSON.parse(text);
+        const projectTitle = getFileNameWithoutExtension(file.name);
 
-        const newProjectId = await projectService.importProject(exportData);
+        const newProjectId = await projectService.importProject(
+          exportData,
+          projectTitle,
+        );
         await get().loadProjects();
 
         return newProjectId;
@@ -418,21 +511,71 @@ export const useProjectStore = create<ProjectStore>()(
       try {
         // Read file content from disk using Electron API
         const text = await window.electronAPI.readFile(filePath);
-        const exportData = JSON.parse(text);
+        const exportData = JSON.parse(text) as ProjectExportData;
+        const sourceFilePath = filePath.trim();
+        const sourceFileName = getFileNameFromPath(sourceFilePath);
+        const displayTitle = getFileNameWithoutExtension(sourceFilePath);
 
-        // Check if a project with the same title already exists
+        // Reuse existing imported project for the same absolute source path.
         const existingProjects = await projectService.getAllProjects();
-        const existingProject = existingProjects.find(
-          (p) => p.title === exportData.metadata?.title,
+        const existingProjectByPath = existingProjects.find(
+          (p) =>
+            normalizePathForComparison(p.sourceFilePath) ===
+            normalizePathForComparison(sourceFilePath),
         );
+        const existingProject =
+          existingProjectByPath ||
+          existingProjects.find(
+            (p) => !p.sourceFilePath && p.title === displayTitle,
+          );
 
         if (existingProject) {
-          // Project already exists, just return its ID (don't import again)
+          const hydratedProject = await projectService.getProject(
+            existingProject.id,
+          );
+
+          if (hydratedProject) {
+            const updatedProject: ProjectData = {
+              ...hydratedProject,
+              videoEditor:
+                exportData.videoEditor || hydratedProject.videoEditor,
+              version: exportData.version || hydratedProject.version,
+              metadata: {
+                ...hydratedProject.metadata,
+                ...(exportData.metadata || {}),
+                title: displayTitle,
+                updatedAt: new Date().toISOString(),
+                sourceFilePath,
+                sourceFileName,
+              },
+            };
+
+            await projectService.updateProject(updatedProject);
+          }
+
+          await get().loadProjects();
           return existingProject.id;
         }
 
         // Import the project (creates a new entry in IndexedDB)
-        const newProjectId = await projectService.importProject(exportData);
+        const newProjectId = await projectService.importProject(
+          exportData,
+          displayTitle,
+        );
+
+        const importedProject = await projectService.getProject(newProjectId);
+        if (importedProject) {
+          await projectService.updateProject({
+            ...importedProject,
+            metadata: {
+              ...importedProject.metadata,
+              title: displayTitle,
+              sourceFilePath,
+              sourceFileName,
+            },
+          });
+        }
+
         await get().loadProjects();
 
         return newProjectId;

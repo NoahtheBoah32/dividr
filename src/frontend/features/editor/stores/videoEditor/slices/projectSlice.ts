@@ -509,6 +509,9 @@ export const createProjectSlice: StateCreator<
 
       // Save to IndexedDB
       await projectService.updateProject(updatedProject);
+      await useProjectStore
+        .getState()
+        .saveProjectToSourceFile(state.currentProjectId, updatedProject);
 
       // Update local state
       set({

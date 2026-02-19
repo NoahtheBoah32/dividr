@@ -3,8 +3,10 @@
  * Connects action functions with React Router navigation and component state
  */
 
+import { hasPendingUnsavedChanges } from '@/frontend/hooks/unsavedChangesState';
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useVideoEditorStore } from '../../index';
 import {
   closeProjectAction,
@@ -27,6 +29,13 @@ export const useProjectShortcutHandlers = (
     title: string;
     message: string;
     onConfirm: () => void;
+    confirmText?: string;
+    cancelText?: string;
+    secondaryAction?: {
+      text: string;
+      onClick: () => void;
+      variant?: 'default' | 'destructive';
+    };
   }) => void,
 ): ProjectShortcutHandlers => {
   const navigate = useNavigate();
@@ -34,17 +43,58 @@ export const useProjectShortcutHandlers = (
     (state) => state.importMediaFromDialog,
   );
 
+  const runProjectSwitchWithUnsavedGuard = useCallback(
+    (actionLabel: string, action: () => Promise<void>) => {
+      const { hasUnsavedChanges, isSaving, saveProjectData } =
+        useVideoEditorStore.getState();
+
+      if (!hasPendingUnsavedChanges(hasUnsavedChanges, isSaving)) {
+        void action();
+        return;
+      }
+
+      showConfirmation({
+        title: 'You have unsaved changes.',
+        message: `Save your current project before you ${actionLabel}?`,
+        confirmText: 'Save & Continue',
+        cancelText: 'Cancel',
+        onConfirm: () => {
+          void (async () => {
+            try {
+              await saveProjectData();
+              await action();
+            } catch (error) {
+              console.error(
+                '[UseProjectShortcutHandlers] Save before switch failed',
+                error,
+              );
+              toast.error('Failed to save project. Please try again.');
+            }
+          })();
+        },
+        secondaryAction: {
+          text: 'Continue Without Saving',
+          variant: 'destructive',
+          onClick: () => {
+            void action();
+          },
+        },
+      });
+    },
+    [showConfirmation],
+  );
+
   const onNewProject = useCallback(() => {
-    newProjectAction(navigate).catch((error) => {
-      console.error('[UseProjectShortcutHandlers] New Project failed', error);
-    });
-  }, [navigate]);
+    runProjectSwitchWithUnsavedGuard('create a new project', () =>
+      newProjectAction(navigate),
+    );
+  }, [navigate, runProjectSwitchWithUnsavedGuard]);
 
   const onOpenProject = useCallback(() => {
-    openProjectAction(navigate).catch((error) => {
-      console.error('[UseProjectShortcutHandlers] Open Project failed', error);
-    });
-  }, [navigate]);
+    runProjectSwitchWithUnsavedGuard('open another project', () =>
+      openProjectAction(navigate),
+    );
+  }, [navigate, runProjectSwitchWithUnsavedGuard]);
 
   const onSaveProject = useCallback(() => {
     saveProjectAction().catch((error) => {

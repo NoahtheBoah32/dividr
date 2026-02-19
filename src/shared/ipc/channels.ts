@@ -8,6 +8,7 @@ export const IPC_CHANNELS = {
   CLEANUP_TEMP_FILES: 'cleanup-temp-files',
   READ_FILE: 'read-file',
   READ_FILE_AS_BUFFER: 'read-file-as-buffer',
+  WRITE_FILE: 'write-file',
   GET_IO_STATUS: 'get-io-status',
   CANCEL_MEDIA_TASKS: 'cancel-media-tasks',
   GET_MEDIA_CACHE_DIR: 'get-media-cache-dir',

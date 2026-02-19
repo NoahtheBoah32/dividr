@@ -172,4 +172,24 @@ export function registerSystemFileIpc(): void {
       }
     },
   );
+
+  // IPC Handler for writing UTF-8 text files
+  ipcMain.handle(
+    IPC_CHANNELS.WRITE_FILE,
+    async (event, filePath: string, content: string) => {
+      try {
+        if (!filePath || filePath.trim().length === 0) {
+          return { success: false, error: 'No file path provided' };
+        }
+
+        const directory = path.dirname(filePath);
+        await fs.promises.mkdir(directory, { recursive: true });
+        await fs.promises.writeFile(filePath, content, { encoding: 'utf-8' });
+
+        return { success: true, filePath };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+  );
 }

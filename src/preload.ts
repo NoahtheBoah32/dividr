@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, filePath),
   readFileAsBuffer: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.READ_FILE_AS_BUFFER, filePath),
+  writeFile: (filePath: string, content: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITE_FILE, filePath, content),
 
   // File I/O and background task queue status
   getIOStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_IO_STATUS),

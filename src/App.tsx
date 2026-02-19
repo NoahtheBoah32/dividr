@@ -28,8 +28,7 @@ function App() {
   const htmlLoaderRemoved = useRef(false);
 
   // Get project store actions
-  const { importProjectFromPath, openProject, initializeProjects } =
-    useProjectStore();
+  const { openProjectFromPath } = useProjectStore();
 
   useEffect(() => {
     const removeHtmlLoader = () => {
@@ -92,14 +91,7 @@ function App() {
   useEffect(() => {
     const handleOpenProjectFile = async (filePath: string) => {
       try {
-        // Ensure projects are initialized before importing
-        await initializeProjects();
-
-        // Import the project from the file path
-        const projectId = await importProjectFromPath(filePath);
-
-        // Open the imported project
-        await openProject(projectId);
+        await openProjectFromPath(filePath);
 
         // Navigate to the video editor
         router.navigate('/video-editor');
@@ -118,7 +110,7 @@ function App() {
       // Cleanup listener on unmount
       window.appControl?.offOpenProjectFile();
     };
-  }, [importProjectFromPath, openProject, initializeProjects]);
+  }, [openProjectFromPath]);
 
   return (
     <ThemeProvider defaultTheme="soft-dark" storageKey="vite-ui-theme">

@@ -346,6 +346,8 @@ export class ProjectService {
         createdAt: now,
         updatedAt: now,
         lastOpenedAt: undefined,
+        sourceFilePath: undefined,
+        sourceFileName: undefined,
       },
       videoEditor: exportData.videoEditor,
       version: PROJECT_VERSION,
@@ -374,6 +376,8 @@ export class ProjectService {
         createdAt: now,
         updatedAt: now,
         lastOpenedAt: undefined,
+        sourceFilePath: undefined,
+        sourceFileName: undefined,
       },
     };
 

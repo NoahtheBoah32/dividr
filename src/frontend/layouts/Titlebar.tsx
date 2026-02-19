@@ -30,7 +30,8 @@ interface TitleBarProps {
 }
 
 const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
-  const { createNewProject, openProject, importProject } = useProjectStore();
+  const { createNewProject, openProject, importProject, currentProject } =
+    useProjectStore();
   const { theme, resolvedTheme } = useTheme();
   const { projects } = useProjectStore();
   const isDev = (import.meta as any).env?.DEV === true;
@@ -45,6 +46,20 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
 
   // Determine context based on current route
   const isInVideoEditor = location.pathname.startsWith('/video-editor');
+
+  React.useEffect(() => {
+    const appTitle = 'DiviDr';
+    if (!isInVideoEditor) {
+      document.title = appTitle;
+      return;
+    }
+
+    const projectTitle = currentProject?.metadata?.title?.trim();
+    document.title =
+      projectTitle && projectTitle.length > 0
+        ? `${projectTitle} - ${appTitle}`
+        : appTitle;
+  }, [currentProject?.metadata?.title, isInVideoEditor]);
 
   const handleCreateProject = async () => {
     try {

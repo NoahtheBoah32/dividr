@@ -187,6 +187,7 @@ export const IPC_INVOKE_ARG_SCHEMAS: Record<string, ZodType<unknown[]>> = {
   [IPC_CHANNELS.CLEANUP_TEMP_FILES]: z.tuple([z.array(z.string().min(1))]),
   [IPC_CHANNELS.READ_FILE]: z.tuple([z.string().min(1)]),
   [IPC_CHANNELS.READ_FILE_AS_BUFFER]: z.tuple([z.string().min(1)]),
+  [IPC_CHANNELS.WRITE_FILE]: z.tuple([z.string().min(1), z.string()]),
   [IPC_CHANNELS.GET_IO_STATUS]: EMPTY_ARGS_SCHEMA,
   [IPC_CHANNELS.CANCEL_MEDIA_TASKS]: z.tuple([z.string().min(1)]),
   [IPC_CHANNELS.CREATE_PREVIEW_URL]: z.tuple([z.string().min(1)]),

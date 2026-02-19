@@ -25,6 +25,8 @@ export interface ProjectMetadata {
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
   lastOpenedAt?: string; // ISO string
+  sourceFilePath?: string; // Absolute path for externally opened/saved project files
+  sourceFileName?: string; // Original filename (with extension)
 }
 
 export interface VideoEditorProjectData {
@@ -55,6 +57,7 @@ export interface ProjectSummary {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt?: string;
+  sourceFilePath?: string;
   sizeInfo?: ProjectSizeInfo;
 }
 
@@ -173,4 +176,5 @@ export const projectToSummary = (project: ProjectData): ProjectSummary => ({
   createdAt: project.metadata.createdAt,
   updatedAt: project.metadata.updatedAt,
   lastOpenedAt: project.metadata.lastOpenedAt,
+  sourceFilePath: project.metadata.sourceFilePath,
 });
