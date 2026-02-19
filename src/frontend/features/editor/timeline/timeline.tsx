@@ -33,7 +33,6 @@ import {
   checkSnapPosition,
   findAllSnapPoints,
   findAvailableRowIndexForRange,
-  findNearestAvailablePositionInRowWithPlayhead,
   hasCollision,
 } from './utils/collisionDetection';
 import {
@@ -766,6 +765,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
             clearDragGhost,
             tracks,
             moveTrackToRow,
+            normalizeTrackRowsAfterDrop,
           } = useVideoEditorStore.getState();
 
           if (playback.isDraggingTrack || playback.dragGhost?.isActive) {
@@ -778,48 +778,59 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               dragGhost.targetFrame !== null
             ) {
               const targetRowParsed = parseRowId(dragGhost.targetRow);
-              const primaryTrack = tracks.find(
+              const draggedTrackIds =
+                dragGhost.selectedTrackIds?.length > 0
+                  ? dragGhost.selectedTrackIds
+                  : dragGhost.trackId
+                    ? [dragGhost.trackId]
+                    : [];
+              const draggedTracks = tracks.filter((t: VideoTrack) =>
+                draggedTrackIds.includes(t.id),
+              );
+              const primaryTrack = draggedTracks.find(
                 (t: VideoTrack) => t.id === dragGhost.trackId,
               );
 
-              if (primaryTrack && targetRowParsed) {
-                const duration =
-                  primaryTrack.endFrame - primaryTrack.startFrame;
-                const excludeIds = dragGhost.selectedTrackIds || [
-                  dragGhost.trackId,
-                ];
+              if (
+                primaryTrack &&
+                targetRowParsed &&
+                targetRowParsed.type === primaryTrack.type
+              ) {
+                const primaryRowIndex = primaryTrack.trackRowIndex ?? 0;
+                const primaryStartFrame = primaryTrack.startFrame;
+                const rowDelta =
+                  Math.round(targetRowParsed.rowIndex) - primaryRowIndex;
+                const targetFrame = dragGhost.targetFrame;
+                const orderedTracks = [...draggedTracks].sort((a, b) => {
+                  const rowDiff =
+                    (a.trackRowIndex ?? 0) - (b.trackRowIndex ?? 0);
+                  if (rowDiff !== 0) return rowDiff;
+                  return a.startFrame - b.startFrame;
+                });
+                const excludeTrackIds = orderedTracks.map((t) => t.id);
 
-                // Check for collision at drop position
-                const wouldCollide = hasCollision(
-                  dragGhost.targetFrame,
-                  dragGhost.targetFrame + duration,
-                  primaryTrack.type,
-                  targetRowParsed.rowIndex,
-                  tracks,
-                  { excludeTrackIds: excludeIds },
-                );
+                orderedTracks.forEach((draggedTrack) => {
+                  const frameOffset =
+                    draggedTrack.startFrame - primaryStartFrame;
+                  const targetStartFrame = targetFrame + frameOffset;
+                  const targetRowIndex = Math.max(
+                    0,
+                    Math.round((draggedTrack.trackRowIndex ?? 0) + rowDelta),
+                  );
 
-                let finalStartFrame = dragGhost.targetFrame;
+                  moveTrackToRow(
+                    draggedTrack.id,
+                    targetRowIndex,
+                    targetStartFrame,
+                    {
+                      skipNormalize: true,
+                      excludeTrackIds,
+                      skipLinkedMove: true,
+                    },
+                  );
+                });
 
-                if (wouldCollide) {
-                  // Find nearest available position
-                  finalStartFrame =
-                    findNearestAvailablePositionInRowWithPlayhead(
-                      dragGhost.targetFrame,
-                      duration,
-                      primaryTrack.type,
-                      targetRowParsed.rowIndex,
-                      tracks,
-                      excludeIds,
-                    );
-                }
-
-                // Apply the move
-                moveTrackToRow(
-                  dragGhost.trackId,
-                  targetRowParsed.rowIndex,
-                  finalStartFrame,
-                );
+                normalizeTrackRowsAfterDrop();
               }
             }
 

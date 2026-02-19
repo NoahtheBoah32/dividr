@@ -725,41 +725,73 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
 
     const handleMouseUp = useCallback(() => {
       const state = useVideoEditorStore.getState();
-      const { playback, endDraggingTrack, clearDragGhost, moveTrackToRow } =
-        state;
+      const {
+        playback,
+        endDraggingTrack,
+        clearDragGhost,
+        moveTrackToRow,
+        normalizeTrackRowsAfterDrop,
+      } = state;
 
       if (
         isDragging &&
         dragThresholdMetRef.current &&
         playback.dragGhost?.isActive &&
-        playback.dragGhost.targetRow
+        playback.dragGhost.targetRow &&
+        playback.dragGhost.targetFrame !== null
       ) {
-        const targetRowId = playback.dragGhost.targetRow;
-        const targetFrame = playback.dragGhost.targetFrame;
+        const dragGhost = playback.dragGhost;
+        const targetRowId = dragGhost.targetRow;
+        const targetFrame = dragGhost.targetFrame;
         const parsedRow = parseRowId(targetRowId);
 
         if (parsedRow) {
-          const currentRowIndex = track.trackRowIndex ?? 0;
+          const draggedTrackIds =
+            dragGhost.selectedTrackIds?.length > 0
+              ? dragGhost.selectedTrackIds
+              : dragGhost.trackId
+                ? [dragGhost.trackId]
+                : [];
+          const draggedTracks = state.tracks.filter((t: VideoTrack) =>
+            draggedTrackIds.includes(t.id),
+          );
+          const primaryTrack = draggedTracks.find(
+            (t: VideoTrack) => t.id === dragGhost.trackId,
+          );
 
-          if (parsedRow.type !== track.type) {
-            endDraggingTrack();
-            clearDragGhost();
-            setIsResizing(false);
-            setIsDragging(false);
-            hasAutoSelectedRef.current = false;
-            dragThresholdMetRef.current = false;
-            return;
-          }
+          if (primaryTrack && parsedRow.type === primaryTrack.type) {
+            const primaryRowIndex = primaryTrack.trackRowIndex ?? 0;
+            const primaryStartFrame = primaryTrack.startFrame;
+            const rowDelta = Math.round(parsedRow.rowIndex) - primaryRowIndex;
 
-          const normalizedTargetIndex = Math.round(parsedRow.rowIndex);
-          if (normalizedTargetIndex !== currentRowIndex) {
-            moveTrackToRow(
-              track.id,
-              parsedRow.rowIndex,
-              targetFrame !== null && targetFrame !== undefined
-                ? targetFrame
-                : undefined,
-            );
+            const orderedTracks = [...draggedTracks].sort((a, b) => {
+              const rowDiff = (a.trackRowIndex ?? 0) - (b.trackRowIndex ?? 0);
+              if (rowDiff !== 0) return rowDiff;
+              return a.startFrame - b.startFrame;
+            });
+            const excludeTrackIds = orderedTracks.map((t) => t.id);
+
+            orderedTracks.forEach((draggedTrack) => {
+              const frameOffset = draggedTrack.startFrame - primaryStartFrame;
+              const targetStartFrame = targetFrame + frameOffset;
+              const targetRowIndex = Math.max(
+                0,
+                Math.round((draggedTrack.trackRowIndex ?? 0) + rowDelta),
+              );
+
+              moveTrackToRow(
+                draggedTrack.id,
+                targetRowIndex,
+                targetStartFrame,
+                {
+                  skipNormalize: true,
+                  excludeTrackIds,
+                  skipLinkedMove: true,
+                },
+              );
+            });
+
+            normalizeTrackRowsAfterDrop();
           }
         }
       }
@@ -776,7 +808,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-    }, [isDragging, track.id, track.type, track.trackRowIndex]);
+    }, [isDragging]);
 
     useEffect(() => {
       if (isResizing || isDragging) {

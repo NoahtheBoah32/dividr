@@ -337,7 +337,13 @@ export interface TracksSlice {
     trackId: string,
     targetRowIndex: number,
     newStartFrame?: number,
+    options?: {
+      skipNormalize?: boolean;
+      excludeTrackIds?: string[];
+      skipLinkedMove?: boolean;
+    },
   ) => void;
+  normalizeTrackRowsAfterDrop: () => void;
   resizeTrack: (
     trackId: string,
     newStartFrame?: number,
@@ -1547,7 +1553,7 @@ export const createTracksSlice: StateCreator<
     state.markUnsavedChanges?.();
   },
 
-  moveTrackToRow: (trackId, targetRowIndex, newStartFrame) => {
+  moveTrackToRow: (trackId, targetRowIndex, newStartFrame, options) => {
     const state = get() as any;
 
     // Record action for undo/redo
@@ -1577,6 +1583,13 @@ export const createTracksSlice: StateCreator<
     if (trackToMove.isLinked && trackToMove.linkedTrackId) {
       excludeIds.push(trackToMove.linkedTrackId);
     }
+    if (options?.excludeTrackIds?.length) {
+      excludeIds.push(...options.excludeTrackIds);
+    }
+    if (state.playback?.dragGhost?.isMultiSelection) {
+      excludeIds.push(...(state.playback.dragGhost.selectedTrackIds || []));
+    }
+    const uniqueExcludeIds = Array.from(new Set(excludeIds));
 
     const isLinkedAudioPrimary =
       trackToMove.type === 'audio' && trackToMove.isLinked;
@@ -1600,7 +1613,7 @@ export const createTracksSlice: StateCreator<
         trackToMove.type,
         normalizedTargetIndex,
         state.tracks,
-        { excludeTrackIds: excludeIds },
+        { excludeTrackIds: uniqueExcludeIds },
       );
 
       if (wouldCollide && !isLinkedAudioPrimary) {
@@ -1611,7 +1624,7 @@ export const createTracksSlice: StateCreator<
           trackToMove.type,
           normalizedTargetIndex,
           state.tracks,
-          excludeIds,
+          uniqueExcludeIds,
           state.timeline?.currentFrame,
         );
       } else {
@@ -1628,7 +1641,7 @@ export const createTracksSlice: StateCreator<
         state.tracks,
         {
           preferredRowIndex: normalizedTargetIndex,
-          excludeTrackIds: excludeIds,
+          excludeTrackIds: uniqueExcludeIds,
         },
       );
     }
@@ -1646,7 +1659,7 @@ export const createTracksSlice: StateCreator<
         state.tracks,
         {
           preferredRowIndex: normalizedTargetIndex,
-          excludeTrackIds: excludeIds,
+          excludeTrackIds: uniqueExcludeIds,
         },
       );
     }
@@ -1667,7 +1680,11 @@ export const createTracksSlice: StateCreator<
         }
 
         // Also move linked track (audio follows video, video follows audio)
-        if (trackToMove.isLinked && trackToMove.linkedTrackId === track.id) {
+        if (
+          !options?.skipLinkedMove &&
+          trackToMove.isLinked &&
+          trackToMove.linkedTrackId === track.id
+        ) {
           const linkedDuration = track.endFrame - track.startFrame;
 
           // Calculate linked track's position based on original relative position
@@ -1690,12 +1707,22 @@ export const createTracksSlice: StateCreator<
         return track;
       });
 
-      // Normalize row indices after drop
-      updatedTracks = normalizeAfterDrop(updatedTracks);
+      // Normalize row indices after drop (can be deferred for grouped moves)
+      if (!options?.skipNormalize) {
+        updatedTracks = normalizeAfterDrop(updatedTracks);
+      }
 
       return { tracks: updatedTracks };
     });
 
+    state.markUnsavedChanges?.();
+  },
+
+  normalizeTrackRowsAfterDrop: () => {
+    const state = get() as any;
+    set((current: any) => ({
+      tracks: normalizeAfterDrop(current.tracks),
+    }));
     state.markUnsavedChanges?.();
   },
 
