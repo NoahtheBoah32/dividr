@@ -5,6 +5,11 @@ interface AutoScrollConfig {
   mouseX: number;
   mouseY: number;
   scrollElement: HTMLElement | null;
+  /** Optional horizontal drag bounds in viewport coordinates (clientX space). */
+  horizontalBounds?: {
+    left: number;
+    right: number;
+  } | null;
   /** Distance from edge to trigger scroll (default: 80px) */
   threshold?: number;
   /** Base scroll speed multiplier (default: 1.0) */
@@ -40,6 +45,7 @@ export const useAutoScroll = ({
   mouseX,
   mouseY,
   scrollElement,
+  horizontalBounds = null,
   threshold = 80,
   speed = 1.0,
   onScroll,
@@ -66,26 +72,64 @@ export const useAutoScroll = ({
       const rect = scrollElement.getBoundingClientRect();
       let deltaX = 0;
       let deltaY = 0;
+      const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
       // Horizontal scroll calculation
       if (enableHorizontal) {
-        const relativeX = mouseX - rect.left;
         const viewportWidth = rect.width;
 
-        if (relativeX >= 0 && relativeX < threshold) {
-          // Near left edge - scroll left
-          const intensity = Math.pow(1 - relativeX / threshold, 1.5); // Eased intensity
-          deltaX = -intensity * 18 * speed * accelerationMultiplier;
-        } else if (
-          relativeX > viewportWidth - threshold &&
-          relativeX <= viewportWidth
-        ) {
-          // Near right edge - scroll right
-          const intensity = Math.pow(
-            (relativeX - (viewportWidth - threshold)) / threshold,
+        if (horizontalBounds) {
+          const leftEdge = horizontalBounds.left - rect.left;
+          const rightEdge = horizontalBounds.right - rect.left;
+
+          const leftIntensity = Math.pow(
+            clamp01((threshold - leftEdge) / threshold),
             1.5,
           );
-          deltaX = intensity * 18 * speed * accelerationMultiplier;
+          const rightIntensity = Math.pow(
+            clamp01((rightEdge - (viewportWidth - threshold)) / threshold),
+            1.5,
+          );
+
+          if (leftIntensity > 0 || rightIntensity > 0) {
+            if (leftIntensity > rightIntensity) {
+              deltaX = -leftIntensity * 18 * speed * accelerationMultiplier;
+            } else if (rightIntensity > leftIntensity) {
+              deltaX = rightIntensity * 18 * speed * accelerationMultiplier;
+            } else {
+              // Tie-break for wide clips spanning both edge zones.
+              const relativeMouseX = mouseX - rect.left;
+              const preferLeft = relativeMouseX < viewportWidth / 2;
+              const intensity = leftIntensity;
+              deltaX =
+                (preferLeft ? -1 : 1) *
+                intensity *
+                18 *
+                speed *
+                accelerationMultiplier;
+            }
+          }
+        } else {
+          const relativeX = mouseX - rect.left;
+          const leftIntensity = Math.pow(
+            clamp01((threshold - relativeX) / threshold),
+            1.5,
+          );
+          const rightIntensity = Math.pow(
+            clamp01((relativeX - (viewportWidth - threshold)) / threshold),
+            1.5,
+          );
+
+          if (leftIntensity > 0 && relativeX < threshold) {
+            // Near left edge - scroll left
+            deltaX = -leftIntensity * 18 * speed * accelerationMultiplier;
+          } else if (
+            rightIntensity > 0 &&
+            relativeX > viewportWidth - threshold
+          ) {
+            // Near right edge - scroll right
+            deltaX = rightIntensity * 18 * speed * accelerationMultiplier;
+          }
         }
       }
 
@@ -132,6 +176,7 @@ export const useAutoScroll = ({
       mouseX,
       mouseY,
       scrollElement,
+      horizontalBounds,
       threshold,
       effectiveVerticalThreshold,
       speed,
@@ -280,6 +325,7 @@ export const useAutoScroll = ({
     mouseX,
     mouseY,
     scrollElement,
+    horizontalBounds,
     threshold,
     effectiveVerticalThreshold,
     speed,

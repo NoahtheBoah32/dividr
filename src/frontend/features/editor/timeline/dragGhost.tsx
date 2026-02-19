@@ -128,6 +128,7 @@ export const DragGhost: React.FC<DragGhostProps> = React.memo(
             width={width}
             height={trackHeight} // Use track-specific height
             zoomLevel={zoomLevel}
+            renderWithoutViewportCulling
           />
         );
       }

@@ -16,6 +16,8 @@ interface VideoSpriteSheetStripProps {
   width: number;
   height: number;
   zoomLevel: number;
+  /** Render full strip without timeline viewport culling (used by drag ghost). */
+  renderWithoutViewportCulling?: boolean;
 }
 
 interface SpriteSheetStripState {
@@ -144,7 +146,14 @@ const GPUAcceleratedSprite: React.FC<{
 
 export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
   React.memo(
-    ({ track, frameWidth, width, height, zoomLevel }) => {
+    ({
+      track,
+      frameWidth,
+      width,
+      height,
+      zoomLevel,
+      renderWithoutViewportCulling = false,
+    }) => {
       const selectedTrackIds = useVideoEditorStore(
         (state) => state.timeline.selectedTrackIds,
       );
@@ -234,12 +243,16 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         const { trackStartTime, pixelsPerSecond, trackStartPx } = trackMetrics;
         if (pixelsPerSecond <= 0) return [];
 
-        const viewportWidth = viewportBounds.viewportWidth;
+        const viewportWidth = renderWithoutViewportCulling
+          ? width
+          : viewportBounds.viewportWidth;
         if (viewportWidth <= 0) return [];
 
-        const viewportStart = viewportBounds.scrollLeft - trackStartPx;
-        const viewportEnd =
-          viewportBounds.scrollLeft + viewportWidth - trackStartPx;
+        const effectiveScrollLeft = renderWithoutViewportCulling
+          ? trackStartPx
+          : viewportBounds.scrollLeft;
+        const viewportStart = effectiveScrollLeft - trackStartPx;
+        const viewportEnd = effectiveScrollLeft + viewportWidth - trackStartPx;
         const buffer = viewportWidth * VIEWPORT_BUFFER_MULTIPLIER;
 
         const visibleStart = Math.max(0, viewportStart - buffer);
@@ -323,6 +336,7 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
         allThumbnails,
         trackMetrics,
         viewportBounds,
+        renderWithoutViewportCulling,
         width,
         height,
       ]);

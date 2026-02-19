@@ -155,7 +155,6 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     );
     // Calculate frame width based on zoom - memoized
     const frameWidth = useMemo(() => 2 * timeline.zoom, [timeline.zoom]);
-
     // Generate dynamic rows for vertical drag detection
     const migratedTracks = useMemo(
       () => migrateTracksWithRowIndex(tracks),
@@ -668,7 +667,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       mouseX: autoScrollMousePos?.x || 0,
       mouseY: autoScrollMousePos?.y || 0,
       scrollElement: tracksRef.current,
-      threshold: 80,
+      threshold: 120,
       verticalThreshold: 100,
       speed: 1.2,
       enableHorizontal: true,
@@ -755,6 +754,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     useEffect(() => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const handleGlobalMouseUp = (e: MouseEvent) => {
+        // Ignore non-primary button releases.
+        if (e.button !== 0) {
+          return;
+        }
+
         setTimeout(() => {
           const {
             playback,
@@ -828,28 +832,14 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         }, 0);
       };
 
-      const handleGlobalMouseLeave = (e: MouseEvent) => {
-        // Only trigger if we're actually leaving the window
-        if (
-          e.clientY <= 0 ||
-          e.clientX <= 0 ||
-          e.clientX >= window.innerWidth ||
-          e.clientY >= window.innerHeight
-        ) {
-          handleGlobalMouseUp(e);
-        }
-      };
-
       // Listen on document AND window for maximum coverage
       // Use bubble phase (false) to run AFTER child handlers
       document.addEventListener('mouseup', handleGlobalMouseUp, false);
       window.addEventListener('mouseup', handleGlobalMouseUp, false);
-      document.addEventListener('mouseleave', handleGlobalMouseLeave);
 
       return () => {
         document.removeEventListener('mouseup', handleGlobalMouseUp, false);
         window.removeEventListener('mouseup', handleGlobalMouseUp, false);
-        document.removeEventListener('mouseleave', handleGlobalMouseLeave);
       };
     }, []);
 

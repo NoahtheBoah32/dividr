@@ -42,6 +42,7 @@ import {
 import { VideoSpriteSheetStrip } from './videoSpriteSheetStrip';
 
 const DRAG_ACTIVATION_THRESHOLD = 5;
+const EMPTY_DRAG_TRACK_IDS: string[] = [];
 
 /**
  * Calculate grid interval that matches the ruler's tick interval exactly.
@@ -193,10 +194,9 @@ const TrackItemWrapper: React.FC<{
       <div
         data-track-id={track.id}
         className={cn(
-          'absolute rounded flex items-center select-none transition-opacity duration-150 border-2 border-transparent',
+          'absolute rounded flex items-center select-none transition-opacity duration-150',
           getTrackItemHeightClasses(track.type),
           isDuplicationFeedback ? 'overflow-visible' : 'overflow-hidden',
-          isSelected ? 'border-secondary' : '',
           getCursorClass(),
           track.visible ? 'opacity-100' : 'opacity-50',
           isDuplicationFeedback ? 'track-duplicate-feedback z-50' : 'z-10',
@@ -214,6 +214,9 @@ const TrackItemWrapper: React.FC<{
         onContextMenu={onContextMenu}
       >
         {children}
+        {isSelected && (
+          <div className="pointer-events-none absolute inset-0 rounded border-2 border-secondary z-30" />
+        )}
       </div>
     );
   },
@@ -788,15 +791,6 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
       }
     }, [isResizing, isDragging, handleMouseMove, handleMouseUp]);
 
-    useEffect(() => {
-      return () => {
-        const { playback, endDraggingTrack } = useVideoEditorStore.getState();
-        if (playback.isDraggingTrack) {
-          endDraggingTrack();
-        }
-      };
-    }, []);
-
     const trackContent = useMemo(() => {
       const contentHeight = getTrackItemHeight(track.type);
 
@@ -1087,6 +1081,10 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
     const addTrackFromMediaLibrary = useVideoEditorStore(
       (state) => state.addTrackFromMediaLibrary,
     );
+    const activeDragTrackIds = useVideoEditorStore(
+      (state) =>
+        state.playback.dragGhost?.selectedTrackIds ?? EMPTY_DRAG_TRACK_IDS,
+    );
 
     // Get all tracks from store for FPS calculation
     const allTracks = useVideoEditorStore((state) => state.tracks);
@@ -1213,8 +1211,14 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
       const viewportStart = scrollX;
       const viewportEnd = scrollX + viewportWidth;
       const bufferSize = viewportWidth * 0.5;
+      const activeDragSet = new Set(activeDragTrackIds);
 
       return tracks.filter((track) => {
+        // Never cull tracks that are currently being dragged.
+        if (activeDragSet.has(track.id)) {
+          return true;
+        }
+
         const trackStart = track.startFrame * frameWidth;
         const trackEnd = track.endFrame * frameWidth;
 
@@ -1223,7 +1227,7 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
           trackStart <= viewportEnd + bufferSize
         );
       });
-    }, [tracks, scrollX, frameWidth, zoomLevel]);
+    }, [tracks, scrollX, frameWidth, zoomLevel, activeDragTrackIds]);
 
     const handleDragOver = useCallback(
       (e: React.DragEvent) => {
