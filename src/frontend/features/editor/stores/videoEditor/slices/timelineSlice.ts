@@ -377,13 +377,7 @@ export const createTimelineSlice: StateCreator<
     const snapPoints: SnapPoint[] = [];
     const { tracks, timeline } = state;
 
-    // Add playhead as snap point
-    snapPoints.push({
-      frame: currentFrame,
-      type: 'playhead',
-    });
-
-    // Add in/out points as snap points
+    // Priority 1: track edges + timeline bounds
     if (timeline.inPoint !== undefined) {
       snapPoints.push({
         frame: timeline.inPoint,
@@ -414,6 +408,20 @@ export const createTimelineSlice: StateCreator<
         type: 'track-end',
         trackId: track.id,
       });
+    });
+
+    // Priority 2: marker frames
+    (timeline.markers || []).forEach((marker: { frame: number }) => {
+      snapPoints.push({
+        frame: marker.frame,
+        type: 'marker',
+      });
+    });
+
+    // Priority 3: playhead
+    snapPoints.push({
+      frame: currentFrame,
+      type: 'playhead',
     });
 
     return snapPoints;

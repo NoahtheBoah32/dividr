@@ -26,6 +26,7 @@ interface TimelineRulerProps {
   outPoint?: number;
   markers?: TimelineMarker[];
   selectedMarkerId?: string | null;
+  magneticSnapFrame?: number | null;
   onMarkerSelect?: (markerId: string | null) => void;
   onMarkerDelete?: (markerId: string) => void;
   onDeleteAllMarkers?: () => void;
@@ -46,6 +47,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
     outPoint,
     markers = [],
     selectedMarkerId = null,
+    magneticSnapFrame = null,
     onMarkerSelect,
     onMarkerDelete,
     onDeleteAllMarkers,
@@ -439,6 +441,8 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
             marker.frame * frameWidth -
             (timelineScrollElement?.scrollLeft ?? scrollX);
           const isSelected = marker.id === selectedMarkerId;
+          const isSnapHighlighted =
+            magneticSnapFrame !== null && marker.frame === magneticSnapFrame;
 
           return (
             <div
@@ -480,6 +484,9 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
                       strokeWidth={1.8}
                       className={cn(
                         'transition-transform fill-secondary text-secondary duration-150 ease-out origin-center',
+                        isSnapHighlighted
+                          ? 'drop-shadow-[0_0_4px_hsl(var(--secondary))]'
+                          : '',
                         isSelected ? 'scale-110' : 'hover:scale-110',
                       )}
                     />
@@ -528,6 +535,8 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
     if (prevProps.inPoint !== nextProps.inPoint) return false;
     if (prevProps.outPoint !== nextProps.outPoint) return false;
     if (prevProps.selectedMarkerId !== nextProps.selectedMarkerId) return false;
+    if (prevProps.magneticSnapFrame !== nextProps.magneticSnapFrame)
+      return false;
     if (!areMarkersEqual(prevProps.markers, nextProps.markers)) return false;
 
     // Check tracks - only properties that affect ruler display

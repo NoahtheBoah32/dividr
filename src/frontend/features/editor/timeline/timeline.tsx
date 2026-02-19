@@ -30,6 +30,8 @@ import { TimelineRuler } from './timelineRuler';
 import { TimelineTrackControllers } from './timelineTrackControllers';
 import { TimelineTracks } from './timelineTracks';
 import {
+  checkSnapPosition,
+  findAllSnapPoints,
   findAvailableRowIndexForRange,
   findNearestAvailablePositionInRowWithPlayhead,
   hasCollision,
@@ -222,6 +224,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     );
     const magneticSnapFrame = useVideoEditorStore(
       (state) => state.playback.magneticSnapFrame,
+    );
+    const setMagneticSnapFrame = useVideoEditorStore(
+      (state) => state.setMagneticSnapFrame,
     );
     const previewInteractionMode = useVideoEditorStore(
       (state) => state.preview.interactionMode,
@@ -1799,6 +1804,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     // Playhead drag handler
     const handlePlayheadDragStart = useCallback(() => {
       if (!tracksRef.current) return;
+      const SNAP_THRESHOLD_FRAMES = 5;
 
       // Start playhead drag mode
       startDraggingPlayhead();
@@ -1809,10 +1815,36 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         const rect = tracksRef.current.getBoundingClientRect();
         const x = moveEvent.clientX - rect.left + tracksRef.current.scrollLeft;
         const frame = Math.floor(x / frameWidth);
-        const clampedFrame = Math.max(
+        let clampedFrame = Math.max(
           0,
           Math.min(frame, displayedTotalFrames - 1),
         );
+
+        const state = useVideoEditorStore.getState();
+        const snapEnabled = state.timeline?.snapEnabled ?? false;
+
+        if (snapEnabled) {
+          const snapPoints = findAllSnapPoints(
+            state.tracks || [],
+            [],
+            undefined,
+            state.timeline?.markers || [],
+          );
+          const snapResult = checkSnapPosition(
+            clampedFrame,
+            snapPoints,
+            SNAP_THRESHOLD_FRAMES,
+          );
+
+          if (snapResult !== null) {
+            clampedFrame = snapResult;
+            setMagneticSnapFrame(snapResult);
+          } else {
+            setMagneticSnapFrame(null);
+          }
+        } else {
+          setMagneticSnapFrame(null);
+        }
 
         // Update frame in real-time during drag
         lastFrameUpdateRef.current = clampedFrame;
@@ -1822,6 +1854,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       const handleMouseUp = () => {
         // End playhead drag mode
         endDraggingPlayhead();
+        setMagneticSnapFrame(null);
 
         // Clean up listeners
         document.removeEventListener('mousemove', handleMouseMove);
@@ -1833,10 +1866,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       document.addEventListener('mouseup', handleMouseUp);
     }, [
       frameWidth,
-      effectiveEndFrame,
+      displayedTotalFrames,
       setCurrentFrame,
       startDraggingPlayhead,
       endDraggingPlayhead,
+      setMagneticSnapFrame,
     ]);
 
     // Centralized interaction handlers
@@ -2260,6 +2294,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   outPoint={timeline.outPoint}
                   markers={timeline.markers}
                   selectedMarkerId={timeline.selectedMarkerId}
+                  magneticSnapFrame={magneticSnapFrame}
                   onMarkerSelect={setSelectedMarker}
                   onMarkerDelete={removeMarker}
                   onDeleteAllMarkers={clearMarkers}

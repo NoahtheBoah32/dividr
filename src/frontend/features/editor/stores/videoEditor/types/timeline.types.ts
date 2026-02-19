@@ -46,6 +46,12 @@ export interface TimelineState {
 
 export interface SnapPoint {
   frame: number;
-  type: 'playhead' | 'track-start' | 'track-end' | 'in-point' | 'out-point';
+  type:
+    | 'playhead'
+    | 'track-start'
+    | 'track-end'
+    | 'in-point'
+    | 'out-point'
+    | 'marker';
   trackId?: string;
 }

@@ -547,6 +547,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 allTracks,
                 excludeIds,
                 timeline.currentFrame,
+                timeline.markers || [],
               );
 
               const snapResult = checkSnapPosition(
@@ -590,6 +591,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 allTracks,
                 excludeIds,
                 timeline.currentFrame,
+                timeline.markers || [],
               );
 
               const snapResult = checkSnapPosition(
@@ -651,6 +653,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 allTracks,
                 excludeIds,
                 timeline.currentFrame,
+                timeline.markers || [],
               );
 
               const startSnap = checkSnapPosition(

@@ -1145,6 +1145,7 @@ export const createTracksSlice: StateCreator<
           excludeIds,
           snapThreshold,
           state.timeline?.currentFrame, // Also snap to playhead
+          state.timeline?.markers || [],
         );
 
         if (snapResult) {
@@ -1351,6 +1352,7 @@ export const createTracksSlice: StateCreator<
           tracksToMoveArray,
           snapThreshold,
           state.timeline?.currentFrame, // Also snap to playhead
+          state.timeline?.markers || [],
         );
 
         if (snapResult) {
