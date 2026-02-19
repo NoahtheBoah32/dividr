@@ -73,13 +73,16 @@ export interface TextStyleSlice {
   resetTextStyles: () => void;
 
   // Global subtitle position and transform
-  setGlobalSubtitlePosition: (position: {
-    x: number;
-    y: number;
-    scale?: number;
-    width?: number;
-    height?: number;
-  }) => void;
+  setGlobalSubtitlePosition: (
+    position: {
+      x: number;
+      y: number;
+      scale?: number;
+      width?: number;
+      height?: number;
+    },
+    options?: { skipRecord?: boolean },
+  ) => void;
 
   // Snapshot global styles to selected tracks (used when selecting tracks in 'selected' mode)
   snapshotStylesToSelectedTracks: () => void;

@@ -119,7 +119,6 @@ export const SubtitleTransformBoundary: React.FC<
   const contentRef = useRef<HTMLDivElement>(null);
   const boundaryRef = useRef<HTMLDivElement>(null);
   const editableRef = useRef<HTMLDivElement>(null);
-  const hasMigratedRef = useRef(false); // Track if we've already migrated coordinates
   const dragDelayTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Delay before starting drag to allow double-click
   const lastClickTimeRef = useRef<number>(0); // Track last click time for double-click detection
   const transformDragStartedRef = useRef(false); // Track if we've started transform drag for playback pause
@@ -199,41 +198,32 @@ export const SubtitleTransformBoundary: React.FC<
     height: 0,
   };
 
-  // Migration: If coordinates appear to be in pixel space, convert to normalized
-  // ONLY run this migration once per track to avoid interfering with drag operations
-  const normalizedTransform = React.useMemo(() => {
-    // Check if coordinates need migration (look like pixel values > 2)
-    const needsMigration =
-      !hasMigratedRef.current &&
-      (Math.abs(rawTransform.x) > 2 || Math.abs(rawTransform.y) > 2);
-
-    if (needsMigration) {
-      hasMigratedRef.current = true; // Mark as migrated
-      const normalized = pixelsToNormalized({
-        x: rawTransform.x,
-        y: rawTransform.y,
-      });
-      onTransformUpdate(track.id, {
-        x: normalized.x,
-        y: normalized.y,
-      });
-      return {
-        ...rawTransform,
-        x: normalized.x,
-        y: normalized.y,
-      };
-    }
-    return rawTransform;
-  }, [
-    rawTransform.x,
-    rawTransform.y,
-    rawTransform.scale,
-    rawTransform.width,
-    rawTransform.height,
-    pixelsToNormalized,
-    onTransformUpdate,
-    track.id,
-  ]);
+  const normalizedTransform = React.useMemo(
+    () => ({
+      ...rawTransform,
+      x: Number.isFinite(rawTransform.x) ? rawTransform.x : 0,
+      y: Number.isFinite(rawTransform.y) ? rawTransform.y : DEFAULT_SUBTITLE_Y,
+      scale:
+        Number.isFinite(rawTransform.scale) && rawTransform.scale > 0
+          ? rawTransform.scale
+          : 1,
+      width:
+        Number.isFinite(rawTransform.width) && rawTransform.width >= 0
+          ? rawTransform.width
+          : 0,
+      height:
+        Number.isFinite(rawTransform.height) && rawTransform.height >= 0
+          ? rawTransform.height
+          : 0,
+    }),
+    [
+      rawTransform.x,
+      rawTransform.y,
+      rawTransform.scale,
+      rawTransform.width,
+      rawTransform.height,
+    ],
+  );
 
   // Convert to screen pixels for rendering
   const transform = React.useMemo(() => {

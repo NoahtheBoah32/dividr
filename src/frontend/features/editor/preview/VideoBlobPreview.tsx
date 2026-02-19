@@ -70,7 +70,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     setPreviewScale,
     setPreviewInteractionMode,
     updateTrack,
-    updateTrackProperty,
+    updateTrackTransform,
     setSelectedTracks,
     currentTranscribingTrackId,
     transcriptionProgress,
@@ -97,7 +97,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
       setPreviewScale: state.setPreviewScale,
       setPreviewInteractionMode: state.setPreviewInteractionMode,
       updateTrack: state.updateTrack,
-      updateTrackProperty: state.updateTrackProperty,
+      updateTrackTransform: state.updateTrackTransform,
       setSelectedTracks: state.setSelectedTracks,
       currentTranscribingTrackId: state.currentTranscribingTrackId,
       transcriptionProgress: state.transcriptionProgress,
@@ -295,50 +295,24 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
   // Third parameter `options` allows skipping undo recording for auto-size updates
   const handleTextTransformUpdate = useCallback(
     (trackId: string, transform: any, options?: { skipRecord?: boolean }) => {
-      const track = tracks.find((t) => t.id === trackId);
+      const track = useVideoEditorStore
+        .getState()
+        .tracks.find((t) => t.id === trackId);
       if (!track || track.type !== 'text') return;
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: 0,
-        height: 0,
-      };
-
-      const newTransform = { ...currentTransform, ...transform };
-
-      // For auto-size updates (width/height only), skip undo recording
-      // These are system-generated updates from ResizeObserver, not user actions
-      if (options?.skipRecord) {
-        updateTrackProperty(trackId, { textTransform: newTransform });
-      } else {
-        updateTrack(trackId, { textTransform: newTransform });
-      }
+      updateTrackTransform(trackId, transform, options);
     },
-    [tracks, updateTrack, updateTrackProperty],
+    [updateTrackTransform],
   );
 
   const handleImageTransformUpdate = useCallback(
     (trackId: string, transform: any) => {
-      const track = tracks.find((t) => t.id === trackId);
+      const track = useVideoEditorStore
+        .getState()
+        .tracks.find((t) => t.id === trackId);
       if (!track || track.type !== 'image') return;
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: 0,
-        height: 0,
-      };
-
-      updateTrack(trackId, {
-        textTransform: { ...currentTransform, ...transform },
-      });
+      updateTrackTransform(trackId, transform);
     },
-    [tracks, updateTrack],
+    [updateTrackTransform],
   );
 
   const handleTextSelect = useCallback(
@@ -359,23 +333,13 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
 
   const handleVideoTransformUpdate = useCallback(
     (trackId: string, transform: any) => {
-      const track = tracks.find((t) => t.id === trackId);
+      const track = useVideoEditorStore
+        .getState()
+        .tracks.find((t) => t.id === trackId);
       if (!track || track.type !== 'video') return;
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: track.width || baseVideoWidth,
-        height: track.height || baseVideoHeight,
-      };
-
-      updateTrack(trackId, {
-        textTransform: { ...currentTransform, ...transform },
-      });
+      updateTrackTransform(trackId, transform);
     },
-    [tracks, updateTrack, baseVideoWidth, baseVideoHeight],
+    [updateTrackTransform],
   );
 
   const handleVideoSelect = useCallback(

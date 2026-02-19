@@ -40,9 +40,8 @@ const ImagePropertiesComponent: React.FC<ImagePropertiesProps> = ({
   const canvasHeight = useVideoEditorStore(
     (state) => state.preview.canvasHeight || 1080,
   );
-  const updateTrack = useVideoEditorStore((state) => state.updateTrack);
-  const updateTrackProperty = useVideoEditorStore(
-    (state) => state.updateTrackProperty,
+  const updateTrackTransform = useVideoEditorStore(
+    (state) => state.updateTrackTransform,
   );
   const beginPropertyUpdate = useVideoEditorStore(
     (state) => state.beginPropertyUpdate,
@@ -108,32 +107,20 @@ const ImagePropertiesComponent: React.FC<ImagePropertiesProps> = ({
   const updateTransform = useCallback(
     (transformUpdates: Partial<typeof DEFAULT_TRANSFORM>) => {
       selectedImageTracks.forEach((track) => {
-        const currentTrackTransform = track.textTransform || DEFAULT_TRANSFORM;
-        updateTrack(track.id, {
-          textTransform: {
-            ...currentTrackTransform,
-            ...transformUpdates,
-          },
-        });
+        updateTrackTransform(track.id, transformUpdates);
       });
     },
-    [selectedImageTracks, updateTrack],
+    [selectedImageTracks, updateTrackTransform],
   );
 
   // Helper function to update transform during drag (batch-safe, no individual undo entries)
   const updateTransformDrag = useCallback(
     (transformUpdates: Partial<typeof DEFAULT_TRANSFORM>) => {
       selectedImageTracks.forEach((track) => {
-        const currentTrackTransform = track.textTransform || DEFAULT_TRANSFORM;
-        updateTrackProperty(track.id, {
-          textTransform: {
-            ...currentTrackTransform,
-            ...transformUpdates,
-          },
-        });
+        updateTrackTransform(track.id, transformUpdates, { skipRecord: true });
       });
     },
-    [selectedImageTracks, updateTrackProperty],
+    [selectedImageTracks, updateTrackTransform],
   );
 
   // Check if transform has changed from default

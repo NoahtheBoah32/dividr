@@ -26,6 +26,63 @@ import {
   getTrackColor,
 } from '../utils/trackHelpers';
 
+type TrackTransform = NonNullable<VideoTrack['textTransform']>;
+
+const DEFAULT_TRACK_TRANSFORM: TrackTransform = {
+  x: 0,
+  y: 0,
+  scale: 1,
+  rotation: 0,
+  width: 0,
+  height: 0,
+};
+
+const sanitizeTransformUpdates = (
+  updates: Partial<TrackTransform>,
+): Partial<TrackTransform> => {
+  const sanitized: Partial<TrackTransform> = {};
+
+  if (updates.x !== undefined && Number.isFinite(updates.x)) {
+    sanitized.x = updates.x;
+  }
+  if (updates.y !== undefined && Number.isFinite(updates.y)) {
+    sanitized.y = updates.y;
+  }
+  if (updates.scale !== undefined) {
+    sanitized.scale =
+      Number.isFinite(updates.scale) && updates.scale > 0 ? updates.scale : 1;
+  }
+  if (updates.rotation !== undefined && Number.isFinite(updates.rotation)) {
+    sanitized.rotation = updates.rotation;
+  }
+  if (updates.width !== undefined) {
+    sanitized.width =
+      Number.isFinite(updates.width) && updates.width >= 0 ? updates.width : 0;
+  }
+  if (updates.height !== undefined) {
+    sanitized.height =
+      Number.isFinite(updates.height) && updates.height >= 0
+        ? updates.height
+        : 0;
+  }
+
+  return sanitized;
+};
+
+const cloneNestedTrackMetadata = (track: VideoTrack): VideoTrack => ({
+  ...track,
+  textTransform: track.textTransform
+    ? { ...track.textTransform }
+    : track.textTransform,
+  subtitleTransform: track.subtitleTransform
+    ? { ...track.subtitleTransform }
+    : track.subtitleTransform,
+  textStyle: track.textStyle ? { ...track.textStyle } : track.textStyle,
+  subtitleStyle: track.subtitleStyle
+    ? { ...track.subtitleStyle }
+    : track.subtitleStyle,
+});
+
 const resolveSubtitleRowIndex = (
   tracks: VideoTrack[],
   providedRowIndex?: number,
@@ -269,6 +326,11 @@ export interface TracksSlice {
   removeTrack: (trackId: string) => void;
   removeSelectedTracks: () => void;
   updateTrack: (trackId: string, updates: Partial<VideoTrack>) => void;
+  updateTrackTransform: (
+    trackId: string,
+    updates: Partial<TrackTransform>,
+    options?: { skipRecord?: boolean },
+  ) => void;
   moveTrack: (trackId: string, newStartFrame: number) => void;
   moveSelectedTracks: (draggedTrackId: string, newStartFrame: number) => void;
   moveTrackToRow: (
@@ -1098,6 +1160,37 @@ export const createTracksSlice: StateCreator<
     state.markUnsavedChanges?.();
   },
 
+  updateTrackTransform: (trackId, updates, options) => {
+    const safeUpdates = sanitizeTransformUpdates(updates);
+    if (Object.keys(safeUpdates).length === 0) {
+      return;
+    }
+
+    const state = get() as any;
+    if (!options?.skipRecord) {
+      state.recordAction?.('Transform Track');
+    }
+
+    set((state: any) => ({
+      tracks: state.tracks.map((track: VideoTrack) => {
+        if (track.id !== trackId) {
+          return track;
+        }
+
+        const currentTransform = track.textTransform || DEFAULT_TRACK_TRANSFORM;
+        return {
+          ...track,
+          textTransform: {
+            ...currentTransform,
+            ...safeUpdates,
+          },
+        };
+      }),
+    }));
+
+    state.markUnsavedChanges?.();
+  },
+
   moveTrack: (trackId, newStartFrame) => {
     set((state: any) => {
       const trackToMove = state.tracks.find(
@@ -1751,7 +1844,7 @@ export const createTracksSlice: StateCreator<
 
         // Create duplicate with ALL metadata preserved (reference-based)
         const duplicatedTrack: VideoTrack = {
-          ...originalTrack, // Preserve ALL properties including transforms, effects, etc.
+          ...cloneNestedTrackMetadata(originalTrack), // Preserve ALL properties including transforms, effects, etc.
           id: newId,
           name: `${originalTrack.name}`,
           startFrame: finalStartFrame,
@@ -1773,7 +1866,7 @@ export const createTracksSlice: StateCreator<
         };
 
         const duplicatedLinkedTrack: VideoTrack = {
-          ...linkedTrack, // Preserve ALL properties
+          ...cloneNestedTrackMetadata(linkedTrack), // Preserve ALL properties
           id: newLinkedId,
           name: `${linkedTrack.name}`,
           startFrame: linkedFinalStartFrame,
@@ -1823,7 +1916,7 @@ export const createTracksSlice: StateCreator<
     // Create duplicate with ALL metadata preserved (reference-based)
     // If original was linked but we're only duplicating one side, break the link
     const duplicatedTrack: VideoTrack = {
-      ...originalTrack, // Preserve ALL properties including transforms, effects, etc.
+      ...cloneNestedTrackMetadata(originalTrack), // Preserve ALL properties including transforms, effects, etc.
       id: newId,
       name: `${originalTrack.name}`,
       startFrame: finalStartFrame,

@@ -429,21 +429,32 @@ export const createTextStyleSlice: StateCreator<
     }),
 
   // Global subtitle position and transform
-  // NOTE: This is called during playback/rendering to sync position state.
-  // It should NOT trigger auto-save as it's runtime state, not user edits.
-  setGlobalSubtitlePosition: (position: {
-    x: number;
-    y: number;
-    scale?: number;
-    width?: number;
-    height?: number;
-  }) =>
-    set((state: any) => ({
-      textStyle: {
-        ...state.textStyle,
-        globalSubtitlePosition: position,
-      },
-    })),
+  setGlobalSubtitlePosition: (
+    position: {
+      x: number;
+      y: number;
+      scale?: number;
+      width?: number;
+      height?: number;
+    },
+    options?: { skipRecord?: boolean },
+  ) =>
+    set((state: any) => {
+      if (!options?.skipRecord) {
+        state.recordAction?.('Transform Subtitle');
+      }
+      state.markUnsavedChanges?.();
+
+      return {
+        textStyle: {
+          ...state.textStyle,
+          globalSubtitlePosition: {
+            ...state.textStyle.globalSubtitlePosition,
+            ...position,
+          },
+        },
+      };
+    }),
 
   // Snapshot global styles to selected subtitle tracks
   // This should be called when:

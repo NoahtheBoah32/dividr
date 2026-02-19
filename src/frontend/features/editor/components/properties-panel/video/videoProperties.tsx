@@ -42,9 +42,8 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
   const canvasHeight = useVideoEditorStore(
     (state) => state.preview.canvasHeight || 1080,
   );
-  const updateTrack = useVideoEditorStore((state) => state.updateTrack);
-  const updateTrackProperty = useVideoEditorStore(
-    (state) => state.updateTrackProperty,
+  const updateTrackTransform = useVideoEditorStore(
+    (state) => state.updateTrackTransform,
   );
   const beginPropertyUpdate = useVideoEditorStore(
     (state) => state.beginPropertyUpdate,
@@ -215,20 +214,17 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
     (transformUpdates: Partial<typeof DEFAULT_TRANSFORM>) => {
       const sanitizedUpdates = sanitizeTransform(transformUpdates);
       selectedVideoTracks.forEach((track) => {
-        // Use track-specific defaults to ensure width/height are never zero
-        const currentTrackTransform =
-          track.textTransform || getDefaultTransformForTrack(track);
-        updateTrack(track.id, {
-          textTransform: {
-            ...currentTrackTransform,
-            ...sanitizedUpdates,
-          },
-        });
+        if (!track.textTransform) {
+          updateTrackTransform(track.id, getDefaultTransformForTrack(track), {
+            skipRecord: true,
+          });
+        }
+        updateTrackTransform(track.id, sanitizedUpdates);
       });
     },
     [
       selectedVideoTracks,
-      updateTrack,
+      updateTrackTransform,
       sanitizeTransform,
       getDefaultTransformForTrack,
     ],
@@ -239,20 +235,17 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
     (transformUpdates: Partial<typeof DEFAULT_TRANSFORM>) => {
       const sanitizedUpdates = sanitizeTransform(transformUpdates);
       selectedVideoTracks.forEach((track) => {
-        // Use track-specific defaults to ensure width/height are never zero
-        const currentTrackTransform =
-          track.textTransform || getDefaultTransformForTrack(track);
-        updateTrackProperty(track.id, {
-          textTransform: {
-            ...currentTrackTransform,
-            ...sanitizedUpdates,
-          },
-        });
+        if (!track.textTransform) {
+          updateTrackTransform(track.id, getDefaultTransformForTrack(track), {
+            skipRecord: true,
+          });
+        }
+        updateTrackTransform(track.id, sanitizedUpdates, { skipRecord: true });
       });
     },
     [
       selectedVideoTracks,
-      updateTrackProperty,
+      updateTrackTransform,
       sanitizeTransform,
       getDefaultTransformForTrack,
     ],
