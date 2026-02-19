@@ -42,6 +42,24 @@ const getContentSignatureKey = (
   return `${signature.partialHash}_${signature.fileSize}`;
 };
 
+const normalizePathForComparison = (filePath?: string): string | null => {
+  if (!filePath) return null;
+
+  const trimmed = filePath.trim();
+  if (!trimmed) return null;
+
+  const withoutFilePrefix = trimmed.replace(/^file:\/\//i, '');
+  const withForwardSlashes = withoutFilePrefix.replace(/\\/g, '/');
+  const collapsedSlashes = withForwardSlashes.replace(/\/{2,}/g, '/');
+  const withoutTrailingSlash = collapsedSlashes.replace(/\/$/, '');
+  const isLikelyWindowsPath =
+    /^[a-z]:\//i.test(withoutTrailingSlash) || trimmed.includes('\\');
+
+  return isLikelyWindowsPath
+    ? withoutTrailingSlash.toLowerCase()
+    : withoutTrailingSlash;
+};
+
 const persistentMediaUpdateKeys = new Set<string>([
   'name',
   'source',
@@ -62,7 +80,7 @@ const shouldMarkUnsavedChangesForMediaUpdate = (
   return Object.keys(updates).some((key) => persistentMediaUpdateKeys.has(key));
 };
 
-/** Duplicate detection user choice: 'use-existing' (skip) | 'import-copy' (keep both) */
+/** Duplicate detection user choice */
 export type DuplicateChoice = 'use-existing' | 'import-copy';
 
 /** Single duplicate item for batch processing */
@@ -71,7 +89,7 @@ export interface DuplicateItem {
   pendingFileName: string;
   pendingFilePath?: string;
   existingMedia: MediaLibraryItem;
-  signature: ContentSignature;
+  signature?: ContentSignature;
   choice?: DuplicateChoice;
 }
 
@@ -163,6 +181,7 @@ export interface MediaLibrarySlice {
   ) => void;
 
   // Duplicate detection (legacy single-file)
+  findDuplicateByPath: (filePath: string) => MediaLibraryItem | undefined;
   findDuplicateBySignature: (
     signature: ContentSignature,
   ) => MediaLibraryItem | undefined;
@@ -206,6 +225,22 @@ export const createMediaLibrarySlice: StateCreator<
   duplicateDetection: null,
   batchDuplicateDetection: null,
   transcodingBlockedMedia: null,
+
+  findDuplicateByPath: (filePath: string) => {
+    const normalizedTargetPath = normalizePathForComparison(filePath);
+    if (!normalizedTargetPath) return undefined;
+
+    const state = get() as any;
+    return state.mediaLibrary?.find((item: MediaLibraryItem) => {
+      const candidatePaths = [item.source, item.tempFilePath];
+      return candidatePaths.some((candidatePath) => {
+        const normalizedCandidate = normalizePathForComparison(candidatePath);
+        return (
+          !!normalizedCandidate && normalizedCandidate === normalizedTargetPath
+        );
+      });
+    });
+  },
 
   findDuplicateBySignature: (signature: ContentSignature) => {
     const state = get() as any;

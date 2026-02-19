@@ -1,3 +1,8 @@
+export type ImportDisposition =
+  | 'imported-new'
+  | 'imported-copy'
+  | 'reused-existing';
+
 export interface ImportedFileData {
   id: string;
   name: string;
@@ -5,6 +10,8 @@ export interface ImportedFileData {
   size: number;
   url: string;
   thumbnail?: string;
+  isDuplicate?: boolean;
+  importDisposition?: ImportDisposition;
 }
 
 export interface RejectedFileData {
@@ -17,6 +24,12 @@ export interface ImportResult {
   success: boolean;
   importedFiles: ImportedFileData[];
   rejectedFiles?: RejectedFileData[];
+  summary?: {
+    importedNew: number;
+    importedCopies: number;
+    reusedExisting: number;
+    totalImportedEntries: number;
+  };
   error?: string;
 }
 

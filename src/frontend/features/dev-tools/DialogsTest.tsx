@@ -314,7 +314,6 @@ export const DialogsTest = () => {
           setDuplicateMediaOpen(false);
           toast.success(`Processed ${choices.size} duplicate decisions`);
         }}
-        onCancel={() => setDuplicateMediaOpen(false)}
       />
 
       <ThumbnailChangerDialog

@@ -55,7 +55,6 @@ import { useVideoEditorStore } from '../../../stores/videoEditor/index';
 import { VideoTrack } from '../../../stores/videoEditor/types';
 import { isSubtitleFile } from '../../../stores/videoEditor/utils/subtitleParser';
 import { getNextAvailableRowIndex } from '../../../timeline/utils/dynamicTrackRows';
-import { DuplicateMediaDialog } from '../../dialogs/batchDuplicateMediaDialog';
 import { KaraokeConfirmationDialog } from '../../dialogs/karaokeConfirmationDialog';
 import { ProxyWarningDialog } from '../../dialogs/proxyWarningDialog';
 
@@ -138,7 +137,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
             onError={() => setHasError(true)}
           />
           {file.duration && (
-            <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+            <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
               <Clock
                 className="-ms-0.5 opacity-60"
                 size={12}
@@ -148,7 +147,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
             </Badge>
           )}
           {file.hasGeneratedKaraoke && (
-            <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+            <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
               <KaraokeIcon />
             </Badge>
           )}
@@ -167,7 +166,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
           >
             {getFileIcon(file.type, file.name)}
             {file.duration && (
-              <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+              <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
                 <Clock
                   className="-ms-0.5 opacity-60"
                   size={12}
@@ -177,7 +176,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
               </Badge>
             )}
             {file.hasGeneratedKaraoke && (
-              <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+              <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
                 <KaraokeIcon />
               </Badge>
             )}
@@ -214,7 +213,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
             />
           )}
           {file.duration && (
-            <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+            <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
               <Clock
                 className="-ms-0.5 opacity-60"
                 size={12}
@@ -224,7 +223,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
             </Badge>
           )}
           {file.hasGeneratedKaraoke && (
-            <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+            <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
               <KaraokeIcon />
             </Badge>
           )}
@@ -241,7 +240,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
       >
         {getFileIcon(file.type, file.name)}
         {file.duration && (
-          <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+          <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
             <Clock
               className="-ms-0.5 opacity-60"
               size={12}
@@ -251,7 +250,7 @@ const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
           </Badge>
         )}
         {file.hasGeneratedKaraoke && (
-          <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+          <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
             <KaraokeIcon />
           </Badge>
         )}
@@ -295,7 +294,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                 }
               }}
               className={cn(
-                'group relative h-[98px] rounded-md transition-all duration-200 overflow-hidden',
+                'group/media-item relative isolate h-[98px] rounded-md transition-all duration-200 overflow-hidden',
                 !file.isOnTimeline &&
                   !isLocked &&
                   'cursor-grab active:cursor-grabbing',
@@ -369,7 +368,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                   </Badge>
                 </div>
               )}
-              <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <div className="absolute inset-0 bg-background/35 opacity-0 group-hover/media-item:opacity-100 transition-opacity duration-200">
                 <div className="absolute bottom-1 right-2">
                   {!isLocked && (
                     <Button
@@ -388,7 +387,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                 </div>
               </div>
               {file.isOnTimeline && (
-                <Badge className="absolute top-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+                <Badge className="absolute top-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
                   Added
                 </Badge>
               )}
@@ -517,13 +516,6 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     (state) => state.transcriptionProgress,
   );
 
-  // Duplicate detection state (unified for single or multiple files)
-  const batchDuplicateDetection = useVideoEditorStore(
-    (state) => state.batchDuplicateDetection,
-  );
-  const hideBatchDuplicateDialog = useVideoEditorStore(
-    (state) => state.hideBatchDuplicateDialog,
-  );
   const transcodingBlockedMedia = useVideoEditorStore(
     (state) => state.transcodingBlockedMedia,
   );
@@ -1207,11 +1199,6 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           ))}
         </div>
       </div>
-      {dragActive && (
-        <div className="absolute inset-0 border-2 border-dashed flex items-center justify-center border-secondary bg-secondary/10 rounded-lg pointer-events-none z-10">
-          <p className="text-sm text-muted-foreground">Drop files to import</p>
-        </div>
-      )}
     </div>
   );
 
@@ -1353,11 +1340,14 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
             Import
             <PlusCircle className="size-4" />
           </Button>
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
             <Tabs
               value={activeTab}
               onValueChange={(value) => setActiveTab(value as MediaTab)}
-              className="flex-1 min-h-0 gap-4 flex flex-col"
+              className={cn(
+                'flex-1 min-h-0 gap-4 flex flex-col',
+                dragActive && 'opacity-10 transition-opacity duration-100',
+              )}
             >
               <TabsList variant="text" className="w-full justify-start">
                 <TabsTrigger value="all" variant="text">
@@ -1393,6 +1383,13 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
                 {getTabContent('subtitles')}
               </TabsContent>
             </Tabs>
+            {dragActive && (
+              <div className="absolute inset-0 border-2 border-dashed flex items-center justify-center border-secondary bg-secondary/10 rounded-lg pointer-events-none z-20">
+                <p className="text-sm text-muted-foreground">
+                  Drop files to import
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </BasePanel>
@@ -1457,36 +1454,6 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
               deleteExisting,
             );
           }
-        }}
-      />
-
-      {/* Unified duplicate media dialog - works for single or multiple duplicates */}
-      <DuplicateMediaDialog
-        open={batchDuplicateDetection?.show ?? false}
-        onOpenChange={(open) => {
-          if (!open) {
-            // Skip all duplicates if dialog closed (use existing)
-            const skipChoices = new Map<string, 'use-existing'>();
-            batchDuplicateDetection?.duplicates?.forEach((dup) => {
-              skipChoices.set(dup.id, 'use-existing');
-            });
-            batchDuplicateDetection?.pendingResolve?.(skipChoices);
-            hideBatchDuplicateDialog?.();
-          }
-        }}
-        duplicates={batchDuplicateDetection?.duplicates ?? []}
-        onConfirm={(choices) => {
-          batchDuplicateDetection?.pendingResolve?.(choices);
-          hideBatchDuplicateDialog?.();
-        }}
-        onCancel={() => {
-          // Skip all duplicates (use existing)
-          const skipChoices = new Map<string, 'use-existing'>();
-          batchDuplicateDetection?.duplicates?.forEach((dup) => {
-            skipChoices.set(dup.id, 'use-existing');
-          });
-          batchDuplicateDetection?.pendingResolve?.(skipChoices);
-          hideBatchDuplicateDialog?.();
         }}
       />
 

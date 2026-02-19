@@ -1,7 +1,6 @@
 import {
   AlertDialog,
   AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -23,7 +22,6 @@ interface DuplicateMediaDialogProps {
   onOpenChange: (open: boolean) => void;
   duplicates: DuplicateItem[];
   onConfirm: (choices: Map<string, DuplicateChoice>) => void;
-  onCancel: () => void;
 }
 
 export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
@@ -31,10 +29,8 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
   onOpenChange,
   duplicates,
   onConfirm,
-  onCancel,
 }) => {
-  // Track which items should be kept (import as copy)
-  // Checked = Keep Both (import-copy), Unchecked = Skip (use-existing)
+  // Checked = keep both (import-copy), Unchecked = skip (use-existing)
   const [keepItems, setKeepItems] = useState<Set<string>>(new Set());
 
   // Toggle a single item
@@ -76,7 +72,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
   const handleConfirm = useCallback(() => {
     const finalChoices = new Map<string, DuplicateChoice>();
     duplicates.forEach((dup) => {
-      // Checked = import-copy, Unchecked = use-existing (skip)
+      // Checked = keep both (import-copy), Unchecked = skip (use-existing)
       finalChoices.set(
         dup.id,
         keepItems.has(dup.id) ? 'import-copy' : 'use-existing',
@@ -85,11 +81,6 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
     onConfirm(finalChoices);
     setKeepItems(new Set());
   }, [duplicates, keepItems, onConfirm]);
-
-  const handleCancel = useCallback(() => {
-    onCancel();
-    setKeepItems(new Set());
-  }, [onCancel]);
 
   // Reset state when dialog opens
   React.useEffect(() => {
@@ -132,7 +123,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
           {duplicates.length > 1 && (
             <div className="flex items-center justify-between pb-2 mb-2 border-b">
               <span className="text-xs text-muted-foreground">
-                Check to keep both versions, uncheck to skip
+                Check to keep both, uncheck to skip
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -146,7 +137,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
                   )}
                   disabled={allSelected}
                   tabIndex={0}
-                  aria-label="Select all"
+                  aria-label="Keep both for all duplicates"
                 >
                   Keep All
                 </button>
@@ -162,7 +153,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
                   )}
                   disabled={noneSelected}
                   tabIndex={0}
-                  aria-label="Deselect all"
+                  aria-label="Skip all duplicates"
                 >
                   Skip All
                 </button>
@@ -223,7 +214,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
                           : 'bg-amber-600/10 text-amber-600 dark:text-amber-400',
                       )}
                     >
-                      {isChecked ? 'Keep' : 'Skip'}
+                      {isChecked ? 'Keep Both' : 'Skip'}
                     </span>
                   </label>
                 );
@@ -239,7 +230,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
               <span className="text-secondary font-medium">
                 {keepItems.size}
               </span>{' '}
-              to keep
+              to keep both
             </span>
             <span className="text-border">|</span>
             <span>
@@ -252,14 +243,11 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
         )}
 
         <AlertDialogFooter>
-          {!isSingleDuplicate && !singleDuplicate && (
-            <AlertDialogCancel onClick={handleCancel}>Cancel</AlertDialogCancel>
-          )}
           {isSingleDuplicate && singleDuplicate ? (
             <>
               <AlertDialogAction
                 onClick={() => {
-                  // Skip = use existing
+                  // Skip
                   const choices = new Map<string, DuplicateChoice>();
                   choices.set(singleDuplicate.id, 'use-existing');
                   onConfirm(choices);
@@ -274,7 +262,7 @@ export const DuplicateMediaDialog: React.FC<DuplicateMediaDialogProps> = ({
               </AlertDialogAction>
               <AlertDialogAction
                 onClick={() => {
-                  // Keep Both = import as copy
+                  // Keep Both
                   const choices = new Map<string, DuplicateChoice>();
                   choices.set(singleDuplicate.id, 'import-copy');
                   onConfirm(choices);

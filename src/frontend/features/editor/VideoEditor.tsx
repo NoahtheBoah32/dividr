@@ -7,6 +7,7 @@ import { useVideoEditorStore } from './stores/videoEditor/index';
 import { NavigationBlockerDialog } from '@/frontend/components/custom/NavigationAlertDialog';
 import { useTranscodeListener } from '@/frontend/hooks/useTranscodeListener';
 import { useUnsavedChangesWarning } from '@/frontend/hooks/useUnsavedChangesWarning';
+import { DuplicateMediaDialogHost } from './components/dialogs/DuplicateMediaDialogHost';
 
 interface VideoEditorProps {
   className?: string;
@@ -102,6 +103,8 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
         isSubmitting={isExitActionRunning}
         errorMessage={exitErrorMessage}
       />
+
+      <DuplicateMediaDialogHost />
     </>
   );
 };

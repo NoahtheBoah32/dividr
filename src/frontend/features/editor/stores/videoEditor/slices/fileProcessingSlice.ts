@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { StateCreator } from 'zustand';
 import {
   FileProcessingSlice,
+  ImportDisposition,
   ImportResult,
   MediaLibraryItem,
   ProcessedFileInfo,
@@ -249,6 +250,7 @@ interface ProcessImportResult {
   type: string;
   size: number;
   url: string;
+  importDisposition?: ImportDisposition;
   isDuplicate?: boolean;
   existingMediaId?: string;
 }
@@ -399,6 +401,7 @@ const processImportedFile = async (
                 type: existingMedia.mimeType,
                 size: existingMedia.size,
                 url: existingMedia.previewUrl || existingMedia.source,
+                importDisposition: 'reused-existing',
                 isDuplicate: true,
                 existingMediaId: existingMedia.id,
               };
@@ -1031,12 +1034,143 @@ const processImportedFile = async (
     type: mimeType,
     size: fileInfo.size,
     url: previewUrl || fileInfo.path,
+    importDisposition: 'imported-new',
   };
 };
 
 // Track ongoing import operations to prevent duplicate imports
 // Key is a hash of file names and sizes
 const ongoingImports = new Map<string, Promise<ImportResult>>();
+
+const buildImportSummary = (
+  importedFiles: ImportResult['importedFiles'],
+): NonNullable<ImportResult['summary']> => {
+  const summary = {
+    importedNew: 0,
+    importedCopies: 0,
+    reusedExisting: 0,
+    totalImportedEntries: importedFiles.length,
+  };
+
+  importedFiles.forEach((file) => {
+    switch (file.importDisposition) {
+      case 'reused-existing':
+        summary.reusedExisting += 1;
+        break;
+      case 'imported-copy':
+        summary.importedCopies += 1;
+        break;
+      case 'imported-new':
+      default:
+        summary.importedNew += 1;
+        break;
+    }
+  });
+
+  return summary;
+};
+
+const scanFilesForDuplicates = async (
+  files: Array<{ name: string; path: string }>,
+  storeState: any,
+): Promise<{
+  duplicatesToHandle: DuplicateItem[];
+  fileSignatures: Map<string, { signature: any; existingMedia: any }>;
+}> => {
+  const duplicatesToHandle: DuplicateItem[] = [];
+  const fileSignatures = new Map<
+    string,
+    { signature: any; existingMedia: any }
+  >();
+
+  await Promise.all(
+    files.map(async (fileInfo) => {
+      try {
+        // Primary duplicate detection: absolute file path.
+        const existingByPath = storeState.findDuplicateByPath?.(fileInfo.path);
+        if (existingByPath) {
+          duplicatesToHandle.push({
+            id: `dup-${fileInfo.name}-${Date.now()}-${Math.random()}`,
+            pendingFileName: fileInfo.name,
+            pendingFilePath: fileInfo.path,
+            existingMedia: existingByPath,
+            signature: existingByPath.contentSignature,
+          });
+          fileSignatures.set(fileInfo.path, {
+            signature: existingByPath.contentSignature,
+            existingMedia: existingByPath,
+          });
+          return;
+        }
+
+        // Secondary duplicate detection: content signature.
+        const signature = await generateContentSignatureFromPath(fileInfo.path);
+        const existingBySignature = signature
+          ? storeState.findDuplicateBySignature?.(signature)
+          : undefined;
+
+        if (existingBySignature) {
+          duplicatesToHandle.push({
+            id: `dup-${fileInfo.name}-${Date.now()}-${Math.random()}`,
+            pendingFileName: fileInfo.name,
+            pendingFilePath: fileInfo.path,
+            existingMedia: existingBySignature,
+            signature,
+          });
+        }
+
+        fileSignatures.set(fileInfo.path, {
+          signature,
+          existingMedia: existingBySignature,
+        });
+      } catch (error) {
+        console.warn(
+          `[FileProcessingSlice] Failed to check duplicate for${fileInfo.name}:`,
+          error,
+        );
+      }
+    }),
+  );
+
+  return { duplicatesToHandle, fileSignatures };
+};
+
+const resolveDuplicateChoicesByPath = async (
+  duplicatesToHandle: DuplicateItem[],
+  showBatchDuplicateDialog?: (
+    duplicates: DuplicateItem[],
+    resolve: (choices: Map<string, DuplicateChoice>) => void,
+  ) => void,
+): Promise<{
+  pathToChoice: Map<string, DuplicateChoice>;
+}> => {
+  const pathToChoice = new Map<string, DuplicateChoice>();
+
+  if (duplicatesToHandle.length === 0) {
+    return { pathToChoice };
+  }
+
+  if (!showBatchDuplicateDialog) {
+    duplicatesToHandle.forEach((dup) => {
+      if (dup.pendingFilePath) {
+        pathToChoice.set(dup.pendingFilePath, 'use-existing');
+      }
+    });
+    return { pathToChoice };
+  }
+
+  const choices = await new Promise<Map<string, DuplicateChoice>>((resolve) => {
+    showBatchDuplicateDialog(duplicatesToHandle, resolve);
+  });
+
+  duplicatesToHandle.forEach((dup) => {
+    if (!dup.pendingFilePath) return;
+    const choice = choices.get(dup.id) ?? 'use-existing';
+    pathToChoice.set(dup.pendingFilePath, choice);
+  });
+
+  return { pathToChoice };
+};
 
 export const createFileProcessingSlice: StateCreator<
   FileProcessingSlice,
@@ -1172,14 +1306,7 @@ export const createFileProcessingSlice: StateCreator<
 
       // STEP 2: Process only valid files
 
-      const importedFiles: Array<{
-        id: string;
-        name: string;
-        type: string;
-        size: number;
-        url: string;
-        thumbnail?: string;
-      }> = [];
+      const importedFiles: ImportResult['importedFiles'] = [];
 
       // Start undo group for batch import
       const state = get() as any;
@@ -1189,51 +1316,16 @@ export const createFileProcessingSlice: StateCreator<
         // Get valid files to process
         const validFiles = validFileIndices.map((i) => result.files[i]);
 
-        // STEP 1: Scan ALL files for duplicates first (Parallelized)
+        // STEP 1: Scan ALL files for duplicates first.
         const storeState = get() as any;
-        const duplicatesToHandle: DuplicateItem[] = [];
-        const fileSignatures = new Map<
-          string,
-          { signature: any; existingMedia: any }
-        >();
+        const { duplicatesToHandle, fileSignatures } =
+          await scanFilesForDuplicates(validFiles, storeState);
 
-        await Promise.all(
-          validFiles.map(async (fileInfo) => {
-            try {
-              const signature = await generateContentSignatureFromPath(
-                fileInfo.path,
-              );
-              if (signature) {
-                const existingMedia =
-                  storeState.findDuplicateBySignature(signature);
-                if (existingMedia) {
-                  duplicatesToHandle.push({
-                    id: `dup-${fileInfo.name}-${Date.now()}-${Math.random()}`,
-                    pendingFileName: fileInfo.name,
-                    pendingFilePath: fileInfo.path,
-                    existingMedia,
-                    signature,
-                  });
-                }
-                fileSignatures.set(fileInfo.path, { signature, existingMedia });
-              }
-            } catch (error) {
-              console.warn(
-                `[FileProcessingSlice] Failed to check duplicate for${fileInfo.name}:`,
-                error,
-              );
-            }
-          }),
+        // STEP 2: Ask user how to handle duplicates (use existing/import anyway).
+        const { pathToChoice } = await resolveDuplicateChoicesByPath(
+          duplicatesToHandle,
+          storeState.showBatchDuplicateDialog,
         );
-
-        // STEP 2: Enforce dedupe by reusing existing media entries
-        // (single source of truth: no duplicate registry entries).
-        const pathToChoice = new Map<string, DuplicateChoice>();
-        duplicatesToHandle.forEach((dup) => {
-          if (dup.pendingFilePath) {
-            pathToChoice.set(dup.pendingFilePath, 'use-existing');
-          }
-        });
 
         // STEP 3: Process files with pre-determined duplicate choices (Parallelized)
         await Promise.all(
@@ -1255,6 +1347,8 @@ export const createFileProcessingSlice: StateCreator<
                   url:
                     sigInfo.existingMedia.previewUrl ||
                     sigInfo.existingMedia.source,
+                  importDisposition: 'reused-existing',
+                  isDuplicate: true,
                 });
                 return;
               }
@@ -1275,7 +1369,17 @@ export const createFileProcessingSlice: StateCreator<
               );
 
               if (fileData) {
-                importedFiles.push(fileData);
+                importedFiles.push({
+                  ...fileData,
+                  importDisposition:
+                    duplicateChoice === 'import-copy'
+                      ? 'imported-copy'
+                      : (fileData.importDisposition ?? 'imported-new'),
+                  isDuplicate:
+                    duplicateChoice === 'import-copy'
+                      ? true
+                      : fileData.isDuplicate,
+                });
               }
             } catch (error: any) {
               console.error(
@@ -1300,6 +1404,7 @@ export const createFileProcessingSlice: StateCreator<
         return {
           success: true,
           importedFiles,
+          summary: buildImportSummary(importedFiles),
           rejectedFiles: rejectedFiles.length > 0 ? rejectedFiles : undefined,
         };
       } finally {
@@ -1430,68 +1535,23 @@ export const createFileProcessingSlice: StateCreator<
             };
           }
 
-          const importedFiles: Array<{
-            id: string;
-            name: string;
-            type: string;
-            size: number;
-            url: string;
-            thumbnail?: string;
-          }> = [];
+          const importedFiles: ImportResult['importedFiles'] = [];
 
           // Start undo group for batch import
           const state = get() as any;
           state.beginGroup?.('Import Media');
 
           try {
-            // STEP 1: Scan ALL files for duplicates first (before processing any) (Parallelized)
+            // STEP 1: Scan ALL files for duplicates first.
             const storeState = get() as any;
-            const duplicatesToHandle: DuplicateItem[] = [];
-            const fileSignatures = new Map<
-              string,
-              { signature: any; existingMedia: any }
-            >();
+            const { duplicatesToHandle, fileSignatures } =
+              await scanFilesForDuplicates(result.files, storeState);
 
-            await Promise.all(
-              result.files.map(async (fileInfo) => {
-                try {
-                  const signature = await generateContentSignatureFromPath(
-                    fileInfo.path,
-                  );
-                  if (signature) {
-                    const existingMedia =
-                      storeState.findDuplicateBySignature(signature);
-                    if (existingMedia) {
-                      duplicatesToHandle.push({
-                        id: `dup-${fileInfo.name}-${Date.now()}-${Math.random()}`,
-                        pendingFileName: fileInfo.name,
-                        pendingFilePath: fileInfo.path,
-                        existingMedia,
-                        signature,
-                      });
-                    }
-                    fileSignatures.set(fileInfo.path, {
-                      signature,
-                      existingMedia,
-                    });
-                  }
-                } catch (error) {
-                  console.warn(
-                    `[FileProcessingSlice] Failed to check duplicate for${fileInfo.name}:`,
-                    error,
-                  );
-                }
-              }),
+            // STEP 2: Ask user how to handle duplicates (use existing/import anyway).
+            const { pathToChoice } = await resolveDuplicateChoicesByPath(
+              duplicatesToHandle,
+              storeState.showBatchDuplicateDialog,
             );
-
-            // STEP 2: Enforce dedupe by reusing existing media entries
-            // (single source of truth: no duplicate registry entries).
-            const pathToChoice = new Map<string, DuplicateChoice>();
-            duplicatesToHandle.forEach((dup) => {
-              if (dup.pendingFilePath) {
-                pathToChoice.set(dup.pendingFilePath, 'use-existing');
-              }
-            });
 
             // STEP 3: Process files with pre-determined duplicate choices (Parallelized)
             await Promise.all(
@@ -1499,8 +1559,6 @@ export const createFileProcessingSlice: StateCreator<
                 try {
                   const sigInfo = fileSignatures.get(fileInfo.path);
                   const duplicateChoice = pathToChoice.get(fileInfo.path);
-
-                  // If duplicate and user chose cancel, skip
 
                   // If duplicate and user chose use-existing, add existing to results
                   if (
@@ -1515,6 +1573,8 @@ export const createFileProcessingSlice: StateCreator<
                       url:
                         sigInfo.existingMedia.previewUrl ||
                         sigInfo.existingMedia.source,
+                      importDisposition: 'reused-existing',
+                      isDuplicate: true,
                     });
                     return;
                   }
@@ -1535,7 +1595,17 @@ export const createFileProcessingSlice: StateCreator<
                   );
 
                   if (fileData) {
-                    importedFiles.push(fileData);
+                    importedFiles.push({
+                      ...fileData,
+                      importDisposition:
+                        duplicateChoice === 'import-copy'
+                          ? 'imported-copy'
+                          : (fileData.importDisposition ?? 'imported-new'),
+                      isDuplicate:
+                        duplicateChoice === 'import-copy'
+                          ? true
+                          : fileData.isDuplicate,
+                    });
                   }
                 } catch (error: any) {
                   console.error(
@@ -1560,6 +1630,7 @@ export const createFileProcessingSlice: StateCreator<
             return {
               success: true,
               importedFiles,
+              summary: buildImportSummary(importedFiles),
               rejectedFiles:
                 rejectedFiles.length > 0 ? rejectedFiles : undefined,
             };
@@ -1697,68 +1768,23 @@ export const createFileProcessingSlice: StateCreator<
             };
           }
 
-          const importedFiles: Array<{
-            id: string;
-            name: string;
-            type: string;
-            size: number;
-            url: string;
-            thumbnail?: string;
-            isDuplicate?: boolean;
-          }> = [];
+          const importedFiles: ImportResult['importedFiles'] = [];
 
           // Start undo group for batch import to timeline
           const state = get() as any;
           state.beginGroup?.('Import Media to Timeline');
 
           try {
-            // STEP 1: Scan ALL files for duplicates first (before processing any)
+            // STEP 1: Scan ALL files for duplicates first.
             const storeState = get() as any;
-            const duplicatesToHandle: DuplicateItem[] = [];
-            const fileSignatures = new Map<
-              string,
-              { signature: any; existingMedia: any }
-            >();
+            const { duplicatesToHandle, fileSignatures } =
+              await scanFilesForDuplicates(result.files, storeState);
 
-            // Generate signatures and check for duplicates
-            for (const fileInfo of result.files) {
-              try {
-                const signature = await generateContentSignatureFromPath(
-                  fileInfo.path,
-                );
-                if (signature) {
-                  const existingMedia =
-                    storeState.findDuplicateBySignature(signature);
-                  if (existingMedia) {
-                    duplicatesToHandle.push({
-                      id: `dup-${fileInfo.name}-${Date.now()}`,
-                      pendingFileName: fileInfo.name,
-                      pendingFilePath: fileInfo.path,
-                      existingMedia,
-                      signature,
-                    });
-                  }
-                  fileSignatures.set(fileInfo.path, {
-                    signature,
-                    existingMedia,
-                  });
-                }
-              } catch (error) {
-                console.warn(
-                  `[FileProcessingSlice] Failed to check duplicate for${fileInfo.name}:`,
-                  error,
-                );
-              }
-            }
-
-            // STEP 2: Enforce dedupe by reusing existing media entries
-            // (single source of truth: no duplicate registry entries).
-            const pathToChoice = new Map<string, DuplicateChoice>();
-            duplicatesToHandle.forEach((dup) => {
-              if (dup.pendingFilePath) {
-                pathToChoice.set(dup.pendingFilePath, 'use-existing');
-              }
-            });
+            // STEP 2: Ask user how to handle duplicates (use existing/import anyway).
+            const { pathToChoice } = await resolveDuplicateChoicesByPath(
+              duplicatesToHandle,
+              storeState.showBatchDuplicateDialog,
+            );
 
             // STEP 3: Process files with pre-determined duplicate choices
             const mediaIdsToAddToTimeline: string[] = [];
@@ -1767,8 +1793,6 @@ export const createFileProcessingSlice: StateCreator<
               try {
                 const sigInfo = fileSignatures.get(fileInfo.path);
                 const duplicateChoice = pathToChoice.get(fileInfo.path);
-
-                // If this is a duplicate and user chose to cancel, skip it
 
                 // If this is a duplicate and user chose to use existing, add existing to results
                 if (
@@ -1783,6 +1807,7 @@ export const createFileProcessingSlice: StateCreator<
                     url:
                       sigInfo.existingMedia.previewUrl ||
                       sigInfo.existingMedia.source,
+                    importDisposition: 'reused-existing',
                     isDuplicate: true,
                   });
                   // Reuse existing media entry and still create a timeline clip.
@@ -1810,7 +1835,17 @@ export const createFileProcessingSlice: StateCreator<
                   continue;
                 }
 
-                importedFiles.push(fileData);
+                importedFiles.push({
+                  ...fileData,
+                  importDisposition:
+                    duplicateChoice === 'import-copy'
+                      ? 'imported-copy'
+                      : (fileData.importDisposition ?? 'imported-new'),
+                  isDuplicate:
+                    duplicateChoice === 'import-copy'
+                      ? true
+                      : fileData.isDuplicate,
+                });
                 mediaIdsToAddToTimeline.push(fileData.id);
               } catch (error: any) {
                 console.error(
@@ -1886,6 +1921,7 @@ export const createFileProcessingSlice: StateCreator<
             return {
               success: true,
               importedFiles,
+              summary: buildImportSummary(importedFiles),
               rejectedFiles:
                 rejectedFiles.length > 0 ? rejectedFiles : undefined,
             };
