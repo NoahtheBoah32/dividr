@@ -1,5 +1,5 @@
 import { cn } from '@/frontend/utils/utils';
-import { Film } from 'lucide-react';
+import { ClosedCaption, Film, Type } from 'lucide-react';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
 import { AudioWaveform } from './audioWaveform';
@@ -128,6 +128,7 @@ export const DragGhost: React.FC<DragGhostProps> = React.memo(
             width={width}
             height={trackHeight} // Use track-specific height
             zoomLevel={zoomLevel}
+            renderWithoutViewportCulling
           />
         );
       }
@@ -160,14 +161,30 @@ export const DragGhost: React.FC<DragGhostProps> = React.memo(
         );
       }
 
-      // Text content for other track types (text, subtitle)
+      const trackLabel =
+        track.type === 'subtitle' && track.subtitleText
+          ? track.subtitleText
+          : track.type === 'text' && track.textContent
+            ? track.textContent
+            : track.name;
+
+      if (track.type === 'text' || track.type === 'subtitle') {
+        const TrackTypeIcon = track.type === 'subtitle' ? ClosedCaption : Type;
+
+        return (
+          <div className="h-full w-full px-2 py-1 flex items-center gap-1.5 text-[11px] text-white/90 overflow-hidden">
+            <TrackTypeIcon className="h-3 w-3 shrink-0 text-inherit" />
+            <span className="min-w-0 overflow-hidden whitespace-nowrap">
+              {trackLabel}
+            </span>
+          </div>
+        );
+      }
+
+      // Text content for other non-visual track types
       return (
-        <div className="text-white text-[11px] flex items-center whitespace-nowrap overflow-hidden text-ellipsis px-2">
-          {track.type === 'subtitle' && track.subtitleText
-            ? track.subtitleText
-            : track.type === 'text' && track.textContent
-              ? track.textContent
-              : track.name}
+        <div className="text-white text-[11px] flex items-center whitespace-nowrap overflow-hidden px-2">
+          {trackLabel}
         </div>
       );
     };

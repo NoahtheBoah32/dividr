@@ -1,6 +1,5 @@
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -8,38 +7,81 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/frontend/components/ui/alert-dialog';
+import { Button } from '@/frontend/components/ui/button';
 
 interface NavigationBlockerDialogProps {
   isOpen: boolean;
-  onConfirm: () => void;
   onCancel: () => void;
   isSaving: boolean;
+  mode?: 'navigation' | 'exit';
+  onConfirm?: () => void;
+  onSaveAndExit?: () => void;
+  onExitWithoutSaving?: () => void;
+  onSaveAndContinue?: () => void;
+  onContinueWithoutSaving?: () => void;
+  isSubmitting?: boolean;
+  errorMessage?: string | null;
 }
 
 export const NavigationBlockerDialog = ({
   isOpen,
-  onConfirm,
   onCancel,
   isSaving,
+  mode = 'navigation',
+  onConfirm,
+  onSaveAndExit,
+  onExitWithoutSaving,
+  onSaveAndContinue,
+  onContinueWithoutSaving,
+  isSubmitting = false,
+  errorMessage = null,
 }: NavigationBlockerDialogProps) => {
+  const isExitMode = mode === 'exit';
+
+  const title = 'You have unsaved changes.';
+
+  const description = isExitMode
+    ? 'Save before exiting, or exit without saving your latest edits.'
+    : 'Save before leaving, or continue without saving your latest edits.';
+
+  const handleSecondaryAction = isExitMode
+    ? onExitWithoutSaving
+    : (onContinueWithoutSaving ?? onConfirm);
+  const handlePrimaryAction = isExitMode ? onSaveAndExit : onSaveAndContinue;
+  const secondaryLabel = isExitMode
+    ? 'Exit Without Saving'
+    : 'Continue Without Saving';
+  const primaryLabel = isExitMode ? 'Save & Exit' : 'Save & Continue';
+
   return (
-    <AlertDialog open={isOpen}>
+    <AlertDialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            {isSaving ? 'Saving in progress' : 'Unsaved changes'}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {isSaving
-              ? 'Your project is currently being saved. Please wait a moment before leaving.'
-              : 'You have unsaved changes. Are you sure you want to leave? Your changes may be lost.'}
-          </AlertDialogDescription>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+          {errorMessage && (
+            <p className="text-sm font-medium text-destructive">
+              {errorMessage}
+            </p>
+          )}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel}>Stay</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} disabled={isSaving}>
-            {isSaving ? 'Saving...' : 'Leave anyway'}
-          </AlertDialogAction>
+          <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={handleSecondaryAction}
+            disabled={isSubmitting}
+          >
+            {secondaryLabel}
+          </Button>
+          <Button
+            type="button"
+            onClick={handlePrimaryAction}
+            disabled={isSubmitting || isSaving}
+          >
+            {isSubmitting || isSaving ? 'Saving...' : primaryLabel}
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

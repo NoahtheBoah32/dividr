@@ -41,6 +41,12 @@ const resolveSubtitleRowIndex = (
 };
 
 export interface TranscriptionSlice {
+  transcribingTrackLoaders: Array<{
+    trackId: string;
+    subtitleRowIndex: number;
+    startFrame: number;
+    endFrame: number;
+  }>;
   // State
   isTranscribing: boolean;
   currentTranscribingMediaId: string | null;
@@ -71,6 +77,7 @@ export interface TranscriptionSlice {
       beamSize?: number;
       vad?: boolean;
       processOnlyThisSegment?: boolean; // If true, only process this specific track/segment; if false/undefined, process all clips from source
+      subtitleRowIndex?: number;
       onProgress?: (progress: {
         stage: 'loading' | 'processing' | 'complete' | 'error';
         progress: number;
@@ -125,6 +132,7 @@ export interface TranscriptionSlice {
       vad?: boolean;
       sourceTrack?: VideoTrack; // Optional source track for timeline-aware positioning
       specificTrackId?: string; // Optional: only process this specific track/segment (for sliced clips)
+      subtitleRowIndex?: number;
       onProgress?: (progress: {
         stage: 'loading' | 'processing' | 'complete' | 'error';
         progress: number;
@@ -178,6 +186,7 @@ export const createTranscriptionSlice: StateCreator<
   [],
   TranscriptionSlice
 > = (set, get) => ({
+  transcribingTrackLoaders: [],
   isTranscribing: false,
   currentTranscribingMediaId: null,
   currentTranscribingTrackId: null,
@@ -225,23 +234,66 @@ export const createTranscriptionSlice: StateCreator<
       state.ensureTrackRowVisible('subtitle');
     }
 
+    const subtitleRowIndex = resolveSubtitleRowIndex(
+      state.tracks || [],
+      options.subtitleRowIndex,
+    );
+
     // Use the existing generateKaraokeSubtitles method with the media ID
     // But track that this is from a track and pass track context
-    set({ currentTranscribingTrackId: trackId });
+    set((prev: any) => {
+      const existingLoaders = Array.isArray(prev.transcribingTrackLoaders)
+        ? prev.transcribingTrackLoaders
+        : [];
+      const nextLoaders = [
+        ...existingLoaders.filter(
+          (loader: { trackId: string }) => loader.trackId !== trackId,
+        ),
+        {
+          trackId,
+          subtitleRowIndex,
+          startFrame: track.startFrame,
+          endFrame: track.endFrame,
+        },
+      ];
 
-    const result = await state.generateKaraokeSubtitles(mediaItem.id, {
-      ...options,
-      sourceTrack: track, // Pass track context for timeline-aware positioning
-      // Only pass specificTrackId if explicitly requested via options
-      // This allows Track Controllers to process ALL clips (don't pass it)
-      // while Timeline Controllers can process specific selected segments (pass it)
-      specificTrackId: options.processOnlyThisSegment ? trackId : undefined,
+      return {
+        currentTranscribingTrackId: trackId,
+        transcribingTrackLoaders: nextLoaders,
+      };
     });
 
-    // Clear the track ID after completion
-    set({ currentTranscribingTrackId: null });
+    try {
+      const result = await state.generateKaraokeSubtitles(mediaItem.id, {
+        ...options,
+        sourceTrack: track, // Pass track context for timeline-aware positioning
+        subtitleRowIndex,
+        // Only pass specificTrackId if explicitly requested via options
+        // This allows Track Controllers to process ALL clips (don't pass it)
+        // while Timeline Controllers can process specific selected segments (pass it)
+        specificTrackId: options.processOnlyThisSegment ? trackId : undefined,
+      });
 
-    return result;
+      return result;
+    } finally {
+      // Clear this loader after completion without affecting other active loaders.
+      set((prev: any) => {
+        const existingLoaders = Array.isArray(prev.transcribingTrackLoaders)
+          ? prev.transcribingTrackLoaders
+          : [];
+        const nextLoaders = existingLoaders.filter(
+          (loader: { trackId: string }) => loader.trackId !== trackId,
+        );
+
+        return {
+          currentTranscribingTrackId:
+            prev.currentTranscribingTrackId === trackId
+              ? null
+              : prev.currentTranscribingTrackId,
+          transcribingTrackLoaders: nextLoaders,
+        };
+      });
+    }
   },
   generateKaraokeSubtitles: async (mediaId, options = {}) => {
     const state = get() as any;
@@ -276,7 +328,10 @@ export const createTranscriptionSlice: StateCreator<
         };
       }
     } catch (error) {
-      console.error('Failed to check runtime status:', error);
+      console.error(
+        '[TranscriptionSlice] Failed to check runtime status',
+        error,
+      );
       // Continue anyway - the actual transcription will fail with a clearer error
     }
 
@@ -313,7 +368,7 @@ export const createTranscriptionSlice: StateCreator<
           }
 
           // Video has audio but not extracted yet - extract it first
-          console.log('🎵 Extracting audio from video for transcription...');
+
           const extractResult = await window.electronAPI.extractAudioFromVideo(
             mediaItem.source,
           );
@@ -341,7 +396,10 @@ export const createTranscriptionSlice: StateCreator<
             });
           }
         } catch (error) {
-          console.error('Error checking/extracting audio:', error);
+          console.error(
+            '[TranscriptionSlice] Error checking/extracting audio',
+            error,
+          );
           return {
             success: false,
             error:
@@ -366,7 +424,10 @@ export const createTranscriptionSlice: StateCreator<
       };
     }
 
-    const subtitleRowIndex = resolveSubtitleRowIndex(state.tracks || []);
+    const subtitleRowIndex = resolveSubtitleRowIndex(
+      state.tracks || [],
+      options.subtitleRowIndex,
+    );
 
     // Start transcription
     set({
@@ -381,7 +442,6 @@ export const createTranscriptionSlice: StateCreator<
 
       // Check if we have cached karaoke subtitles
       if (mediaItem.cachedKaraokeSubtitles) {
-        console.log('✨ Using cached karaoke subtitles for:', mediaItem.name);
         transcriptionResult =
           mediaItem.cachedKaraokeSubtitles.transcriptionResult;
 
@@ -394,10 +454,6 @@ export const createTranscriptionSlice: StateCreator<
           },
         });
       } else {
-        console.log('🎤 Starting Whisper transcription...');
-        console.log('   Audio path:', audioPath);
-        console.log('   Model:', options.model);
-
         // Setup progress listener
         const progressListener = (progress: {
           stage: 'loading' | 'processing' | 'complete' | 'error';
@@ -439,26 +495,7 @@ export const createTranscriptionSlice: StateCreator<
 
         transcriptionResult = result.result;
 
-        console.log('✅ Transcription successful');
-        console.log('   Segments:', transcriptionResult.segments.length);
-        console.log('   Language:', transcriptionResult.language);
-        console.log(
-          '   Language Confidence:',
-          transcriptionResult.language_probability,
-        );
-        console.log('   Duration:', transcriptionResult.duration);
-        console.log('   Processing Time:', transcriptionResult.processing_time);
-        console.log('   Model:', transcriptionResult.model);
-        console.log('   Device:', transcriptionResult.device);
-        if (transcriptionResult.real_time_factor) {
-          console.log(
-            '   Speed:',
-            transcriptionResult.real_time_factor.toFixed(2) + 'x',
-            transcriptionResult.faster_than_realtime ? '🚀' : '',
-          );
-        }
-        console.log('\n📝 Full Transcription Result:');
-        console.log(JSON.stringify(transcriptionResult, null, 2));
+        void transcriptionResult.real_time_factor;
 
         // Cache the transcription result
         if (state.updateMediaLibraryItem) {
@@ -491,13 +528,6 @@ export const createTranscriptionSlice: StateCreator<
           );
           if (specificTrack) {
             clipsToProcess = [specificTrack];
-            console.log('🎯 Specific segment subtitle generation:', {
-              trackId: specificTrack.id,
-              trackName: specificTrack.name,
-              startFrame: specificTrack.startFrame,
-              endFrame: specificTrack.endFrame,
-              sourceStartTime: specificTrack.sourceStartTime || 0,
-            });
           }
         } else {
           // ALL CLIPS MODE: Find all clips from the same source (for multi-track selection)
@@ -508,24 +538,11 @@ export const createTranscriptionSlice: StateCreator<
               (t.type === 'video' || t.type === 'audio') &&
               !t.muted,
           );
-          console.log('🎯 Multi-clip subtitle generation:', {
-            sourceTrackName: sourceTrack.name,
-            totalClipsFromSource: clipsToProcess.length,
-            clips: clipsToProcess.map((c: any) => ({
-              id: c.id,
-              startFrame: c.startFrame,
-              endFrame: c.endFrame,
-              sourceStartTime: c.sourceStartTime || 0,
-            })),
-          });
         }
       }
 
       if (clipsToProcess.length === 0 && !sourceTrack) {
         // LEGACY MODE: Media Library workflow - place at timeline start
-        console.log(
-          '📚 Media Library workflow - placing subtitles at timeline start',
-        );
       }
 
       const subtitleTracks: Omit<VideoTrack, 'id'>[] = [];
@@ -721,23 +738,13 @@ export const createTranscriptionSlice: StateCreator<
         }
       });
 
-      console.log(
-        `📝 Created ${subtitleTracks.length} karaoke subtitle tracks`,
-      );
-
       // Add tracks to timeline using batch operation for better performance
-      console.log(
-        `🚀 Adding ${subtitleTracks.length} karaoke subtitle tracks in batch...`,
-      );
+
       const trackIds = await state.addTracks(subtitleTracks);
 
-      console.log(
-        `✅ Added ${trackIds.length} karaoke subtitle tracks to timeline`,
-      );
       // Ensure subtitle track row is visible
       if (state.ensureTrackRowVisible) {
         state.ensureTrackRowVisible('subtitle');
-        console.log('📝 Auto-showed Subtitle track row');
       }
 
       // Mark media as having generated karaoke subtitles
@@ -760,7 +767,10 @@ export const createTranscriptionSlice: StateCreator<
         transcriptionResult, // Include full transcription result
       };
     } catch (error) {
-      console.error('❌ Karaoke subtitle generation failed:', error);
+      console.error(
+        '[TranscriptionSlice] Karaoke subtitle generation failed',
+        error,
+      );
       window.electronAPI.removeWhisperProgressListener();
       set({
         isTranscribing: false,
@@ -787,10 +797,14 @@ export const createTranscriptionSlice: StateCreator<
         currentTranscribingMediaId: null,
         currentTranscribingTrackId: null,
         transcribingSubtitleRowIndex: null,
+        transcribingTrackLoaders: [],
         transcriptionProgress: null,
       });
     } catch (error) {
-      console.error('Failed to cancel transcription:', error);
+      console.error(
+        '[TranscriptionSlice] Failed to cancel transcription',
+        error,
+      );
     }
   },
 });

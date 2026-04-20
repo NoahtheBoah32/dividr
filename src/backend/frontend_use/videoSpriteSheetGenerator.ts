@@ -91,17 +91,14 @@ export class VideoSpriteSheetGenerator {
       // Validate videoPath before proceeding
       if (!videoPath || typeof videoPath !== 'string') {
         console.error(
-          '❌ Invalid videoPath provided to getVideoMetadata:',
+          '[VideoSpriteSheetGenerator] Invalid videoPath provided to getVideoMetadata',
           videoPath,
         );
         throw new Error(`Invalid video path: ${videoPath}`);
       }
 
       const durationPromise = window.electronAPI.getDuration(videoPath);
-      const fpsPromise = window.electronAPI.invoke(
-        'ffmpeg:detect-frame-rate',
-        videoPath,
-      );
+      const fpsPromise = window.electronAPI.detectVideoFrameRate(videoPath);
 
       const [durationResult, fpsResult] = await Promise.allSettled([
         durationPromise,
@@ -117,15 +114,19 @@ export class VideoSpriteSheetGenerator {
       // Calculate exact frame count
       const frameCount = Math.floor(duration * fps);
 
-      console.log(`📊 Video metadata for ${videoPath.split(/[\\/]/).pop()}:`);
-      console.log(`   • Duration: ${duration.toFixed(3)}s`);
-      console.log(`   • FPS: ${fps.toFixed(3)}`);
-      console.log(`   • Frame count: ${frameCount}`);
+      console.log(
+        `[VideoSpriteSheetGenerator] Video metadata for${videoPath.split(/[\\/]/).pop()}:`,
+      );
+      console.log(
+        `[VideoSpriteSheetGenerator] • Duration${duration.toFixed(3)}s`,
+      );
+      console.log(`[VideoSpriteSheetGenerator] • FPS${fps.toFixed(3)}`);
+      console.log(`[VideoSpriteSheetGenerator] • Frame count${frameCount}`);
 
       return { duration, fps, frameCount };
     } catch (error) {
       console.warn(
-        '⚠️ Failed to get precise video metadata, using fallback:',
+        '[VideoSpriteSheetGenerator] Failed to get precise video metadata, using fallback',
         error,
       );
       // Fallback to provided values
@@ -164,12 +165,15 @@ export class VideoSpriteSheetGenerator {
           }
 
           console.log(
-            `📦 Loaded ${this.spriteSheetCache.size} valid sprite sheet cache entries`,
+            `[VideoSpriteSheetGenerator] Loaded${this.spriteSheetCache.size} valid sprite sheet cache entries`,
           );
         }
       }
     } catch (error) {
-      console.warn('⚠️ Failed to load sprite sheet cache from storage:', error);
+      console.warn(
+        '[VideoSpriteSheetGenerator] Failed to load sprite sheet cache from storage',
+        error,
+      );
     }
 
     this.cacheInitialized = true;
@@ -203,7 +207,10 @@ export class VideoSpriteSheetGenerator {
         return result.path;
       }
     } catch (error) {
-      console.warn('⚠️ Failed to get media cache directory:', error);
+      console.warn(
+        '[VideoSpriteSheetGenerator] Failed to get media cache directory',
+        error,
+      );
     }
 
     return 'public';
@@ -318,11 +325,14 @@ export class VideoSpriteSheetGenerator {
           JSON.stringify(cacheEntries),
         );
         console.log(
-          `💾 Saved ${Object.keys(cacheEntries).length} sprite sheet cache entries`,
+          `[VideoSpriteSheetGenerator] Saved${Object.keys(cacheEntries).length} sprite sheet cache entries`,
         );
       }
     } catch (error) {
-      console.warn('⚠️ Failed to save sprite sheet cache to storage:', error);
+      console.warn(
+        '[VideoSpriteSheetGenerator] Failed to save sprite sheet cache to storage',
+        error,
+      );
     }
   }
 
@@ -357,7 +367,10 @@ export class VideoSpriteSheetGenerator {
       const cached = this.spriteSheetCache.get(cacheKey);
       if (cached) {
         this.cacheAccessTimes.set(cacheKey, Date.now());
-        console.log('✅ Sprite sheet cache HIT for', cacheKey);
+        console.log(
+          '[VideoSpriteSheetGenerator] Sprite sheet cache HIT for',
+          cacheKey,
+        );
         return cached;
       }
     }
@@ -366,7 +379,10 @@ export class VideoSpriteSheetGenerator {
     if (this.activeGenerations.has(cacheKey)) {
       const activeGeneration = this.activeGenerations.get(cacheKey);
       if (activeGeneration) {
-        console.log('🔄 Using active sprite sheet generation for', cacheKey);
+        console.log(
+          '[VideoSpriteSheetGenerator] Using active sprite sheet generation for',
+          cacheKey,
+        );
         return activeGeneration;
       }
     }
@@ -411,13 +427,13 @@ export class VideoSpriteSheetGenerator {
     const fps = videoMetadata.fps || providedFps;
 
     console.log(
-      `🎬 Using ${videoMetadata.duration ? 'precise' : 'fallback'} video metadata:`,
+      `[VideoSpriteSheetGenerator] Using${videoMetadata.duration ? 'precise' : 'fallback'} video metadata:`,
     );
     console.log(
-      `   • Duration: ${duration.toFixed(3)}s (provided: ${providedDuration.toFixed(3)}s)`,
+      `[VideoSpriteSheetGenerator] • Duration${duration.toFixed(3)}s (provided: ${providedDuration.toFixed(3)}s)`,
     );
     console.log(
-      `   • FPS: ${fps.toFixed(3)} (provided: ${providedFps.toFixed(3)})`,
+      `[VideoSpriteSheetGenerator] • FPS${fps.toFixed(3)} (provided: ${providedFps.toFixed(3)})`,
     );
 
     // Calculate optimal interval based on duration and zoom level
@@ -444,14 +460,16 @@ export class VideoSpriteSheetGenerator {
     );
 
     console.log(
-      `🎬 Generating ${numberOfSheets} sprite sheet(s) with ${finalTotalThumbnails} thumbnails total (${adjustedTotalThumbnails} adjusted)`,
+      `[VideoSpriteSheetGenerator] Generating${numberOfSheets} sprite sheet(s) with ${finalTotalThumbnails} thumbnails total (${adjustedTotalThumbnails} adjusted)`,
     );
     console.log(
-      `📐 Thumbnail size: ${thumbWidth}x${thumbHeight}, interval: ${intervalSeconds}s`,
+      `[VideoSpriteSheetGenerator] Thumbnail size${thumbWidth}x${thumbHeight}, interval: ${intervalSeconds}s`,
     );
-    console.log(`⏱️ Duration: ${duration}s, Source start: ${sourceStartTime}s`);
     console.log(
-      `📊 Calculation: exactThumbnails=${exactThumbnails}, maxPossible=${maxPossibleThumbnails}`,
+      `[VideoSpriteSheetGenerator] ⏱ Duration${duration}s, Source start: ${sourceStartTime}s`,
+    );
+    console.log(
+      `[VideoSpriteSheetGenerator] Calculation: exactThumbnails=${exactThumbnails}, maxPossible=${maxPossibleThumbnails}`,
     );
 
     try {
@@ -463,10 +481,7 @@ export class VideoSpriteSheetGenerator {
       }
 
       // Check if the custom FFmpeg method is available
-      if (
-        !(window.electronAPI as unknown as { runCustomFFmpeg?: unknown })
-          .runCustomFFmpeg
-      ) {
+      if (!window.electronAPI.runCustomFFmpeg) {
         throw new Error(
           'Sprite sheet generation requires app restart to enable new IPC handlers',
         );
@@ -513,7 +528,7 @@ export class VideoSpriteSheetGenerator {
         // Skip this sheet if there's no valid time range (startTime >= maxVideoTime)
         if (startTime >= maxVideoTime) {
           console.warn(
-            `⚠️ Skipping sprite sheet ${sheetIndex + 1} - start time (${startTime.toFixed(2)}s) exceeds video duration (${maxVideoTime.toFixed(2)}s)`,
+            `[VideoSpriteSheetGenerator] Skipping sprite sheet${sheetIndex + 1} - start time (${startTime.toFixed(2)}s) exceeds video duration (${maxVideoTime.toFixed(2)}s)`,
           );
           continue;
         }
@@ -532,7 +547,7 @@ export class VideoSpriteSheetGenerator {
         // Additional check: skip if sheet duration is too small to be meaningful
         if (sheetDuration < intervalSeconds / 2) {
           console.warn(
-            `⚠️ Skipping sprite sheet ${sheetIndex + 1} - duration (${sheetDuration.toFixed(2)}s) too small for interval (${intervalSeconds}s)`,
+            `[VideoSpriteSheetGenerator] Skipping sprite sheet${sheetIndex + 1} - duration (${sheetDuration.toFixed(2)}s) too small for interval (${intervalSeconds}s)`,
           );
           continue;
         }
@@ -549,7 +564,7 @@ export class VideoSpriteSheetGenerator {
         const conservativeFrameCount = finalFrameCount;
 
         console.log(
-          `📐 Grid calculation: using optimal grid for exactly ${finalFrameCount} frames`,
+          `[VideoSpriteSheetGenerator] Grid calculation: using optimal grid for exactly${finalFrameCount} frames`,
         );
 
         // Calculate exact frame numbers to extract (no time-based extraction)
@@ -617,36 +632,28 @@ export class VideoSpriteSheetGenerator {
         const actualEmptySlots =
           optimalCols * optimalRows - conservativeFrameCount;
         console.log(
-          `🖼️ Prepared sprite sheet ${sheetIndex + 1}/${numberOfSheets}:`,
-          `\n   • ${finalFrameCount} exact frames (${thumbnailsInSheet} requested, ${maxPossibleFrames} max possible)`,
-          `\n   • OPTIMAL grid: ${optimalCols}x${optimalRows} (${optimalCols * optimalRows} slots for ${finalFrameCount} frames)`,
-          `\n   • Expected empty slots: ${actualEmptySlots}`,
-          `\n   • Frame numbers: [${frameNumbers.slice(0, 3).join(', ')}${frameNumbers.length > 3 ? '...' : ''}] (${frameNumbers.length} total)`,
-          `\n   • Time range: ${startTime.toFixed(2)}s to ${(startTime + sheetDuration).toFixed(2)}s (max: ${maxVideoTime.toFixed(2)}s)`,
-          `\n   • Duration: ${sheetDuration.toFixed(2)}s (precise: ${preciseDuration.toFixed(2)}s), Interval: ${intervalSeconds}s`,
-          `\n   • FFmpeg select: exact frame extraction (no time-based fps)`,
-          `\n   • Thumbnail indices: ${startThumbnailIndex} to ${endThumbnailIndex - 1}`,
+          `[VideoSpriteSheetGenerator] Prepared sprite sheet${sheetIndex + 1}/${numberOfSheets}:`,
+          `•${finalFrameCount} exact frames (${thumbnailsInSheet} requested, ${maxPossibleFrames} max possible)`,
+          `• OPTIMAL grid${optimalCols}x${optimalRows} (${optimalCols * optimalRows} slots for ${finalFrameCount} frames)`,
+          `• Expected empty slots${actualEmptySlots}`,
+          `• Frame numbers: [${frameNumbers.slice(0, 3).join(', ')}${frameNumbers.length > 3 ? '...' : ''}] (${frameNumbers.length} total)`,
+          `• Time range${startTime.toFixed(2)}s to ${(startTime + sheetDuration).toFixed(2)}s (max: ${maxVideoTime.toFixed(2)}s)`,
+          `• Duration${sheetDuration.toFixed(2)}s (precise: ${preciseDuration.toFixed(2)}s), Interval: ${intervalSeconds}s`,
+          '• FFmpeg select: exact frame extraction (no time-based fps)',
+          `• Thumbnail indices${startThumbnailIndex} to ${endThumbnailIndex - 1}`,
         );
       }
 
       // Start background generation
       const jobId = `sprite_${cacheKey}_${Date.now()}`;
 
-      const backgroundResult = await (
-        window.electronAPI as unknown as {
-          generateSpriteSheetBackground: (options: {
-            jobId: string;
-            videoPath: string;
-            outputDir: string;
-            commands: string[][];
-          }) => Promise<{ success: boolean; error?: string; jobId?: string }>;
-        }
-      ).generateSpriteSheetBackground({
-        jobId,
-        videoPath,
-        outputDir,
-        commands,
-      });
+      const backgroundResult =
+        await window.electronAPI.generateSpriteSheetBackground({
+          jobId,
+          videoPath,
+          outputDir,
+          commands,
+        });
 
       if (!backgroundResult.success) {
         throw new Error(
@@ -689,7 +696,9 @@ export class VideoSpriteSheetGenerator {
         );
         const exists = await this.mediaPathExists(sheetPath);
         if (!exists) {
-          console.warn(`⚠️ Sprite sheet file missing on disk: ${sheetPath}`);
+          console.warn(
+            `[VideoSpriteSheetGenerator] Sprite sheet file missing on disk${sheetPath}`,
+          );
           missingSheets.push(sheetPath);
           continue;
         }
@@ -749,14 +758,14 @@ export class VideoSpriteSheetGenerator {
           metadata.height !== expectedHeight;
 
         console.log(
-          `✅ Built sprite sheet ${metadata.index} metadata:`,
-          `\n   • ${thumbnails.length} valid thumbnails created (planned: ${metadata.actualFrameCount})`,
-          `\n   • ACTUAL sheet size: ${metadata.width}x${metadata.height}px (expected: ${expectedWidth}x${expectedHeight}px)`,
-          `\n   • ACTUAL grid: ${metadata.thumbnailsPerRow}x${metadata.thumbnailsPerColumn}`,
-          `\n   • Expected grid slots: ${metadata.thumbnailsPerRow * metadata.thumbnailsPerColumn}`,
-          `\n   • Actual thumbnails: ${thumbnails.length} (difference: ${metadata.thumbnailsPerRow * metadata.thumbnailsPerColumn - thumbnails.length})`,
+          `[VideoSpriteSheetGenerator] Built sprite sheet${metadata.index} metadata:`,
+          `•${thumbnails.length} valid thumbnails created (planned: ${metadata.actualFrameCount})`,
+          `• ACTUAL sheet size${metadata.width}x${metadata.height}px (expected: ${expectedWidth}x${expectedHeight}px)`,
+          `• ACTUAL grid${metadata.thumbnailsPerRow}x${metadata.thumbnailsPerColumn}`,
+          `• Expected grid slots${metadata.thumbnailsPerRow * metadata.thumbnailsPerColumn}`,
+          `• Actual thumbnails${thumbnails.length} (difference: ${metadata.thumbnailsPerRow * metadata.thumbnailsPerColumn - thumbnails.length})`,
           hasUnexpectedPadding
-            ? `\n   ⚠️ PADDING DETECTED: FFmpeg added unexpected padding to sprite sheet`
+            ? `\n   PADDING DETECTED: FFmpeg added unexpected padding to sprite sheet`
             : '',
         );
       }
@@ -767,7 +776,9 @@ export class VideoSpriteSheetGenerator {
         );
       }
 
-      console.log('✅ All sprite sheets generated successfully in background');
+      console.log(
+        '[VideoSpriteSheetGenerator] All sprite sheets generated successfully in background',
+      );
 
       // Cache the result with persistent storage
       const generationResult: SpriteSheetGenerationResult = {
@@ -785,7 +796,10 @@ export class VideoSpriteSheetGenerator {
 
       return generationResult;
     } catch (error) {
-      console.error('❌ Sprite sheet generation failed:', error);
+      console.error(
+        '[VideoSpriteSheetGenerator] Sprite sheet generation failed',
+        error,
+      );
       return {
         success: false,
         spriteSheets: [],
@@ -807,38 +821,33 @@ export class VideoSpriteSheetGenerator {
       let isResolved = false;
       let pollTimer: ReturnType<typeof setTimeout> | null = null;
       let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+      let offCompleted: () => void = () => undefined;
+      let offError: () => void = () => undefined;
 
       const cleanup = () => {
         if (pollTimer) clearTimeout(pollTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
-        window.electronAPI.removeListener(
-          'sprite-sheet-job-completed',
-          handleCompleted,
-        );
-        window.electronAPI.removeListener(
-          'sprite-sheet-job-error',
-          handleError,
-        );
+        offCompleted();
+        offError();
       };
 
-      const handleCompleted = (_event: unknown, data: { jobId: string }) => {
+      const handleCompleted = (data: { jobId: string }) => {
         if (data.jobId === actualJobId && !isResolved) {
           isResolved = true;
           cleanup();
-          console.log('✅ Background sprite sheet generation completed');
+          console.log(
+            '[VideoSpriteSheetGenerator] Background sprite sheet generation completed',
+          );
           resolve({ success: true });
         }
       };
 
-      const handleError = (
-        _event: unknown,
-        data: { jobId: string; error: string },
-      ) => {
+      const handleError = (data: { jobId: string; error: string }) => {
         if (data.jobId === actualJobId && !isResolved) {
           isResolved = true;
           cleanup();
           console.error(
-            '❌ Background sprite sheet generation failed:',
+            '[VideoSpriteSheetGenerator] Background sprite sheet generation failed',
             data.error,
           );
           resolve({ success: false, error: data.error });
@@ -846,28 +855,22 @@ export class VideoSpriteSheetGenerator {
       };
 
       // Set up event listeners for job completion
-      window.electronAPI.on('sprite-sheet-job-completed', handleCompleted);
-      window.electronAPI.on('sprite-sheet-job-error', handleError);
+      offCompleted =
+        window.electronAPI.onSpriteSheetJobCompleted(handleCompleted);
+      offError = window.electronAPI.onSpriteSheetJobError(handleError);
 
       // Progress polling as fallback
       const pollProgress = async () => {
         if (isResolved) return;
 
         try {
-          const progressResult = await (
-            window.electronAPI as unknown as {
-              getSpriteSheetProgress: (jobId: string) => Promise<{
-                success: boolean;
-                progress?: { current: number; total: number; stage: string };
-                error?: string;
-              }>;
-            }
-          ).getSpriteSheetProgress(actualJobId);
+          const progressResult =
+            await window.electronAPI.getSpriteSheetProgress(actualJobId);
 
           if (progressResult.success && progressResult.progress) {
             const { current, total, stage } = progressResult.progress;
             console.log(
-              `🎬 Sprite sheet progress: ${current}/${total} - ${stage}`,
+              `[VideoSpriteSheetGenerator] Sprite sheet progress${current}/${total} - ${stage}`,
             );
 
             // Check if completed via progress (fallback)
@@ -892,7 +895,10 @@ export class VideoSpriteSheetGenerator {
             }
           }
         } catch (error) {
-          console.warn('Warning: Failed to poll sprite sheet progress:', error);
+          console.warn(
+            '[VideoSpriteSheetGenerator] Warning: Failed to poll sprite sheet progress',
+            error,
+          );
         }
 
         // Continue polling if not resolved
@@ -967,14 +973,14 @@ export class VideoSpriteSheetGenerator {
       }
 
       console.log(
-        `🎯 Perfect grid found: ${bestDivisor.cols}x${bestDivisor.rows} for ${frameCount} frames (0 empty slots)`,
+        `[VideoSpriteSheetGenerator] Perfect grid found${bestDivisor.cols}x${bestDivisor.rows} for ${frameCount} frames (0 empty slots)`,
       );
       return { cols: bestDivisor.cols, rows: bestDivisor.rows, emptySlots: 0 };
     }
 
     // Fallback: prefer single row to avoid any empty cells
     console.log(
-      `📏 Using single row layout for ${frameCount} frames to avoid empty cells`,
+      `[VideoSpriteSheetGenerator] Using single row layout for${frameCount} frames to avoid empty cells`,
     );
     return { cols: frameCount, rows: 1, emptySlots: 0 };
   }
@@ -1055,16 +1061,22 @@ export class VideoSpriteSheetGenerator {
       const isValid = await this.validateCacheEntry(cached);
       if (isValid) {
         this.cacheAccessTimes.set(cacheKey, Date.now());
-        console.log(`✅ Sprite sheet cache HIT for ${cacheKey}`);
+        console.log(
+          `[VideoSpriteSheetGenerator] Sprite sheet cache HIT for${cacheKey}`,
+        );
         return cached;
       } else {
         // Remove invalid cache entry
         this.spriteSheetCache.delete(cacheKey);
         this.cacheAccessTimes.delete(cacheKey);
-        console.log(`❌ Sprite sheet cache INVALID for ${cacheKey}, removed`);
+        console.log(
+          `[VideoSpriteSheetGenerator] Sprite sheet cache INVALID for${cacheKey}, removed`,
+        );
       }
     } else {
-      console.log(`❌ Sprite sheet cache MISS for ${cacheKey}`);
+      console.log(
+        `[VideoSpriteSheetGenerator] Sprite sheet cache MISS for${cacheKey}`,
+      );
     }
 
     return null;
@@ -1082,7 +1094,9 @@ export class VideoSpriteSheetGenerator {
       window.localStorage.removeItem(this.CACHE_STORAGE_KEY);
     }
 
-    console.log('🧹 Sprite sheet cache cleared (memory and storage)');
+    console.log(
+      '[VideoSpriteSheetGenerator] Sprite sheet cache cleared (memory and storage)',
+    );
   }
 
   /**
@@ -1110,7 +1124,7 @@ export class VideoSpriteSheetGenerator {
       this.cacheAccessTimes.delete(key);
     });
     console.log(
-      `🗑️ Removed ${keysToRemove.length} sprite sheet cache entries for ${filename}`,
+      `[VideoSpriteSheetGenerator] Removed${keysToRemove.length} sprite sheet cache entries for ${filename}`,
     );
   }
 
@@ -1121,7 +1135,7 @@ export class VideoSpriteSheetGenerator {
     if (this.spriteSheetCache.size <= this.MAX_CACHE_SIZE) return;
 
     console.log(
-      `🧹 Cleaning up sprite sheet cache (current size: ${this.spriteSheetCache.size})`,
+      `[VideoSpriteSheetGenerator] Cleaning up sprite sheet cache (current size${this.spriteSheetCache.size})`,
     );
 
     // Create scoring system for cache eviction (LRU + size considerations)
@@ -1153,7 +1167,7 @@ export class VideoSpriteSheetGenerator {
     this.saveCacheToStorage();
 
     console.log(
-      `✅ Sprite sheet cache cleaned up (new size: ${this.spriteSheetCache.size})`,
+      `[VideoSpriteSheetGenerator] Sprite sheet cache cleaned up (new size${this.spriteSheetCache.size})`,
     );
   }
 
@@ -1170,7 +1184,10 @@ export class VideoSpriteSheetGenerator {
 
     const videoPath = track.tempFilePath || track.source;
     const durationSeconds = (track.endFrame - track.startFrame) / fps;
-    console.log('calculated seconds: ' + durationSeconds);
+    console.log(
+      '[VideoSpriteSheetGenerator] Log',
+      'calculated seconds: ' + durationSeconds,
+    );
     // Handle blob URLs (won't work with FFmpeg)
     if (videoPath.startsWith('blob:')) {
       throw new Error('Cannot generate sprite sheets from blob URL');

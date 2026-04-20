@@ -107,8 +107,11 @@ export const DropZoneIndicator: React.FC<DropZoneIndicatorProps> = React.memo(
     let clippedTop =
       !targetRow.includes('subtitle') && !targetRow.includes('text')
         ? viewportTop - 4
-        : viewportTop;
-    let clippedHeight = position.height;
+        : viewportTop + 8;
+    let clippedHeight =
+      !targetRow.includes('subtitle') && !targetRow.includes('text')
+        ? position.height
+        : position.height - 8;
 
     if (viewportHeight !== undefined) {
       if (viewportTop < 0) {

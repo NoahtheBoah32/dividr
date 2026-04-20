@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { StateCreator } from 'zustand';
+import { calculateVideoFitTransform } from '../../../preview/utils/scalingUtils';
 import { PreviewState } from '../types';
 import { DEFAULT_PREVIEW_CONFIG } from '../utils/constants';
 
@@ -15,6 +16,7 @@ export interface PreviewSlice {
   setPreviewPan: (panX: number, panY: number) => void;
   resetPreviewPan: () => void;
   setPreviewInteractionMode: (mode: 'select' | 'pan' | 'text-edit') => void;
+  setActiveInteractionArea: (area: 'preview' | 'timeline' | 'other') => void;
   toggleGrid: () => void;
   toggleSafeZones: () => void;
   setBackgroundColor: (color: string) => void;
@@ -33,6 +35,7 @@ export const createPreviewSlice: StateCreator<
 > = (set, get) => ({
   preview: {
     ...DEFAULT_PREVIEW_CONFIG,
+    activeInteractionArea: 'other',
     showGrid: false,
     showSafeZones: false,
     isFullscreen: false,
@@ -56,8 +59,78 @@ export const createPreviewSlice: StateCreator<
         updates.originalCanvasHeight = height;
       }
 
+      // Keep media fit in sync in the same state commit to avoid one-frame stretch flicker.
+      const nextTracks = Array.isArray(state.tracks)
+        ? state.tracks.map((track: any) => {
+            if (track.type !== 'video' && track.type !== 'image') {
+              return track;
+            }
+
+            const originalWidth =
+              track.width ||
+              track.textTransform?.width ||
+              state.preview.canvasWidth;
+            const originalHeight =
+              track.height ||
+              track.textTransform?.height ||
+              state.preview.canvasHeight;
+
+            if (!originalWidth || !originalHeight) {
+              return track;
+            }
+
+            const currentTransform = track.textTransform || {
+              x: 0,
+              y: 0,
+              scale: 1,
+              rotation: 0,
+              width: originalWidth,
+              height: originalHeight,
+            };
+
+            const newTransform = calculateVideoFitTransform(
+              originalWidth,
+              originalHeight,
+              width,
+              height,
+              currentTransform,
+            );
+
+            const widthChanged =
+              Math.abs(
+                (currentTransform.width || originalWidth) - newTransform.width,
+              ) > 0.5;
+            const heightChanged =
+              Math.abs(
+                (currentTransform.height || originalHeight) -
+                  newTransform.height,
+              ) > 0.5;
+            const scaleChanged =
+              Math.abs((currentTransform.scale || 1) - newTransform.scale) >
+              0.001;
+
+            if (!widthChanged && !heightChanged && !scaleChanged) {
+              return track;
+            }
+
+            return {
+              ...track,
+              textTransform: {
+                ...currentTransform,
+                x: newTransform.x,
+                y: newTransform.y,
+                scale: newTransform.scale,
+                rotation: newTransform.rotation,
+                width: newTransform.width,
+                height: newTransform.height,
+              },
+            };
+          })
+        : state.tracks;
+
       return {
         preview: { ...state.preview, ...updates },
+        tracks: nextTracks,
       };
     });
     const state = get() as any;
@@ -70,14 +143,7 @@ export const createPreviewSlice: StateCreator<
 
     // Only reset if we have original dimensions stored
     if (originalCanvasWidth && originalCanvasHeight) {
-      set((state: any) => ({
-        preview: {
-          ...state.preview,
-          canvasWidth: originalCanvasWidth,
-          canvasHeight: originalCanvasHeight,
-        },
-      }));
-      state.markUnsavedChanges?.();
+      state.setCanvasSize(originalCanvasWidth, originalCanvasHeight);
     }
   },
 
@@ -112,6 +178,14 @@ export const createPreviewSlice: StateCreator<
       preview: {
         ...state.preview,
         interactionMode: mode,
+      },
+    })),
+
+  setActiveInteractionArea: (area) =>
+    set((state: any) => ({
+      preview: {
+        ...state.preview,
+        activeInteractionArea: area,
       },
     })),
 

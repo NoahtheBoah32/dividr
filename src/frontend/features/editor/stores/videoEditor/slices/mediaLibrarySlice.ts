@@ -42,6 +42,24 @@ const getContentSignatureKey = (
   return `${signature.partialHash}_${signature.fileSize}`;
 };
 
+const normalizePathForComparison = (filePath?: string): string | null => {
+  if (!filePath) return null;
+
+  const trimmed = filePath.trim();
+  if (!trimmed) return null;
+
+  const withoutFilePrefix = trimmed.replace(/^file:\/\//i, '');
+  const withForwardSlashes = withoutFilePrefix.replace(/\\/g, '/');
+  const collapsedSlashes = withForwardSlashes.replace(/\/{2,}/g, '/');
+  const withoutTrailingSlash = collapsedSlashes.replace(/\/$/, '');
+  const isLikelyWindowsPath =
+    /^[a-z]:\//i.test(withoutTrailingSlash) || trimmed.includes('\\');
+
+  return isLikelyWindowsPath
+    ? withoutTrailingSlash.toLowerCase()
+    : withoutTrailingSlash;
+};
+
 const persistentMediaUpdateKeys = new Set<string>([
   'name',
   'source',
@@ -62,7 +80,7 @@ const shouldMarkUnsavedChangesForMediaUpdate = (
   return Object.keys(updates).some((key) => persistentMediaUpdateKeys.has(key));
 };
 
-/** Duplicate detection user choice: 'use-existing' (skip) | 'import-copy' (keep both) */
+/** Duplicate detection user choice */
 export type DuplicateChoice = 'use-existing' | 'import-copy';
 
 /** Single duplicate item for batch processing */
@@ -71,7 +89,7 @@ export interface DuplicateItem {
   pendingFileName: string;
   pendingFilePath?: string;
   existingMedia: MediaLibraryItem;
-  signature: ContentSignature;
+  signature?: ContentSignature;
   choice?: DuplicateChoice;
 }
 
@@ -163,6 +181,7 @@ export interface MediaLibrarySlice {
   ) => void;
 
   // Duplicate detection (legacy single-file)
+  findDuplicateByPath: (filePath: string) => MediaLibraryItem | undefined;
   findDuplicateBySignature: (
     signature: ContentSignature,
   ) => MediaLibraryItem | undefined;
@@ -206,6 +225,22 @@ export const createMediaLibrarySlice: StateCreator<
   duplicateDetection: null,
   batchDuplicateDetection: null,
   transcodingBlockedMedia: null,
+
+  findDuplicateByPath: (filePath: string) => {
+    const normalizedTargetPath = normalizePathForComparison(filePath);
+    if (!normalizedTargetPath) return undefined;
+
+    const state = get() as any;
+    return state.mediaLibrary?.find((item: MediaLibraryItem) => {
+      const candidatePaths = [item.source, item.tempFilePath];
+      return candidatePaths.some((candidatePath) => {
+        const normalizedCandidate = normalizePathForComparison(candidatePath);
+        return (
+          !!normalizedCandidate && normalizedCandidate === normalizedTargetPath
+        );
+      });
+    });
+  },
 
   findDuplicateBySignature: (signature: ContentSignature) => {
     const state = get() as any;
@@ -282,7 +317,7 @@ export const createMediaLibrarySlice: StateCreator<
     );
 
     if (!mediaItem) {
-      console.warn(`Media item ${mediaId} not found`);
+      console.warn(`[MediaLibrarySlice] Media item${mediaId} not found`);
       return;
     }
 
@@ -291,13 +326,15 @@ export const createMediaLibrarySlice: StateCreator<
       mediaItem.transcoding?.status === 'pending' ||
       mediaItem.transcoding?.status === 'processing'
     ) {
-      console.log(`🚫 Cancelling transcoding for media: ${mediaItem.name}`);
       // Cancel via IPC - fire and forget
       if (typeof window !== 'undefined' && window.electronAPI) {
         window.electronAPI
           .transcodeCancelForMedia(mediaId)
           .catch((error: Error) => {
-            console.warn('Failed to cancel transcoding:', error);
+            console.warn(
+              '[MediaLibrarySlice] Failed to cancel transcoding',
+              error,
+            );
           });
       }
     }
@@ -314,13 +351,6 @@ export const createMediaLibrarySlice: StateCreator<
     if (affectedTracks && affectedTracks.length > 0) {
       if (!force) {
         // Prevent deletion and throw error for UI to handle
-        console.log(
-          `🚫 Cannot delete media "${mediaItem.name}" - it's used by ${affectedTracks.length} track(s) on the timeline`,
-        );
-        console.log(
-          'Affected tracks:',
-          affectedTracks.map((t: any) => t.name),
-        );
 
         throw new Error(
           `Cannot delete "${mediaItem.name}" - it's currently used by ${affectedTracks.length} track(s) on the timeline. Please remove the tracks first.`,
@@ -330,12 +360,8 @@ export const createMediaLibrarySlice: StateCreator<
         state.recordAction?.('Delete Media');
 
         // Force delete: cascade remove all affected tracks
-        console.log(
-          `⚠️ Force deleting media "${mediaItem.name}" and removing ${affectedTracks.length} track(s) from timeline`,
-        );
 
         affectedTracks.forEach((track: any) => {
-          console.log(`  - Removing track: ${track.name}`);
           state.removeTrack?.(track.id);
         });
       }
@@ -345,7 +371,6 @@ export const createMediaLibrarySlice: StateCreator<
     }
 
     // Safe to delete - no tracks are using this media (or we force deleted them)
-    console.log(`🗑️ Deleting media from library: ${mediaItem.name}`);
 
     set((state: any) => ({
       mediaLibrary: state.mediaLibrary.filter(
@@ -369,10 +394,6 @@ export const createMediaLibrarySlice: StateCreator<
         (item: MediaLibraryItem) => item.id === mediaId,
       );
       if (mediaItem?.type === 'video') {
-        console.log(
-          `🔄 Extracted audio updated for video: ${mediaItem.name}, checking for linked audio tracks`,
-        );
-
         // Find all audio tracks that are linked to video tracks from this source
         const linkedAudioTracks = state.tracks?.filter(
           (track: any) =>
@@ -383,9 +404,6 @@ export const createMediaLibrarySlice: StateCreator<
 
         // Update each linked audio track with the extracted audio source
         linkedAudioTracks?.forEach((audioTrack: any) => {
-          console.log(
-            `🎵 Updating linked audio track ${audioTrack.id} with extracted audio source`,
-          );
           state.updateTrack?.(audioTrack.id, {
             source: updates.extractedAudio.audioPath,
             previewUrl: updates.extractedAudio.previewUrl,
@@ -404,10 +422,6 @@ export const createMediaLibrarySlice: StateCreator<
       );
 
       if (mediaItem?.type === 'video') {
-        console.log(
-          `🔄 Proxy ready for video: ${mediaItem.name}, updating timeline tracks with proxy URL`,
-        );
-
         // Find all video tracks that reference this media (by mediaId or source)
         const affectedTracks = state.tracks?.filter(
           (track: any) =>
@@ -417,9 +431,6 @@ export const createMediaLibrarySlice: StateCreator<
 
         // Update each affected track with the proxy URL and remove proxy blocked state
         affectedTracks?.forEach((videoTrack: any) => {
-          console.log(
-            `📹 Updating video track ${videoTrack.id} with proxy URL`,
-          );
           state.updateTrack?.(videoTrack.id, {
             previewUrl: updates.previewUrl,
             proxyBlocked: false,
@@ -427,11 +438,7 @@ export const createMediaLibrarySlice: StateCreator<
           });
         });
 
-        if (affectedTracks?.length > 0) {
-          console.log(
-            `✅ Updated ${affectedTracks.length} timeline track(s) with proxy URL for: ${mediaItem.name}`,
-          );
-        }
+        void affectedTracks?.length;
       }
     }
 
@@ -463,9 +470,6 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) =>
         item.source === source || item.tempFilePath === source,
     );
-    if (mediaItem?.spriteSheetDisabled) {
-      return undefined;
-    }
     return mediaItem?.spriteSheets;
   },
 
@@ -529,7 +533,7 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) => item.id === mediaId,
     );
     if (!mediaItem) {
-      console.error('Media item not found:', mediaId);
+      console.error('[MediaLibrarySlice] Media item not found', mediaId);
       return false;
     }
 
@@ -540,9 +544,6 @@ export const createMediaLibrarySlice: StateCreator<
 
     // For non-audio/video files (images, subtitles), skip entirely
     if (!isAudioFile && !isVideoFile) {
-      console.log(
-        `Skipping waveform generation for: ${mediaItem.name} (not audio or video)`,
-      );
       return true; // Not an error, just not applicable
     }
 
@@ -582,7 +583,7 @@ export const createMediaLibrarySlice: StateCreator<
         }));
         const latestState = get() as any;
         latestState.markUnsavedChanges?.();
-        console.log(`✅ Waveform cache HIT (signature) for: ${mediaItem.name}`);
+
         return true;
       }
     }
@@ -590,15 +591,11 @@ export const createMediaLibrarySlice: StateCreator<
     // For video files without extracted audio, return false to trigger retry
     // Audio extraction happens asynchronously and may not be complete yet
     if (isVideoFile && !isVideoWithExtractedAudio) {
-      console.log(
-        `⏳ Audio not yet extracted for video: ${mediaItem.name} (will retry)`,
-      );
       return false; // Return false to trigger retry logic
     }
 
     // Skip if waveform already exists and has valid peaks
     if (mediaItem.waveform?.success && mediaItem.waveform?.peaks?.length > 0) {
-      console.log(`Waveform already exists for: ${mediaItem.name}`);
       return true;
     }
 
@@ -606,21 +603,14 @@ export const createMediaLibrarySlice: StateCreator<
     // Prevents regeneration loops when media is dragged to timeline during active jobs
     const currentJobState = mediaItem.jobStates?.waveform;
     if (currentJobState === 'processing') {
-      console.log(
-        `⏳ Waveform job already processing for: ${mediaItem.name} (idempotent skip)`,
-      );
       return true;
     }
     if (currentJobState === 'completed') {
-      console.log(
-        `✅ Waveform job already completed for: ${mediaItem.name} (idempotent skip)`,
-      );
       return true;
     }
 
     // Skip if already generating (legacy check - check both store state and active job)
     if (get().isGeneratingWaveform(mediaId)) {
-      console.log(`Waveform already generating for: ${mediaItem.name}`);
       return true;
     }
 
@@ -634,19 +624,19 @@ export const createMediaLibrarySlice: StateCreator<
       audioPath = mediaItem.source;
     } else if (mediaItem.type === 'video' && !mediaItem.extractedAudio) {
       // Video without extracted audio yet - this is expected during import
-      console.log(
-        `Audio extraction not complete yet for video: ${mediaItem.name}`,
-      );
+
       return false; // Return false to allow retry logic
     } else {
-      console.warn(`No suitable audio source found for: ${mediaItem.name}`);
+      console.warn(
+        `[MediaLibrarySlice] No suitable audio source found for${mediaItem.name}`,
+      );
       return false;
     }
 
     // Skip blob URLs if they are local file paths (Web Audio API requires proper URLs)
     if (audioPath.startsWith('blob:') && !audioPath.includes('localhost')) {
       console.warn(
-        `Skipping waveform generation for blob URL: ${mediaItem.name}`,
+        `[MediaLibrarySlice] Skipping waveform generation for blob URL${mediaItem.name}`,
       );
       return true; // Skip but don't error
     }
@@ -660,7 +650,6 @@ export const createMediaLibrarySlice: StateCreator<
         contentSignatureKey,
       )
     ) {
-      console.log(`Waveform job already active for: ${mediaItem.name}`);
       return true;
     }
 
@@ -680,12 +669,6 @@ export const createMediaLibrarySlice: StateCreator<
           : item,
       ),
     }));
-
-    console.log(
-      `🎵 Generating waveform for media library item: ${mediaItem.name}`,
-    );
-    console.log(`📊 Audio source: ${audioPath}`);
-    console.log(`⏱️ Duration: ${mediaItem.duration}s`);
 
     try {
       // Use optimized parameters for fast generation
@@ -724,10 +707,7 @@ export const createMediaLibrarySlice: StateCreator<
         }));
         const latestState = get() as any;
         latestState.markUnsavedChanges?.();
-        console.log(`✅ Waveform generated and cached for: ${mediaItem.name}`);
-        console.log(
-          `📈 Generated ${result.peaks.length} peaks with ${result.lodTiers?.length || 0} LOD tiers`,
-        );
+
         return true;
       } else {
         // Update job state to 'failed'
@@ -745,7 +725,7 @@ export const createMediaLibrarySlice: StateCreator<
           ),
         }));
         console.error(
-          `❌ Failed to generate waveform for ${mediaItem.name}:`,
+          `[MediaLibrarySlice] Failed to generate waveform for${mediaItem.name}:`,
           result.error,
         );
         return false;
@@ -766,7 +746,7 @@ export const createMediaLibrarySlice: StateCreator<
         ),
       }));
       console.error(
-        `❌ Error generating waveform for ${mediaItem.name}:`,
+        `[MediaLibrarySlice] Error generating waveform for${mediaItem.name}:`,
         error,
       );
       return false;
@@ -782,41 +762,17 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) => item.id === mediaId,
     );
     if (!mediaItem) {
-      console.error('Media item not found:', mediaId);
+      console.error('[MediaLibrarySlice] Media item not found', mediaId);
       return false;
     }
 
     // Only generate sprite sheets for video files
     if (mediaItem.type !== 'video') {
-      console.log(
-        `Skipping sprite sheet generation for non-video: ${mediaItem.name}`,
-      );
       return true; // Not an error, just not applicable
-    }
-
-    if (mediaItem.spriteSheetDisabled) {
-      console.log(
-        `⏭️ Sprite sheets disabled for long-form video: ${mediaItem.name}`,
-      );
-      set((state: any) => ({
-        mediaLibrary: state.mediaLibrary.map((item: MediaLibraryItem) =>
-          item.id === mediaId
-            ? {
-                ...item,
-                jobStates: {
-                  ...item.jobStates,
-                  spriteSheet: 'completed' as const,
-                },
-              }
-            : item,
-        ),
-      }));
-      return true;
     }
 
     // Skip if sprite sheets already exist
     if (mediaItem.spriteSheets?.success) {
-      console.log(`Sprite sheets already exist for: ${mediaItem.name}`);
       return true;
     }
 
@@ -869,9 +825,7 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-        console.log(
-          `✅ Sprite sheet cache HIT (signature) for: ${mediaItem.name}`,
-        );
+
         return true;
       }
     }
@@ -880,21 +834,21 @@ export const createMediaLibrarySlice: StateCreator<
     // Prevents regeneration loops when media is dragged to timeline during active jobs
     const currentJobState = mediaItem.jobStates?.spriteSheet;
     if (currentJobState === 'processing') {
-      console.log(
-        `⏳ Sprite sheet job already processing for: ${mediaItem.name} (idempotent skip)`,
-      );
       return true;
     }
     if (currentJobState === 'completed') {
-      console.log(
-        `✅ Sprite sheet job already completed for: ${mediaItem.name} (idempotent skip)`,
-      );
-      return true;
+      const hasGeneratedSheets =
+        mediaItem.spriteSheets?.success &&
+        (mediaItem.spriteSheets?.spriteSheets?.length || 0) > 0;
+      if (!hasGeneratedSheets) {
+        // Continue to regeneration path below.
+      } else {
+        return true;
+      }
     }
 
     // Skip if already generating (legacy check)
     if (get().isGeneratingSpriteSheet(mediaId)) {
-      console.log(`Sprite sheets already generating for: ${mediaItem.name}`);
       return true;
     }
 
@@ -902,16 +856,13 @@ export const createMediaLibrarySlice: StateCreator<
     // This allows the proxy generation to finish first (preventing resource contention)
     // The generation will be re-triggered when the proxy becomes 'ready'
     if (mediaItem.proxy?.status === 'processing') {
-      console.log(
-        `⏳ Deferring sprite sheet generation for: ${mediaItem.name} (waiting for proxy)`,
-      );
       return true;
     }
 
     // Skip blob URLs (they won't work with FFmpeg)
     if (videoPath.startsWith('blob:')) {
       console.warn(
-        `Cannot generate sprite sheets from blob URL: ${mediaItem.name}`,
+        `[MediaLibrarySlice] Cannot generate sprite sheets from blob URL${mediaItem.name}`,
       );
       return false;
     }
@@ -983,13 +934,6 @@ export const createMediaLibrarySlice: StateCreator<
       ),
     }));
 
-    console.log(
-      `🎬 Generating sprite sheets for media library item: ${mediaItem.name}`,
-    );
-    console.log(
-      `📊 Expected ${numberOfSheets} sheets, interval: ${intervalSeconds.toFixed(2)}s`,
-    );
-
     // Track this generation job for progressive loading
     // We use videoPath as the key since it's unique per media item
     activeSpriteSheetJobs.set(videoPath, {
@@ -1030,7 +974,7 @@ export const createMediaLibrarySlice: StateCreator<
 
         if (processingMedia.length === 0) {
           console.warn(
-            '⚠️ Received sprite sheet ready event but no media is processing',
+            '[MediaLibrarySlice] Received sprite sheet ready event but no media is processing',
           );
           return;
         }
@@ -1162,7 +1106,7 @@ export const createMediaLibrarySlice: StateCreator<
       };
 
       // Register the global listener
-      (window.electronAPI as any).onSpriteSheetSheetReady(handleSheetReady);
+      window.electronAPI.onSpriteSheetSheetReady(handleSheetReady);
     }
 
     try {
@@ -1203,9 +1147,7 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-        console.log(
-          `✅ Sprite sheets generated and cached for: ${mediaItem.name}`,
-        );
+
         return true;
       } else {
         // Update job state to 'failed'
@@ -1223,7 +1165,7 @@ export const createMediaLibrarySlice: StateCreator<
           ),
         }));
         console.error(
-          `❌ Failed to generate sprite sheets for ${mediaItem.name}:`,
+          `[MediaLibrarySlice] Failed to generate sprite sheets for${mediaItem.name}:`,
           result.error,
         );
         return false;
@@ -1244,7 +1186,7 @@ export const createMediaLibrarySlice: StateCreator<
         ),
       }));
       console.error(
-        `❌ Error generating sprite sheets for ${mediaItem.name}:`,
+        `[MediaLibrarySlice] Error generating sprite sheets for${mediaItem.name}:`,
         error,
       );
       return false;
@@ -1360,10 +1302,6 @@ export const createMediaLibrarySlice: StateCreator<
         };
       }),
     }));
-
-    console.log(
-      `📸 Progressive sprite sheet ${sheetIndex + 1}/${totalSheets} added for media ${mediaId}`,
-    );
   },
 
   generateThumbnailForMedia: async (mediaId: string) => {
@@ -1372,21 +1310,17 @@ export const createMediaLibrarySlice: StateCreator<
       (item: MediaLibraryItem) => item.id === mediaId,
     );
     if (!mediaItem) {
-      console.error('Media item not found:', mediaId);
+      console.error('[MediaLibrarySlice] Media item not found', mediaId);
       return false;
     }
 
     // Only generate thumbnails for video files
     if (mediaItem.type !== 'video') {
-      console.log(
-        `Skipping thumbnail generation for non-video: ${mediaItem.name}`,
-      );
       return true; // Not an error, just not applicable
     }
 
     // Skip if thumbnail already exists
     if (mediaItem.thumbnail) {
-      console.log(`Thumbnail already exists for: ${mediaItem.name}`);
       return true;
     }
 
@@ -1409,9 +1343,6 @@ export const createMediaLibrarySlice: StateCreator<
     if (mediaItem.metadata?.width && mediaItem.metadata?.height) {
       const aspectRatio = mediaItem.metadata.width / mediaItem.metadata.height;
       thumbnailHeight = Math.round(thumbnailWidth / aspectRatio);
-      console.log(
-        `📐 Using video aspect ratio: ${mediaItem.metadata.width}x${mediaItem.metadata.height} (${aspectRatio.toFixed(2)}) -> thumbnail: ${thumbnailWidth}x${thumbnailHeight}`,
-      );
     }
 
     // Cache-first: try content-signature-based cache before any other checks
@@ -1446,9 +1377,7 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-        console.log(
-          `✅ Thumbnail cache HIT (signature) for: ${mediaItem.name}`,
-        );
+
         return true;
       }
 
@@ -1459,30 +1388,21 @@ export const createMediaLibrarySlice: StateCreator<
     // CRITICAL: Check job state for idempotency
     const currentJobState = mediaItem.jobStates?.thumbnail;
     if (currentJobState === 'processing') {
-      console.log(
-        `⏳ Thumbnail job already processing for: ${mediaItem.name} (idempotent skip)`,
-      );
       return true;
     }
     if (currentJobState === 'completed') {
-      console.log(
-        `✅ Thumbnail job already completed for: ${mediaItem.name} (idempotent skip)`,
-      );
       return true;
     }
 
     // Defer generation if proxy is currently processing
     if (mediaItem.proxy?.status === 'processing') {
-      console.log(
-        `⏳ Deferring thumbnail generation for: ${mediaItem.name} (waiting for proxy)`,
-      );
       return true;
     }
 
     // Skip blob URLs (they won't work with FFmpeg)
     if (videoPath.startsWith('blob:')) {
       console.warn(
-        `Cannot generate thumbnail from blob URL: ${mediaItem.name}`,
+        `[MediaLibrarySlice] Cannot generate thumbnail from blob URL${mediaItem.name}`,
       );
       return false;
     }
@@ -1503,10 +1423,6 @@ export const createMediaLibrarySlice: StateCreator<
     }));
 
     try {
-      console.log(
-        `📸 Generating thumbnail for media library item: ${mediaItem.name}`,
-      );
-
       const result = await VideoThumbnailGenerator.generateThumbnails({
         videoPath,
         contentSignature: contentSignatureKey,
@@ -1540,7 +1456,7 @@ export const createMediaLibrarySlice: StateCreator<
               : item,
           ),
         }));
-        console.log(`✅ Thumbnail generated and cached for: ${mediaItem.name}`);
+
         return true;
       } else {
         set((state: any) => ({
@@ -1557,7 +1473,7 @@ export const createMediaLibrarySlice: StateCreator<
           ),
         }));
         console.error(
-          `❌ Failed to generate thumbnail for ${mediaItem.name}:`,
+          `[MediaLibrarySlice] Failed to generate thumbnail for${mediaItem.name}:`,
           result.error,
         );
         return false;
@@ -1577,7 +1493,7 @@ export const createMediaLibrarySlice: StateCreator<
         ),
       }));
       console.error(
-        `❌ Error generating thumbnail for ${mediaItem.name}:`,
+        `[MediaLibrarySlice] Error generating thumbnail for${mediaItem.name}:`,
         error,
       );
       return false;
@@ -1593,8 +1509,6 @@ export const createMediaLibrarySlice: StateCreator<
       .sort((a: any, b: any) => a.startFrame - b.startFrame)[0];
 
     if (!firstVideoTrack) {
-      console.log('No video tracks on timeline, clearing project thumbnail');
-
       // Clear project thumbnail if we have a current project but no video tracks
       if (state.currentProjectId) {
         try {
@@ -1614,21 +1528,16 @@ export const createMediaLibrarySlice: StateCreator<
             await projectService.updateProject(updatedProject);
             const fullState = get() as any;
             fullState.syncWithProjectStore();
-
-            console.log(
-              `📸 Cleared project thumbnail (no video tracks remaining)`,
-            );
           }
         } catch (error) {
-          console.error('Failed to clear project thumbnail:', error);
+          console.error(
+            '[MediaLibrarySlice] Failed to clear project thumbnail',
+            error,
+          );
         }
       }
       return;
     }
-
-    console.log(
-      `📸 Updating project thumbnail from track: ${firstVideoTrack.name}`,
-    );
 
     // Find the media library item for this track
     const mediaItem = state.mediaLibrary.find(
@@ -1638,7 +1547,9 @@ export const createMediaLibrarySlice: StateCreator<
     );
 
     if (!mediaItem) {
-      console.error('Media library item not found for first video track');
+      console.error(
+        '[MediaLibrarySlice] Media library item not found for first video track',
+      );
       return;
     }
 
@@ -1646,7 +1557,9 @@ export const createMediaLibrarySlice: StateCreator<
     if (!mediaItem.thumbnail) {
       const success = await get().generateThumbnailForMedia(mediaItem.id);
       if (!success) {
-        console.error('Failed to generate thumbnail for project');
+        console.error(
+          '[MediaLibrarySlice] Failed to generate thumbnail for project',
+        );
         return;
       }
     }
@@ -1670,13 +1583,12 @@ export const createMediaLibrarySlice: StateCreator<
           await projectService.updateProject(updatedProject);
           const fullState = get() as any;
           fullState.syncWithProjectStore();
-
-          console.log(
-            `📸 Updated project thumbnail from: ${firstVideoTrack.name}`,
-          );
         }
       } catch (error) {
-        console.error('Failed to update project thumbnail:', error);
+        console.error(
+          '[MediaLibrarySlice] Failed to update project thumbnail',
+          error,
+        );
       }
     }
   },
@@ -1725,9 +1637,11 @@ export const createMediaLibrarySlice: StateCreator<
     if (mediaItem?.transcoding?.jobId) {
       try {
         await window.electronAPI.transcodeCancel(mediaItem.transcoding.jobId);
-        console.log(`🚫 Cancelled transcoding for media: ${mediaId}`);
       } catch (error) {
-        console.error(`Failed to cancel transcoding for ${mediaId}:`, error);
+        console.error(
+          `[MediaLibrarySlice] Failed to cancel transcoding for${mediaId}:`,
+          error,
+        );
       }
     }
   },

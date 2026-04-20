@@ -42,9 +42,11 @@ async function detectNVENC(
     await execAsync(
       `"${ffmpegPath}" -f lavfi -i testsrc=duration=0.1:size=320x240:rate=1 -c:v h264_nvenc -f null - 2>&1`,
     );
-    console.log('✅ NVENC encoder test successful');
+    console.log('[HardwareAccelerationDetector] NVENC encoder test successful');
   } catch (error) {
-    console.warn('⚠️ NVENC detected in encoder list but test encoding failed:');
+    console.warn(
+      '[HardwareAccelerationDetector] NVENC detected in encoder list but test encoding failed',
+    );
     return null; // Encoder listed but doesn't work
   }
 
@@ -90,11 +92,13 @@ async function detectQSV(
     await execAsync(
       `"${ffmpegPath}" -f lavfi -i testsrc=duration=0.1:size=320x240:rate=1 -c:v h264_qsv -f null - 2>&1`,
     );
-    console.log('✅ QSV encoder test successful');
+    console.log('[HardwareAccelerationDetector] QSV encoder test successful');
   } catch (error) {
-    console.warn('⚠️ QSV detected in encoder list but test encoding failed');
     console.warn(
-      '   This usually means Intel iGPU drivers are not properly installed',
+      '[HardwareAccelerationDetector] QSV detected in encoder list but test encoding failed',
+    );
+    console.warn(
+      '[HardwareAccelerationDetector] This usually means Intel iGPU drivers are not properly installed',
     );
     return null; // Encoder listed but doesn't work
   }
@@ -138,11 +142,13 @@ async function detectAMF(
     await execAsync(
       `"${ffmpegPath}" -f lavfi -i testsrc=duration=0.1:size=320x240:rate=1 -c:v h264_amf -f null - 2>&1`,
     );
-    console.log('✅ AMF encoder test successful');
+    console.log('[HardwareAccelerationDetector] AMF encoder test successful');
   } catch (error) {
-    console.warn('⚠️ AMF detected in encoder list but test encoding failed');
     console.warn(
-      '   This usually means AMD GPU drivers (Adrenalin) are not properly installed',
+      '[HardwareAccelerationDetector] AMF detected in encoder list but test encoding failed',
+    );
+    console.warn(
+      '[HardwareAccelerationDetector] This usually means AMD GPU drivers (Adrenalin) are not properly installed',
     );
     return null; // Encoder listed but doesn't work
   }
@@ -182,10 +188,12 @@ async function detectVideoToolbox(
     await execAsync(
       `"${ffmpegPath}" -f lavfi -i testsrc=duration=0.1:size=320x240:rate=1 -c:v h264_videotoolbox -f null - 2>&1`,
     );
-    console.log('✅ VideoToolbox encoder test successful');
+    console.log(
+      '[HardwareAccelerationDetector] VideoToolbox encoder test successful',
+    );
   } catch (error) {
     console.warn(
-      '⚠️ VideoToolbox detected in encoder list but test encoding failed',
+      '[HardwareAccelerationDetector] VideoToolbox detected in encoder list but test encoding failed',
     );
     return null; // Encoder listed but doesn't work
   }
@@ -226,7 +234,7 @@ async function detectVAAPI(
     const fs = require('fs');
     if (!fs.existsSync('/dev/dri/renderD128')) {
       console.warn(
-        '⚠️ VAAPI encoder found but /dev/dri/renderD128 does not exist',
+        '[HardwareAccelerationDetector] VAAPI encoder found but /dev/dri/renderD128 does not exist',
       );
       return null;
     }
@@ -252,21 +260,30 @@ async function detectVAAPI(
 
     for (const pattern of errorPatterns) {
       if (output.includes(pattern)) {
-        console.warn('⚠️ VAAPI device initialization failed');
-        console.warn(`   Found error pattern: "${pattern}"`);
         console.warn(
-          '   VAAPI hardware encoding is not properly supported on this system',
+          '[HardwareAccelerationDetector] VAAPI device initialization failed',
+        );
+        console.warn(
+          `[HardwareAccelerationDetector] Found error pattern: "${pattern}"`,
+        );
+        console.warn(
+          '[HardwareAccelerationDetector] VAAPI hardware encoding is not properly supported on this system',
         );
         return null;
       }
     }
 
-    console.log('✅ VAAPI device initialization and encoding test successful');
+    console.log(
+      '[HardwareAccelerationDetector] VAAPI device initialization and encoding test successful',
+    );
   } catch (error) {
     console.warn(
-      '⚠️ VAAPI detected in encoder list but device initialization failed',
+      '[HardwareAccelerationDetector] VAAPI detected in encoder list but device initialization failed',
     );
-    console.warn('   Error:', error.message || 'Unknown error');
+    console.warn(
+      '[HardwareAccelerationDetector] Error',
+      error.message || 'Unknown error',
+    );
     return null;
   }
 
@@ -312,7 +329,9 @@ export async function detectAllHardwareAcceleration(
   ffmpegPath = 'ffmpeg',
 ): Promise<HardwareDetectionResult> {
   try {
-    console.log('🔍 Detecting hardware acceleration capabilities...');
+    console.log(
+      '[HardwareAccelerationDetector] Detecting hardware acceleration capabilities',
+    );
 
     // Query FFmpeg for available encoders
     const { stdout } = await execAsync(
@@ -325,31 +344,31 @@ export async function detectAllHardwareAcceleration(
     const nvenc = await detectNVENC(stdout, ffmpegPath);
     if (nvenc) {
       allAccelerations.push(nvenc);
-      console.log('✅ NVIDIA NVENC detected');
+      console.log('[HardwareAccelerationDetector] NVIDIA NVENC detected');
     }
 
     const qsv = await detectQSV(stdout, ffmpegPath);
     if (qsv) {
       allAccelerations.push(qsv);
-      console.log('✅ Intel Quick Sync detected');
+      console.log('[HardwareAccelerationDetector] Intel Quick Sync detected');
     }
 
     const videotoolbox = await detectVideoToolbox(stdout, ffmpegPath);
     if (videotoolbox) {
       allAccelerations.push(videotoolbox);
-      console.log('✅ Apple VideoToolbox detected');
+      console.log('[HardwareAccelerationDetector] Apple VideoToolbox detected');
     }
 
     const amf = await detectAMF(stdout, ffmpegPath);
     if (amf) {
       allAccelerations.push(amf);
-      console.log('✅ AMD AMF detected');
+      console.log('[HardwareAccelerationDetector] AMD AMF detected');
     }
 
     const vaapi = await detectVAAPI(stdout, ffmpegPath);
     if (vaapi) {
       allAccelerations.push(vaapi);
-      console.log('✅ VAAPI detected');
+      console.log('[HardwareAccelerationDetector] VAAPI detected');
     }
 
     const fallback = getSoftwareFallback();
@@ -360,11 +379,11 @@ export async function detectAllHardwareAcceleration(
 
     if (primary) {
       console.log(
-        `🎮 Primary hardware acceleration: ${primary.type.toUpperCase()}`,
+        `[HardwareAccelerationDetector] Primary hardware acceleration${primary.type.toUpperCase()}`,
       );
     } else {
       console.log(
-        '⚠️ No hardware acceleration available, using software encoding',
+        '[HardwareAccelerationDetector] No hardware acceleration available, using software encoding',
       );
     }
 
@@ -374,7 +393,10 @@ export async function detectAllHardwareAcceleration(
       fallback,
     };
   } catch (error) {
-    console.error('❌ Hardware acceleration detection failed:', error);
+    console.error(
+      '[HardwareAccelerationDetector] Hardware acceleration detection failed',
+      error,
+    );
 
     return {
       primary: undefined,
@@ -406,7 +428,9 @@ export async function getHardwareAcceleration(
 export function clearHardwareAccelerationCache(): void {
   cachedDetection = null;
   cachedFfmpegPath = null;
-  console.log('🔄 Hardware acceleration cache cleared');
+  console.log(
+    '[HardwareAccelerationDetector] Hardware acceleration cache cleared',
+  );
 }
 
 /**
@@ -459,28 +483,40 @@ export async function printHardwareAccelerationSummary(
 ): Promise<void> {
   const detection = await getHardwareAcceleration(ffmpegPath);
 
-  console.log('\n📊 Hardware Acceleration Summary:');
-  console.log('═'.repeat(60));
+  console.log('[HardwareAccelerationDetector] Hardware Acceleration Summary');
+  console.log('[HardwareAccelerationDetector] Log', '═'.repeat(60));
 
   if (detection.primary) {
-    console.log(`\n🎮 Primary: ${detection.primary.type.toUpperCase()}`);
-    console.log(`   Codec: ${detection.primary.videoCodec}`);
+    console.log(
+      `[HardwareAccelerationDetector] Primary${detection.primary.type.toUpperCase()}`,
+    );
+    console.log(
+      `[HardwareAccelerationDetector] Codec${detection.primary.videoCodec}`,
+    );
     if (detection.primary.hevcCodec) {
-      console.log(`   HEVC: ${detection.primary.hevcCodec}`);
+      console.log(
+        `[HardwareAccelerationDetector] HEVC${detection.primary.hevcCodec}`,
+      );
     }
-    console.log(`   Description: ${detection.primary.description}`);
+    console.log(
+      `[HardwareAccelerationDetector] Description${detection.primary.description}`,
+    );
   }
 
   if (detection.all.length > 1) {
-    console.log(`\n📋 Other available options:`);
+    console.log('[HardwareAccelerationDetector] Other available options');
     detection.all.slice(1).forEach((hw) => {
-      console.log(`   - ${hw.type.toUpperCase()}: ${hw.videoCodec}`);
+      console.log(
+        `[HardwareAccelerationDetector] Log${hw.type.toUpperCase()}: ${hw.videoCodec}`,
+      );
     });
   }
 
   if (detection.all.length === 0) {
-    console.log(`\n⚠️  Fallback: ${detection.fallback.description}`);
+    console.log(
+      `[HardwareAccelerationDetector] Fallback${detection.fallback.description}`,
+    );
   }
 
-  console.log('═'.repeat(60) + '\n');
+  console.log('[HardwareAccelerationDetector] Log', '═'.repeat(60) + '\n');
 }

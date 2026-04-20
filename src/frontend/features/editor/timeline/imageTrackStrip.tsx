@@ -18,19 +18,20 @@ interface ImageTile {
   repeatIndex: number;
 }
 
+const VIEWPORT_BUFFER_MULTIPLIER = 0.5;
+
 // GPU-accelerated image tile component
 const GPUAcceleratedImageTile: React.FC<{
   tile: ImageTile;
   imageUrl: string;
   height: number;
   tileNativeWidth: number;
-  viewportOffset: number;
 }> = React.memo(
-  ({ tile, imageUrl, height, tileNativeWidth, viewportOffset }) => {
+  ({ tile, imageUrl, height, tileNativeWidth }) => {
     const { startX, width: tileWidth, clipOffset } = tile;
 
     // Use transform for positioning (GPU accelerated)
-    const transform = `translate3d(${startX - viewportOffset}px, 0, 0)`;
+    const transform = `translate3d(${startX}px, 0, 0)`;
 
     return (
       <div
@@ -66,7 +67,6 @@ const GPUAcceleratedImageTile: React.FC<{
       prev.tile.id === next.tile.id &&
       Math.abs(prev.tile.startX - next.tile.startX) < 1 &&
       Math.abs(prev.tile.width - next.tile.width) < 1 &&
-      Math.abs(prev.viewportOffset - next.viewportOffset) < 1 &&
       prev.height === next.height &&
       prev.imageUrl === next.imageUrl
     );
@@ -76,7 +76,7 @@ const GPUAcceleratedImageTile: React.FC<{
 GPUAcceleratedImageTile.displayName = 'GPUAcceleratedImageTile';
 
 export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
-  ({ track, width, height, zoomLevel }) => {
+  ({ track, frameWidth, width, height, zoomLevel }) => {
     const selectedTrackIds = useVideoEditorStore(
       (state) => state.timeline.selectedTrackIds,
     );
@@ -88,11 +88,14 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
       width: number;
       height: number;
     } | null>(null);
+    const [staticGifFrameUrl, setStaticGifFrameUrl] = useState<string | null>(
+      null,
+    );
 
-    // Viewport state for culling
+    // Viewport state for culling (timeline scroll container)
     const [viewportBounds, setViewportBounds] = useState({
-      start: 0,
-      end: width,
+      scrollLeft: 0,
+      viewportWidth: 0,
     });
     const rafRef = useRef<number>(0);
 
@@ -101,9 +104,95 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
       return track.previewUrl || track.source;
     }, [track.previewUrl, track.source]);
 
+    const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
+    const mediaItem = useMemo(() => {
+      return mediaLibrary.find(
+        (item) =>
+          (track.mediaId && item.id === track.mediaId) ||
+          item.source === track.source,
+      );
+    }, [mediaLibrary, track.mediaId, track.source]);
+
+    const isGifTrack = useMemo(() => {
+      const mimeType = (mediaItem?.mimeType || '').toLowerCase();
+      const name = (mediaItem?.name || track.name || '').toLowerCase();
+      const source = (track.source || '').toLowerCase();
+      const preview = (track.previewUrl || '').toLowerCase();
+      return (
+        mimeType.includes('image/gif') ||
+        name.endsWith('.gif') ||
+        source.endsWith('.gif') ||
+        preview.endsWith('.gif')
+      );
+    }, [
+      mediaItem?.mimeType,
+      mediaItem?.name,
+      track.name,
+      track.source,
+      track.previewUrl,
+    ]);
+
+    // Build a static frame for GIF tracks so timeline rendering is cheap.
+    useEffect(() => {
+      if (!isGifTrack || !imageUrl) {
+        setStaticGifFrameUrl(null);
+        return;
+      }
+
+      let cancelled = false;
+      const img = new Image();
+
+      img.onload = () => {
+        if (cancelled) return;
+        try {
+          const canvas = document.createElement('canvas');
+          const drawWidth = Math.max(1, img.naturalWidth || 1);
+          const drawHeight = Math.max(1, img.naturalHeight || 1);
+          canvas.width = drawWidth;
+          canvas.height = drawHeight;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            setStaticGifFrameUrl(null);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, drawWidth, drawHeight);
+          const dataUrl = canvas.toDataURL('image/png', 0.9);
+          setStaticGifFrameUrl(dataUrl);
+        } catch {
+          setStaticGifFrameUrl(null);
+        }
+      };
+
+      img.onerror = () => {
+        if (!cancelled) {
+          setStaticGifFrameUrl(null);
+        }
+      };
+
+      img.src = imageUrl;
+
+      return () => {
+        cancelled = true;
+        img.onload = null;
+        img.onerror = null;
+      };
+    }, [isGifTrack, imageUrl]);
+
+    const timelineImageUrl = useMemo(() => {
+      if (!isGifTrack) return imageUrl;
+      if (mediaItem?.thumbnail) return mediaItem.thumbnail;
+      if (staticGifFrameUrl) return staticGifFrameUrl;
+      return imageUrl;
+    }, [isGifTrack, imageUrl, mediaItem?.thumbnail, staticGifFrameUrl]);
+
+    const useSingleLayerGifFallback =
+      isGifTrack && !mediaItem?.thumbnail && !staticGifFrameUrl;
+
     // Load image and get dimensions
     useEffect(() => {
-      if (!imageUrl) {
+      if (!timelineImageUrl) {
         setImageError('No image source');
         return;
       }
@@ -126,13 +215,13 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
         setImageLoaded(false);
       };
 
-      img.src = imageUrl;
+      img.src = timelineImageUrl;
 
       return () => {
         img.onload = null;
         img.onerror = null;
       };
-    }, [imageUrl]);
+    }, [timelineImageUrl]);
 
     // Calculate native display width based on image aspect ratio
     const tileNativeWidth = useMemo(() => {
@@ -142,123 +231,105 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
       return aspectRatio * height;
     }, [imageDimensions, height]);
 
-    // Generate tiles for seamless repetition across track width
-    const imageTiles = useMemo(() => {
+    const visibleTiles = useMemo(() => {
       if (!imageLoaded || !imageDimensions || tileNativeWidth <= 0) return [];
 
+      const viewportWidth = viewportBounds.viewportWidth;
+      if (viewportWidth <= 0) return [];
+
+      const trackStartPx = track.startFrame * frameWidth;
+      const viewportStart = viewportBounds.scrollLeft - trackStartPx;
+      const viewportEnd =
+        viewportBounds.scrollLeft + viewportWidth - trackStartPx;
+      const buffer = viewportWidth * VIEWPORT_BUFFER_MULTIPLIER;
+
+      const visibleStart = Math.max(0, viewportStart - buffer);
+      const visibleEnd = Math.min(width, viewportEnd + buffer);
+
+      if (visibleEnd <= 0 || visibleStart >= width) return [];
+
+      const startIndex = Math.max(
+        0,
+        Math.floor(visibleStart / tileNativeWidth),
+      );
+      const endIndex = Math.min(
+        Math.ceil(visibleEnd / tileNativeWidth),
+        Math.ceil(width / tileNativeWidth),
+      );
+
       const tiles: ImageTile[] = [];
-
-      // Calculate how many tiles we need to fill the entire track width
-      const tilesNeeded = Math.ceil(width / tileNativeWidth + 0.0001);
-
-      for (let i = 0; i < tilesNeeded; i++) {
+      for (let i = startIndex; i <= endIndex; i++) {
         const tileStartX = i * tileNativeWidth;
-        const tileEndX = Math.min(tileStartX + tileNativeWidth, width);
-        const tileWidth = tileEndX - tileStartX;
+        if (tileStartX >= width) break;
+        const tileWidth = Math.min(tileNativeWidth, width - tileStartX);
+        if (tileWidth <= 0.5) continue;
 
-        // Only add tiles with meaningful width
-        if (tileWidth > 0.5) {
-          tiles.push({
-            id: `${track.id}-tile-${i}`,
-            startX: tileStartX,
-            width: tileWidth,
-            clipOffset: 0,
-            repeatIndex: i,
-          });
-        }
+        tiles.push({
+          id: `${track.id}-tile-${i}`,
+          startX: tileStartX,
+          width: tileWidth,
+          clipOffset: 0,
+          repeatIndex: i,
+        });
       }
 
       return tiles;
-    }, [imageLoaded, imageDimensions, tileNativeWidth, width, track.id]);
+    }, [
+      imageLoaded,
+      imageDimensions,
+      tileNativeWidth,
+      width,
+      track.id,
+      track.startFrame,
+      frameWidth,
+      viewportBounds,
+    ]);
 
-    // High-performance viewport culling with buffer zone
-    const visibleTiles = useMemo(() => {
-      // Increase buffer significantly for fast scrolling/zooming
-      const buffer = width * 1.5; // 150% buffer for smooth continuous scrolling
-      const leftBound = Math.max(0, viewportBounds.start - buffer);
-      const rightBound = viewportBounds.end + buffer;
-
-      // If no tiles, return empty array
-      if (imageTiles.length === 0) return [];
-
-      // Binary search for first visible tile
-      let left = 0;
-      let right = imageTiles.length - 1;
-      let firstVisible = 0;
-
-      while (left <= right) {
-        const mid = Math.floor((left + right) / 2);
-        const tile = imageTiles[mid];
-        if (tile.startX + tile.width < leftBound) {
-          left = mid + 1;
-        } else {
-          firstVisible = mid;
-          right = mid - 1;
-        }
-      }
-
-      // Collect visible tiles with safety margin
-      const visible: ImageTile[] = [];
-      for (let i = Math.max(0, firstVisible - 1); i < imageTiles.length; i++) {
-        const tile = imageTiles[i];
-        // Include tiles that are even partially visible
-        if (tile.startX > rightBound) break;
-        if (tile.startX + tile.width >= leftBound) {
-          visible.push(tile);
-        }
-      }
-
-      return visible;
-    }, [imageTiles, viewportBounds, width]);
-
-    // Update viewport bounds on scroll/zoom - more responsive for continuous scrolling
+    // Update viewport bounds on scroll/zoom (rAF-throttled)
     useEffect(() => {
+      const scrollContainer = containerRef.current?.closest(
+        '.overflow-auto',
+      ) as HTMLElement | null;
+      if (!scrollContainer) return;
+
       const updateViewport = () => {
-        if (containerRef.current) {
-          const parent = containerRef.current.parentElement;
-          if (parent) {
-            const scrollLeft = parent.scrollLeft || 0;
-            setViewportBounds({
-              start: scrollLeft,
-              end: scrollLeft + parent.clientWidth,
-            });
-          }
-        }
+        setViewportBounds({
+          scrollLeft: scrollContainer.scrollLeft || 0,
+          viewportWidth: scrollContainer.clientWidth || 0,
+        });
       };
 
-      // Use direct updates for scroll (no RAF throttling) to be more responsive
-      const handleScroll = () => {
-        updateViewport();
+      const scheduleUpdate = () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(updateViewport);
       };
 
-      const parent = containerRef.current?.parentElement;
-      if (parent) {
-        parent.addEventListener('scroll', handleScroll, { passive: true });
-        updateViewport(); // Initial update
-      }
+      scrollContainer.addEventListener('scroll', scheduleUpdate, {
+        passive: true,
+      });
+      updateViewport();
 
       return () => {
-        if (parent) parent.removeEventListener('scroll', handleScroll);
+        scrollContainer.removeEventListener('scroll', scheduleUpdate);
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
       };
     }, []);
 
-    // Update viewport when width changes (zoom level changes)
+    // Refresh viewport on zoom/size changes
     useEffect(() => {
-      const updateViewport = () => {
-        if (containerRef.current) {
-          const parent = containerRef.current.parentElement;
-          if (parent) {
-            const scrollLeft = parent.scrollLeft || 0;
-            setViewportBounds({
-              start: scrollLeft,
-              end: scrollLeft + parent.clientWidth,
-            });
-          }
-        }
-      };
-      updateViewport();
-    }, [width, zoomLevel]);
+      const scrollContainer = containerRef.current?.closest(
+        '.overflow-auto',
+      ) as HTMLElement | null;
+      if (!scrollContainer) return;
+
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        setViewportBounds({
+          scrollLeft: scrollContainer.scrollLeft || 0,
+          viewportWidth: scrollContainer.clientWidth || 0,
+        });
+      });
+    }, [width, zoomLevel, track.startFrame, frameWidth]);
 
     // Render with GPU acceleration
     return (
@@ -300,7 +371,7 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
         <div className="absolute inset-0 bg-gray-800" />
 
         {/* GPU-accelerated image tile container */}
-        {imageLoaded && (
+        {imageLoaded && !useSingleLayerGifFallback && (
           <div
             className="absolute inset-0"
             style={{
@@ -312,13 +383,26 @@ export const ImageTrackStrip: React.FC<ImageTrackStripProps> = React.memo(
               <GPUAcceleratedImageTile
                 key={tile.id}
                 tile={tile}
-                imageUrl={imageUrl}
+                imageUrl={timelineImageUrl}
                 height={height}
                 tileNativeWidth={tileNativeWidth}
-                viewportOffset={viewportBounds.start}
               />
             ))}
           </div>
+        )}
+
+        {/* Fallback: keep GIF as a single repeated layer if static frame extraction failed */}
+        {imageLoaded && useSingleLayerGifFallback && (
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `url(${timelineImageUrl})`,
+              backgroundSize: `${tileNativeWidth}px ${height}px`,
+              backgroundRepeat: 'repeat-x',
+              backgroundPosition: 'left center',
+              imageRendering: 'auto',
+            }}
+          />
         )}
 
         {/* Track name overlay */}

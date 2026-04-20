@@ -38,6 +38,11 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
     const tileContainerRef = useRef<HTMLDivElement>(null);
     const progressOverlayRef = useRef<HTMLDivElement>(null);
     const lastRenderedKeyRef = useRef<string | null>(null);
+    const [viewportBounds, setViewportBounds] = useState({
+      scrollLeft: 0,
+      viewportWidth: 0,
+    });
+    const viewportRafRef = useRef<number>(0);
 
     // CRITICAL: Do NOT subscribe to currentFrame here to prevent re-renders
     // Progress updates are handled via direct DOM manipulation below
@@ -576,9 +581,6 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         ? track.sourceDuration / displayFps
         : trackMetrics.durationSeconds;
 
-      console.log(
-        `🎵 Generating waveform for noise-reduced audio: ${track.name}`,
-      );
       setIsGeneratingNrWaveform(true);
 
       // Use optimized 50 peaks/sec for faster generation
@@ -590,23 +592,12 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       })
         .then((result) => {
           if (result.success) {
-            console.log(
-              `✅ Noise-reduced waveform generated for ${track.name}`,
-            );
             // Increment version to trigger waveformData memo re-evaluation
             setNrWaveformVersion((v) => v + 1);
-          } else {
-            console.warn(
-              `⚠️ Noise-reduced waveform generation failed for ${track.name}:`,
-              result.error,
-            );
           }
         })
-        .catch((error) => {
-          console.warn(
-            `⚠️ Noise-reduced waveform generation error for ${track.name}:`,
-            error,
-          );
+        .catch(() => {
+          // Silent by design: waveform generation fallback is handled upstream.
         })
         .finally(() => {
           setIsGeneratingNrWaveform(false);
@@ -702,6 +693,58 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       [],
     );
 
+    // Track viewport bounds for virtualization (timeline scroll container)
+    useEffect(() => {
+      const scrollContainer = tileContainerRef.current?.closest(
+        '.overflow-auto',
+      ) as HTMLElement | null;
+      if (!scrollContainer) return;
+
+      const updateViewport = () => {
+        setViewportBounds({
+          scrollLeft: scrollContainer.scrollLeft || 0,
+          viewportWidth: scrollContainer.clientWidth || 0,
+        });
+      };
+
+      const scheduleUpdate = () => {
+        if (viewportRafRef.current) {
+          cancelAnimationFrame(viewportRafRef.current);
+        }
+        viewportRafRef.current = requestAnimationFrame(updateViewport);
+      };
+
+      scrollContainer.addEventListener('scroll', scheduleUpdate, {
+        passive: true,
+      });
+      updateViewport();
+
+      return () => {
+        scrollContainer.removeEventListener('scroll', scheduleUpdate);
+        if (viewportRafRef.current) {
+          cancelAnimationFrame(viewportRafRef.current);
+        }
+      };
+    }, [waveformData]);
+
+    // Refresh viewport on zoom/size changes
+    useEffect(() => {
+      const scrollContainer = tileContainerRef.current?.closest(
+        '.overflow-auto',
+      ) as HTMLElement | null;
+      if (!scrollContainer) return;
+
+      if (viewportRafRef.current) {
+        cancelAnimationFrame(viewportRafRef.current);
+      }
+      viewportRafRef.current = requestAnimationFrame(() => {
+        setViewportBounds({
+          scrollLeft: scrollContainer.scrollLeft || 0,
+          viewportWidth: scrollContainer.clientWidth || 0,
+        });
+      });
+    }, [width, zoomLevel, track.startFrame, frameWidth, waveformData]);
+
     // Calculate tile configuration based on current display width
     // This is the core of the tiled rendering system
     const tileConfig = useMemo(() => {
@@ -709,19 +752,44 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       const displayWidth = Math.min(width, trackDurationInFrames * frameWidth);
 
       if (displayWidth <= 0 || !isFinite(displayWidth)) {
-        return { tiles: [], totalBars: 0, displayWidth: 0 };
+        return { tiles: [], totalBars: 0, displayWidth: 0, rangeKey: '' };
       }
 
       // Calculate total bars needed for the entire display
       const totalBars = Math.floor(displayWidth / BAR_STEP);
       if (totalBars <= 0) {
-        return { tiles: [], totalBars: 0, displayWidth };
+        return { tiles: [], totalBars: 0, displayWidth, rangeKey: '' };
       }
 
       // Calculate number of tiles needed
       const numTiles = Math.ceil(totalBars / BARS_PER_TILE);
 
-      // Generate tile definitions
+      const viewportWidth = viewportBounds.viewportWidth;
+      if (viewportWidth <= 0) {
+        return { tiles: [], totalBars, displayWidth, rangeKey: '' };
+      }
+
+      const trackStartPx = track.startFrame * frameWidth;
+      const viewportStart = viewportBounds.scrollLeft - trackStartPx;
+      const viewportEnd =
+        viewportBounds.scrollLeft + viewportWidth - trackStartPx;
+      const buffer = viewportWidth * 0.5;
+
+      const visibleStart = Math.max(0, viewportStart - buffer);
+      const visibleEnd = Math.min(displayWidth, viewportEnd + buffer);
+
+      if (visibleEnd <= 0 || visibleStart >= displayWidth) {
+        return { tiles: [], totalBars, displayWidth, rangeKey: '' };
+      }
+
+      const startTileIndex = Math.max(0, Math.floor(visibleStart / TILE_WIDTH));
+      const endTileIndex = Math.min(
+        Math.ceil(visibleEnd / TILE_WIDTH),
+        numTiles - 1,
+      );
+      const rangeKey = `${startTileIndex}-${endTileIndex}`;
+
+      // Generate tile definitions for visible range only
       const tiles: Array<{
         index: number;
         startBar: number;
@@ -730,7 +798,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         width: number;
       }> = [];
 
-      for (let i = 0; i < numTiles; i++) {
+      for (let i = startTileIndex; i <= endTileIndex; i++) {
         const startBar = i * BARS_PER_TILE;
         const endBar = Math.min(startBar + BARS_PER_TILE, totalBars);
         const barsInTile = endBar - startBar;
@@ -744,8 +812,14 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         });
       }
 
-      return { tiles, totalBars, displayWidth };
-    }, [width, frameWidth, trackMetrics.durationFrames]);
+      return { tiles, totalBars, displayWidth, rangeKey };
+    }, [
+      width,
+      frameWidth,
+      trackMetrics.durationFrames,
+      track.startFrame,
+      viewportBounds,
+    ]);
 
     // Render a single tile to its canvas
     const renderTile = useCallback(
@@ -862,7 +936,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         track.volumeDb === -Infinity
           ? 'muted'
           : (track.volumeDb ?? 0).toFixed(1);
-      const renderKey = `${track.id}_${waveformData.cacheKey}_${peaks.length}_${startTime}_${endTime}_${width}_${zoomLevel}_${nrState}_${nrWaveformVersion}_vol${volumeDbKey}`;
+      const renderKey = `${track.id}_${waveformData.cacheKey}_${peaks.length}_${startTime}_${endTime}_${width}_${zoomLevel}_${nrState}_${nrWaveformVersion}_vol${volumeDbKey}_${tileConfig.rangeKey}`;
 
       if (lastRenderedKeyRef.current === renderKey) return;
 

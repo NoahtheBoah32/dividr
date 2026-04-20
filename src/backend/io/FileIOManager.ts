@@ -70,7 +70,7 @@ class FileIOManager {
   constructor(config: Partial<FileIOManagerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     console.log(
-      `📁 FileIOManager initialized: maxReads=${this.config.maxConcurrentReads}, maxWrites=${this.config.maxConcurrentWrites}`,
+      `[FileIOManager] FileIOManager initialized: maxReads=${this.config.maxConcurrentReads}, maxWrites=${this.config.maxConcurrentWrites}`,
     );
   }
 
@@ -160,7 +160,7 @@ class FileIOManager {
       if (this.isEMFILEError(error)) {
         this.stats.emfileErrors++;
         console.warn(
-          `⚠️ EMFILE error on read task ${task.id}, retrying (${task.retries}/${this.config.maxRetries})`,
+          `[FileIOManager] EMFILE error on read task${task.id}, retrying (${task.retries}/${this.config.maxRetries})`,
         );
 
         if (task.retries < this.config.maxRetries) {
@@ -205,7 +205,7 @@ class FileIOManager {
       if (this.isEMFILEError(error)) {
         this.stats.emfileErrors++;
         console.warn(
-          `⚠️ EMFILE error on write task ${task.id}, retrying (${task.retries}/${this.config.maxRetries})`,
+          `[FileIOManager] EMFILE error on write task${task.id}, retrying (${task.retries}/${this.config.maxRetries})`,
         );
 
         if (task.retries < this.config.maxRetries) {
@@ -465,7 +465,10 @@ class FileIOManager {
         } catch (error) {
           results.failed++;
           results.errors.push(error as Error);
-          console.error(`Batch item ${i + batchIndex} failed:`, error);
+          console.error(
+            `[FileIOManager] Batch item${i + batchIndex} failed:`,
+            error,
+          );
         }
       });
 

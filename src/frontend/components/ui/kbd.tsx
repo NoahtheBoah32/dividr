@@ -37,9 +37,7 @@ function KbdGroup({
     <React.Fragment key={index}>
       {child}
       {index < childArray.length - 1 && (
-        <span className="text-muted-foreground text-xs select-none [[data-slot=tooltip-content]_&]:text-background/80 dark:[[data-slot=tooltip-content]_&]:text-background/60">
-          +
-        </span>
+        <span className="text-muted-foreground text-xs select-none">+</span>
       )}
     </React.Fragment>
   ));

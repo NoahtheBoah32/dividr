@@ -58,10 +58,12 @@ async function getHardwareAccelerationForJob(
     job.operations.useHardwareAcceleration === false ||
     job.operations.hwaccelType === 'none'
   ) {
-    console.log('🚫 Hardware acceleration disabled by job config');
+    console.log(
+      '[CommandBuilder] Hardware acceleration disabled by job config',
+    );
     return null;
   }
-  console.log('🎮 Hardware acceleration is enabled');
+  console.log('[CommandBuilder] Hardware acceleration is enabled');
 
   try {
     // If specific hardware type is requested
@@ -72,12 +74,12 @@ async function getHardwareAccelerationForJob(
       );
       if (specificHW) {
         console.log(
-          `🎮 Using requested hardware acceleration: ${job.operations.hwaccelType.toUpperCase()}`,
+          `[CommandBuilder] Using requested hardware acceleration${job.operations.hwaccelType.toUpperCase()}`,
         );
         return specificHW;
       } else {
         console.warn(
-          `⚠️ Requested hardware acceleration "${job.operations.hwaccelType}" not available, falling back to software`,
+          `[CommandBuilder] Requested hardware acceleration "${job.operations.hwaccelType}" not available, falling back to software`,
         );
         return null;
       }
@@ -87,17 +89,20 @@ async function getHardwareAccelerationForJob(
     const detection = await getHardwareAcceleration(ffmpegPath);
     if (detection.primary) {
       console.log(
-        `🎮 Auto-detected hardware acceleration: ${detection.primary.type.toUpperCase()}`,
+        `[CommandBuilder] Auto-detected hardware acceleration${detection.primary.type.toUpperCase()}`,
       );
       return detection.primary;
     }
 
     console.log(
-      '⚠️ No hardware acceleration available, using software encoding',
+      '[CommandBuilder] No hardware acceleration available, using software encoding',
     );
     return null;
   } catch (error) {
-    console.error('❌ Error detecting hardware acceleration:', error);
+    console.error(
+      '[CommandBuilder] Error detecting hardware acceleration',
+      error,
+    );
     return null;
   }
 }
@@ -160,7 +165,7 @@ function categorizeInputs(inputs: (string | TrackInfo)[]): CategorizedInputs {
         fileIndex = fileInputIndex;
         fileInputIndex++;
         console.log(
-          `📹 Video segment ${originalIndex}: assigned unique file index ${fileIndex}`,
+          `[CommandBuilder] Video segment${originalIndex}: assigned unique file index ${fileIndex}`,
         );
 
         // If this video has a separate audio file, assign it a unique index too
@@ -168,7 +173,7 @@ function categorizeInputs(inputs: (string | TrackInfo)[]): CategorizedInputs {
           audioFileIndex = fileInputIndex;
           fileInputIndex++;
           console.log(
-            `🎵 Audio for video segment ${originalIndex}: assigned unique file index ${audioFileIndex}`,
+            `[CommandBuilder] Audio for video segment${originalIndex}: assigned unique file index ${audioFileIndex}`,
           );
         }
       }
@@ -188,7 +193,7 @@ function categorizeInputs(inputs: (string | TrackInfo)[]): CategorizedInputs {
 
       if (audioFileIndex !== undefined) {
         console.log(
-          `📹 Video input ${originalIndex}: video file index ${fileIndex}, audio file index ${audioFileIndex}`,
+          `[CommandBuilder] Video input${originalIndex}: video file index ${fileIndex}, audio file index ${audioFileIndex}`,
         );
       }
     } else if (isAudio) {
@@ -199,7 +204,7 @@ function categorizeInputs(inputs: (string | TrackInfo)[]): CategorizedInputs {
         fileIndex = fileInputIndex;
         fileInputIndex++;
         console.log(
-          `🎵 Audio segment ${originalIndex}: assigned unique file index ${fileIndex}`,
+          `[CommandBuilder] Audio segment${originalIndex}: assigned unique file index ${fileIndex}`,
         );
       }
 
@@ -231,7 +236,7 @@ function categorizeInputs(inputs: (string | TrackInfo)[]): CategorizedInputs {
   });
 
   console.log(
-    `✅ Categorized ${videoInputs.length} video inputs and ${audioInputs.length} audio inputs (${fileInputIndex} total unique file inputs)`,
+    `[CommandBuilder] Categorized${videoInputs.length} video inputs and ${audioInputs.length} audio inputs (${fileInputIndex} total unique file inputs)`,
   );
 
   return { videoInputs, audioInputs, fileInputIndex };
@@ -263,7 +268,7 @@ function createVideoTrimFilters(
     const totalFrames = Math.round(duration * fps); // Round to nearest frame for exact timing
 
     console.log(
-      `🖼️ Image input detected: generating ${duration}s (${totalFrames} frames) at ${fps}fps from static image`,
+      `[CommandBuilder] Image input detected: generating${duration}s (${totalFrames} frames) at ${fps}fps from static image`,
     );
 
     // ✅ OPTIMIZATION: Don't apply timestamp filters on images (images don't carry PTS)
@@ -477,13 +482,15 @@ function handleFileInputs(job: VideoEditJob, cmd: CommandParts): void {
 
     // Verify file exists before adding as input
     if (!fs.existsSync(path)) {
-      console.error(`❌ File does not exist, skipping input ${index}: ${path}`);
+      console.error(
+        `[CommandBuilder] File does not exist, skipping input${index}: ${path}`,
+      );
       throw new Error(`Input file does not exist: ${path}`);
     }
 
     // Always add the main file (video or audio) as a unique input
     cmd.args.push('-i', escapePath(path));
-    console.log(`📁 Added unique input ${index}: ${path}`);
+    console.log(`[CommandBuilder] Added unique input${index}: ${path}`);
 
     // If this is a video track with a separate audio file, add the audio file too
     // Skip audio inputs for GIF files (GIFs are video inputs with no audio)
@@ -492,23 +499,23 @@ function handleFileInputs(job: VideoEditJob, cmd: CommandParts): void {
       // Verify audio file exists before adding as input
       if (!fs.existsSync(trackInfo.audioPath)) {
         console.error(
-          `❌ Audio file does not exist, skipping audio input ${index}: ${trackInfo.audioPath}`,
+          `[CommandBuilder] Audio file does not exist, skipping audio input${index}: ${trackInfo.audioPath}`,
         );
         throw new Error(`Audio file does not exist: ${trackInfo.audioPath}`);
       }
       cmd.args.push('-i', escapePath(trackInfo.audioPath));
       console.log(
-        `🎵 Added unique audio input ${index}: ${trackInfo.audioPath}`,
+        `[CommandBuilder] Added unique audio input${index}: ${trackInfo.audioPath}`,
       );
     } else if (trackInfo.audioPath && isGifFile) {
       console.log(
-        `⚠️ Skipping audio input for GIF file: ${path} (GIFs are video inputs with no audio)`,
+        `[CommandBuilder] Skipping audio input for GIF file${path} (GIFs are video inputs with no audio)`,
       );
     }
   });
 
   console.log(
-    `✅ Total unique inputs added: ${cmd.args.filter((arg) => arg === '-i').length}`,
+    `[CommandBuilder] Total unique inputs added${cmd.args.filter((arg) => arg === '-i').length}`,
   );
 }
 
@@ -519,7 +526,9 @@ function handleFileInputs(job: VideoEditJob, cmd: CommandParts): void {
 function handleOutputFps(job: VideoEditJob, cmd: CommandParts): void {
   if (job.operations.targetFrameRate) {
     cmd.args.push('-r', String(job.operations.targetFrameRate));
-    console.log(`🎞️ Applied output FPS: ${job.operations.targetFrameRate}`);
+    console.log(
+      `[CommandBuilder] Applied output FPS${job.operations.targetFrameRate}`,
+    );
   }
 }
 
@@ -540,12 +549,12 @@ function handleEncodingSettings(
         ? hwAccel.hevcCodec
         : hwAccel.videoCodec;
 
-    console.log(`🎮 Using hardware video codec: ${videoCodec}`);
+    console.log(`[CommandBuilder] Using hardware video codec${videoCodec}`);
     console.log(
-      `⚠️  Note: If encoding fails, FFmpeg may not support this codec on your system.`,
+      '[CommandBuilder] Note: If encoding fails, FFmpeg may not support this codec on your system',
     );
   } else {
-    console.log(`💻 Using software video codec: ${videoCodec}`);
+    console.log(`[CommandBuilder] Using software video codec${videoCodec}`);
   }
 
   cmd.args.push('-c:v', videoCodec);
@@ -554,18 +563,24 @@ function handleEncodingSettings(
   // Add memory-efficient encoder settings
   if (!hwAccel) {
     // Software encoding: Add memory-efficient x264 settings
-    console.log('💾 Adding memory-efficient software encoder settings...');
+    console.log(
+      '[CommandBuilder] Adding memory-efficient software encoder settings',
+    );
     cmd.args.push(
       '-x264-params',
       'nal-hrd=cbr:force-cfr=1:rc-lookahead=10:bframes=0', // Reduce lookahead buffer, disable B-frames
     );
-    console.log('   ✅ Reduced x264 lookahead to 10 frames (default 40)');
-    console.log('   ✅ Disabled B-frames (reduces encoder buffering)');
+    console.log(
+      '[CommandBuilder] Reduced x264 lookahead to 10 frames (default 40)',
+    );
+    console.log(
+      '[CommandBuilder] Disabled B-frames (reduces encoder buffering)',
+    );
   } else {
     // Hardware encoding: Add hardware encoder flags
     if (hwAccel.encoderFlags) {
       console.log(
-        '🎮 Adding hardware encoder flags:',
+        '[CommandBuilder] Adding hardware encoder flags',
         hwAccel.encoderFlags.join(' '),
       );
       cmd.args.push(...hwAccel.encoderFlags);
@@ -584,7 +599,7 @@ function handlePreset(
   // Only apply software preset if not using hardware acceleration
   if (hwAccel) {
     console.log(
-      'ℹ️  Skipping software preset (using hardware encoder settings instead)',
+      '[CommandBuilder] ℹ Skipping software preset (using hardware encoder settings instead)',
     );
     return;
   }
@@ -595,7 +610,9 @@ function handlePreset(
   cmd.args.push('-crf', '28');
   cmd.args.push('-b:a', '96k');
 
-  console.log(`🚀 Applied software encoding preset: ${job.operations.preset}`);
+  console.log(
+    `[CommandBuilder] Applied software encoding preset${job.operations.preset}`,
+  );
 }
 
 /**
@@ -604,7 +621,7 @@ function handlePreset(
 function handleThreads(job: VideoEditJob, cmd: CommandParts): void {
   cmd.args.push('-threads', String(job.operations.threads));
 
-  console.log(`🚀 Applied thread limit: ${job.operations.threads}`);
+  console.log(`[CommandBuilder] Applied thread limit${job.operations.threads}`);
 }
 
 /**
@@ -635,7 +652,7 @@ export async function buildFfmpegCommand(
 
   // Log aspect ratio from both sources
   console.log(
-    '📐 ASPECT RATIO from job.operations.aspect:',
+    '[CommandBuilder] ASPECT RATIO from job.operations.aspect',
     job.operations.aspect || 'NONE',
   );
 
@@ -646,23 +663,25 @@ export async function buildFfmpegCommand(
     if (trackInfo.aspectRatio) {
       trackInfoAspectRatio = trackInfo.aspectRatio;
       console.log(
-        '📐 ASPECT RATIO from trackInfo.aspectRatio:',
+        '[CommandBuilder] ASPECT RATIO from trackInfo.aspectRatio',
         trackInfoAspectRatio,
       );
       break;
     }
   }
   if (!trackInfoAspectRatio) {
-    console.log('📐 ASPECT RATIO from trackInfo.aspectRatio: NONE');
+    console.log(
+      '[CommandBuilder] ASPECT RATIO from trackInfo.aspectRatio: NONE',
+    );
   }
 
   const hwAccel = await getHardwareAccelerationForJob(job, ffmpegPath);
   if (hwAccel) {
     console.log(
-      `🎮 Hardware acceleration detected: ${hwAccel.type.toUpperCase()}`,
+      `[CommandBuilder] Hardware acceleration detected${hwAccel.type.toUpperCase()}`,
     );
     console.log(
-      'ℹ️  Using hardware encoding only (software decoding for compatibility)',
+      '[CommandBuilder] ℹ Using hardware encoding only (software decoding for compatibility)',
     );
   }
 
@@ -671,7 +690,7 @@ export async function buildFfmpegCommand(
 
   // Step 1.5: Add aggressive RAM optimization flags
   // These flags dramatically reduce memory usage at the cost of some processing speed
-  console.log('💾 Adding aggressive RAM optimization flags...');
+  console.log('[CommandBuilder] Adding aggressive RAM optimization flags');
 
   cmd.args.push(
     // === DECODER BUFFER LIMITS ===
@@ -697,14 +716,16 @@ export async function buildFfmpegCommand(
     '0', // No muxing preload
   );
 
-  console.log('   ✅ Decoder buffering: DISABLED (nobuffer flag)');
-  console.log('   ✅ Probe size: LIMITED to 5MB (reduces initial RAM spike)');
+  console.log('[CommandBuilder] Decoder buffering: DISABLED (nobuffer flag)');
   console.log(
-    '   ✅ Filter threads: 1 (sequential processing for duplicate inputs)',
+    '[CommandBuilder] Probe size: LIMITED to 5MB (reduces initial RAM spike)',
   );
-  console.log('   ✅ Mux queue: 512 packets (aggressive RAM limit)');
   console.log(
-    '   ⚠️  Trade-off: Export will be slower but use 40-60% less RAM',
+    '[CommandBuilder] Filter threads: 1 (sequential processing for duplicate inputs)',
+  );
+  console.log('[CommandBuilder] Mux queue: 512 packets (aggressive RAM limit)');
+  console.log(
+    '[CommandBuilder] Trade-off: Export will be slower but use 40-60% less RAM',
   );
 
   // Step 2: Build and process timelines with multi-layer support
@@ -739,6 +760,9 @@ export async function buildFfmpegCommand(
   // Step 6: Add output file
   handleOutput(job, cmd, location);
 
-  console.log('Full FFmpeg Command:', ['ffmpeg', ...cmd.args].join(' '));
+  console.log(
+    '[CommandBuilder] Full FFmpeg Command',
+    ['ffmpeg', ...cmd.args].join(' '),
+  );
   return cmd.args;
 }

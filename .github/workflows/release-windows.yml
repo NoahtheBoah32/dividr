@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - 'v*-windows'
-      - 'v*-win'
   workflow_dispatch:
     inputs:
       create_release:
@@ -89,10 +88,9 @@ jobs:
         id: tag
         run: |
           if [ "${{ github.event_name }}" == "push" ]; then
-            # Remove -windows or -win suffix for release name
+            # Remove -windows suffix for release name
             TAG="${GITHUB_REF#refs/tags/}"
             BASE_TAG="${TAG%-windows}"
-            BASE_TAG="${BASE_TAG%-win}"
             echo "tag=$TAG" >> $GITHUB_OUTPUT
             echo "base_tag=$BASE_TAG" >> $GITHUB_OUTPUT
           else

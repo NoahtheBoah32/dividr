@@ -1,0 +1,10 @@
+{
+  "appName": "DiviDr",
+  "version": "1.0.0-stable",
+  "platform": "local",
+  "releaseTag": "v1.0.0-stable-local",
+  "title": "Development Build",
+  "notes": "This is a development build. Release notes are not available.",
+  "commit": "dev",
+  "buildDate": "dev"
+}

@@ -78,9 +78,9 @@ function escapePathForFilter(filePath: string): string {
   // 3. Single quotes - escape to \'
   escapedPath = escapedPath.replace(/'/g, "\\'");
 
-  console.log('🎬 Filter path escaping debug:');
-  console.log('  - Original:', filePath);
-  console.log('  - Escaped for filter:', escapedPath);
+  console.log('[HandleFilterComplex] Filter path escaping debug');
+  console.log('[HandleFilterComplex] Original', filePath);
+  console.log('[HandleFilterComplex] Escaped for filter', escapedPath);
   return escapedPath;
 }
 
@@ -92,13 +92,17 @@ function escapePathForFilter(filePath: string): string {
 function parseAspectRatio(aspectRatio: string): number {
   const parts = aspectRatio.split(':');
   if (parts.length !== 2) {
-    console.warn(`Invalid aspect ratio format: ${aspectRatio}, using 16:9`);
+    console.warn(
+      `[HandleFilterComplex] Invalid aspect ratio format${aspectRatio}, using 16:9`,
+    );
     return 16 / 9;
   }
   const width = parseFloat(parts[0]);
   const height = parseFloat(parts[1]);
   if (isNaN(width) || isNaN(height) || height === 0) {
-    console.warn(`Invalid aspect ratio values: ${aspectRatio}, using 16:9`);
+    console.warn(
+      `[HandleFilterComplex] Invalid aspect ratio values${aspectRatio}, using 16:9`,
+    );
     return 16 / 9;
   }
   return width / height;
@@ -186,7 +190,7 @@ function hasNonZeroTransform(trackInfo: TrackInfo): boolean {
 
   if (hasTransform) {
     console.log(
-      `🎯 Video has transform: x=${trackInfo.videoTransform?.x ?? 0}, y=${trackInfo.videoTransform?.y ?? 0}, scale=${trackInfo.videoTransform?.scale ?? 1.0}`,
+      `[HandleFilterComplex] Video has transform: x=${trackInfo.videoTransform?.x ?? 0}, y=${trackInfo.videoTransform?.y ?? 0}, scale=${trackInfo.videoTransform?.scale ?? 1.0}`,
     );
   }
 
@@ -205,11 +209,17 @@ function buildFontDirectoriesParameter(fontFamilies: string[]): string {
     return '';
   }
 
-  console.log('📝 Font families used in subtitles:', fontFamilies);
+  console.log(
+    '[HandleFilterComplex] Font families used in subtitles',
+    fontFamilies,
+  );
 
   // Get all unique font directories
   const fontDirectories = getFontDirectoriesForFamilies(fontFamilies);
-  console.log('📝 Resolved font directories:', fontDirectories);
+  console.log(
+    '[HandleFilterComplex] Resolved font directories',
+    fontDirectories,
+  );
 
   if (fontDirectories.length === 0) {
     return '';
@@ -229,7 +239,7 @@ function buildFontDirectoriesParameter(fontFamilies: string[]): string {
   const separator = process.platform === 'win32' ? ';' : ':';
   const joinedDirs = escapedDirs.join(separator);
 
-  console.log('📝 Using fonts directories:', joinedDirs);
+  console.log('[HandleFilterComplex] Using fonts directories', joinedDirs);
 
   return `:fontsdir='${joinedDirs}'`;
 }
@@ -263,13 +273,13 @@ function createBlackBackgroundWithOverlay(
 ): string {
   const transformScale = trackInfo.videoTransform?.scale ?? 1.0;
   console.log(
-    `🎬 Creating background overlay for video with transform (x=${trackInfo.videoTransform?.x ?? 0}, y=${trackInfo.videoTransform?.y ?? 0}, scale=${transformScale})`,
+    `[HandleFilterComplex] Creating background overlay for video with transform (x=${trackInfo.videoTransform?.x ?? 0}, y=${trackInfo.videoTransform?.y ?? 0}, scale=${transformScale})`,
   );
 
   // Create background at target dimensions (which are already the export dimensions)
   // This ensures all clips can be concatenated at the same dimensions
   console.log(
-    `📐 Background dimensions: ${targetDimensions.width}x${targetDimensions.height}`,
+    `[HandleFilterComplex] Background dimensions${targetDimensions.width}x${targetDimensions.height}`,
   );
 
   const blackBgRef = `[${uniqueIndex}_black_bg]`;
@@ -298,11 +308,11 @@ function createBlackBackgroundWithOverlay(
     );
     videoFilters.push(scaleFilter);
     console.log(
-      `📐 Step 1: Normalized video from ${sourceWidth}x${sourceHeight} to ${targetDimensions.width}x${targetDimensions.height}`,
+      `[HandleFilterComplex] Step 1: Normalized video from${sourceWidth}x${sourceHeight} to ${targetDimensions.width}x${targetDimensions.height}`,
     );
   } else {
     console.log(
-      `📐 Step 1: No normalization needed - video already at target dimensions (${sourceWidth}x${sourceHeight})`,
+      `[HandleFilterComplex] Step 1: No normalization needed - video already at target dimensions (${sourceWidth}x${sourceHeight})`,
     );
   }
 
@@ -312,7 +322,7 @@ function createBlackBackgroundWithOverlay(
   const scaledHeight = Math.round(targetDimensions.height * transformScale);
 
   console.log(
-    `📐 Step 2: Transform scale: ${transformScale.toFixed(2)} (${targetDimensions.width}x${targetDimensions.height} → ${scaledWidth}x${scaledHeight})`,
+    `[HandleFilterComplex] Step 2: Transform scale${transformScale.toFixed(2)} (${targetDimensions.width}x${targetDimensions.height} → ${scaledWidth}x${scaledHeight})`,
   );
 
   // Step 4: Scale video to the transform-scaled dimensions
@@ -334,13 +344,13 @@ function createBlackBackgroundWithOverlay(
     );
     videoFilters.push(scaleFilter);
     console.log(
-      `📐 Step 3: Scaled video to ${scaledWidth}x${scaledHeight} (scale factor: ${transformScale.toFixed(2)}, preserving aspect ratio)`,
+      `[HandleFilterComplex] Step 3: Scaled video to${scaledWidth}x${scaledHeight} (scale factor: ${transformScale.toFixed(2)}, preserving aspect ratio)`,
     );
   } else {
     // No scaling needed (scale = 1.0)
     scaledVideoRef = normalizedVideoRef;
     console.log(
-      `📐 Step 3: No scaling needed (scale = 1.0), video dimensions: ${targetDimensions.width}x${targetDimensions.height}`,
+      `[HandleFilterComplex] Step 3: No scaling needed (scale = 1.0), video dimensions${targetDimensions.width}x${targetDimensions.height}`,
     );
   }
 
@@ -350,7 +360,7 @@ function createBlackBackgroundWithOverlay(
   const transformY = trackInfo.videoTransform?.y ?? 0;
 
   console.log(
-    `📐 Transform values: x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}, scale=${transformScale.toFixed(2)} (normalized -1 to 1, 0=center)`,
+    `[HandleFilterComplex] Transform values: x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}, scale=${transformScale.toFixed(2)} (normalized -1 to 1, 0=center)`,
   );
 
   // Calculate pixel coordinates for logging (using original transform values)
@@ -372,23 +382,25 @@ function createBlackBackgroundWithOverlay(
       ? `(H-h)/2+${transformY}*H/2`
       : `(H-h)/2-${Math.abs(transformY)}*H/2`; // Use Math.abs to ensure proper subtraction
 
-  console.log(`📍 Video overlay position (with transform):`);
+  console.log('[HandleFilterComplex] Video overlay position (with transform)');
   console.log(
-    `   - Normalized: x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}`,
+    `[HandleFilterComplex] Normalized: x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}`,
   );
   console.log(
-    `   - Scale factor: ${transformScale.toFixed(2)} (video already scaled)`,
+    `[HandleFilterComplex] Scale factor${transformScale.toFixed(2)} (video already scaled)`,
   );
   console.log(
-    `   - Pixel offset: x=${pixelOffsetX.toFixed(2)}px, y=${pixelOffsetY.toFixed(2)}px`,
+    `[HandleFilterComplex] Pixel offset: x=${pixelOffsetX.toFixed(2)}px, y=${pixelOffsetY.toFixed(2)}px`,
   );
   console.log(
-    `   - Estimated position: x≈${estimatedPixelX}px, y≈${estimatedPixelY}px`,
+    `[HandleFilterComplex] Estimated position: x≈${estimatedPixelX}px, y≈${estimatedPixelY}px`,
   );
   console.log(
-    `   - Background dimensions: ${targetDimensions.width}x${targetDimensions.height}`,
+    `[HandleFilterComplex] Background dimensions${targetDimensions.width}x${targetDimensions.height}`,
   );
-  console.log(`   - FFmpeg expression: overlay=${overlayX}:${overlayY}`);
+  console.log(
+    `[HandleFilterComplex] FFmpeg expression: overlay=${overlayX}:${overlayY}`,
+  );
 
   // Overlay the video on the background
   const overlayRef = `[${uniqueIndex}_overlay]`;
@@ -403,10 +415,10 @@ function createBlackBackgroundWithOverlay(
   videoFilters.push(overlayFilter);
 
   console.log(
-    `✅ Video overlaid on background at transform position (x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}, scale=${transformScale.toFixed(2)})`,
+    `[HandleFilterComplex] Video overlaid on background at transform position (x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}, scale=${transformScale.toFixed(2)})`,
   );
   console.log(
-    `✅ Output dimensions: ${targetDimensions.width}x${targetDimensions.height} (ready for concat)`,
+    `[HandleFilterComplex] Output dimensions${targetDimensions.width}x${targetDimensions.height} (ready for concat)`,
   );
 
   // Return the overlay - it's already at targetDimensions and ready for concatenation
@@ -466,12 +478,12 @@ export function processLayerSegments(
         videoFilters.push(...gapResult.filters);
         concatInputs.push(gapResult.filterRef);
         console.log(
-          `🎬 Layer ${layerIndex} (${layerType}): Added black gap ${gapResult.filterRef} (bottom layer)`,
+          `[HandleFilterComplex] Layer${layerIndex} (${layerType}): Added black gap ${gapResult.filterRef} (bottom layer)`,
         );
       } else {
         // Upper layer - skip gaps (will be transparent)
         console.log(
-          `🎬 Layer ${layerIndex} (${layerType}): Skipping gap (upper layer - will be transparent)`,
+          `[HandleFilterComplex] Layer${layerIndex} (${layerType}): Skipping gap (upper layer - will be transparent)`,
         );
       }
     } else {
@@ -484,7 +496,7 @@ export function processLayerSegments(
 
       if (fileIndex !== undefined) {
         console.log(
-          `🎬 Layer ${layerIndex} (${layerType}): Processing segment ${segmentIndex} with fileIndex ${fileIndex}`,
+          `[HandleFilterComplex] Layer${layerIndex} (${layerType}): Processing segment ${segmentIndex} with fileIndex ${fileIndex}`,
         );
 
         // Create a modified trackInfo with the correct startTime and duration for trimming
@@ -505,11 +517,11 @@ export function processLayerSegments(
         };
 
         console.log(
-          `   🔪 Trim from source video: start=${trimStartTime.toFixed(3)}s, duration=${trimDuration.toFixed(3)}s (timeline: ${segment.startTime.toFixed(3)}s-${segment.endTime.toFixed(3)}s)`,
+          `[HandleFilterComplex] Trim from source video: start=${trimStartTime.toFixed(3)}s, duration=${trimDuration.toFixed(3)}s (timeline: ${segment.startTime.toFixed(3)}s-${segment.endTime.toFixed(3)}s)`,
         );
         if (trackInfo.startTime === undefined) {
           console.log(
-            `   ⚠️ trackInfo.startTime is undefined - defaulting to 0 (start of source video). If segments should show different parts, ensure trackInfo.startTime is set correctly.`,
+            '[HandleFilterComplex] trackInfo.startTime is undefined - defaulting to 0 (start of source video). If segments should show different parts, ensure trackInfo.startTime is set correctly',
           );
         }
 
@@ -555,7 +567,7 @@ export function processLayerSegments(
           );
           videoStreamRef = loopedRef;
           console.log(
-            `🔄 Looping GIF for timeline duration: ${timelineDuration.toFixed(3)}s (preserving original frame rate)`,
+            `[HandleFilterComplex] Looping GIF for timeline duration${timelineDuration.toFixed(3)}s (preserving original frame rate)`,
           );
         }
 
@@ -568,7 +580,7 @@ export function processLayerSegments(
             // Bottom layer - always use overlay on black background
             if (isGifFile) {
               console.log(
-                `📐 Layer ${layerIndex}: GIF file with transform detected - preserving original size (no scaling applied)`,
+                `[HandleFilterComplex] Layer${layerIndex}: GIF file with transform detected - preserving original size (no scaling applied)`,
               );
             } else {
               const duration = trackInfo.duration || segment.duration || 1;
@@ -584,7 +596,7 @@ export function processLayerSegments(
                 createGapVideoFilters,
               );
               console.log(
-                `📐 Layer ${layerIndex}: Created black background overlay for video with transform (base layer)`,
+                `[HandleFilterComplex] Layer${layerIndex}: Created black background overlay for video with transform (base layer)`,
               );
             }
           } else {
@@ -594,7 +606,7 @@ export function processLayerSegments(
             // Skip scaling for GIF files - preserve original size
             if (isGifFile) {
               console.log(
-                `📐 Layer ${layerIndex}: GIF file detected - preserving original size (no scaling applied)`,
+                `[HandleFilterComplex] Layer${layerIndex}: GIF file detected - preserving original size (no scaling applied)`,
               );
               // Transform positioning will be applied when overlaying this layer on the base layer
             } else {
@@ -618,7 +630,7 @@ export function processLayerSegments(
                 );
                 videoFilters.push(scaleFilter);
                 console.log(
-                  `📐 Layer ${layerIndex}: Normalized video from ${sourceWidth}x${sourceHeight} to fit ${targetDimensions.width}x${targetDimensions.height}`,
+                  `[HandleFilterComplex] Layer${layerIndex}: Normalized video from ${sourceWidth}x${sourceHeight} to fit ${targetDimensions.width}x${targetDimensions.height}`,
                 );
               }
 
@@ -644,12 +656,12 @@ export function processLayerSegments(
                 videoFilters.push(scaleFilter);
                 videoStreamRef = scaleRef;
                 console.log(
-                  `📐 Layer ${layerIndex}: Applied transform scale ${transformScale.toFixed(2)} (${targetDimensions.width}x${targetDimensions.height} → ${scaledWidth}x${scaledHeight})`,
+                  `[HandleFilterComplex] Layer${layerIndex}: Applied transform scale ${transformScale.toFixed(2)} (${targetDimensions.width}x${targetDimensions.height} → ${scaledWidth}x${scaledHeight})`,
                 );
               } else {
                 videoStreamRef = normalizedVideoRef;
                 console.log(
-                  `📐 Layer ${layerIndex}: No transform scale needed (scale = 1.0)`,
+                  `[HandleFilterComplex] Layer${layerIndex}: No transform scale needed (scale = 1.0)`,
                 );
               }
             }
@@ -703,7 +715,7 @@ export function processLayerSegments(
                 );
                 videoFilters.push(scaleFilter);
                 console.log(
-                  `📐 Layer ${layerIndex}: Scaled image from ${trackInfo.width}x${trackInfo.height} to fit ${targetDimensions.width}x${targetDimensions.height} (preserving transparency)`,
+                  `[HandleFilterComplex] Layer${layerIndex}: Scaled image from ${trackInfo.width}x${trackInfo.height} to fit ${targetDimensions.width}x${targetDimensions.height} (preserving transparency)`,
                 );
               } else {
                 // For videos: bottom layer gets black padding
@@ -721,7 +733,7 @@ export function processLayerSegments(
                 );
                 videoFilters.push(scaleFilter);
                 console.log(
-                  `📐 Layer ${layerIndex}: Scaled video segment from ${trackInfo.width}x${trackInfo.height} to ${targetDimensions.width}x${targetDimensions.height} with black padding`,
+                  `[HandleFilterComplex] Layer${layerIndex}: Scaled video segment from ${trackInfo.width}x${trackInfo.height} to ${targetDimensions.width}x${targetDimensions.height} with black padding`,
                 );
               }
               videoStreamRef = scaleRef;
@@ -748,13 +760,13 @@ export function processLayerSegments(
               );
               videoFilters.push(scaleFilter);
               console.log(
-                `📐 Layer ${layerIndex}: Scaled overlay down from ${sourceWidth}x${sourceHeight} to fit within ${targetDimensions.width}x${targetDimensions.height} (preserving original size if smaller)`,
+                `[HandleFilterComplex] Layer${layerIndex}: Scaled overlay down from ${sourceWidth}x${sourceHeight} to fit within ${targetDimensions.width}x${targetDimensions.height} (preserving original size if smaller)`,
               );
               videoStreamRef = scaleRef;
             } else {
               // Preserve original size for overlays smaller than target dimensions
               console.log(
-                `📐 Layer ${layerIndex}: Preserving original overlay size ${sourceWidth}x${sourceHeight} (smaller than target ${targetDimensions.width}x${targetDimensions.height})`,
+                `[HandleFilterComplex] Layer${layerIndex}: Preserving original overlay size ${sourceWidth}x${sourceHeight} (smaller than target ${targetDimensions.width}x${targetDimensions.height})`,
               );
             }
           }
@@ -767,7 +779,7 @@ export function processLayerSegments(
         videoFilters.push(`${videoStreamRef}setsar=1${sarRef}`);
         videoStreamRef = sarRef;
         console.log(
-          `📐 Layer ${layerIndex}: Normalized SAR to 1:1 for segment ${segmentIndex} (required before concat)`,
+          `[HandleFilterComplex] Layer${layerIndex}: Normalized SAR to 1:1 for segment ${segmentIndex} (required before concat)`,
         );
 
         // Note: Aspect ratio cropping is now applied to the final output video
@@ -776,7 +788,7 @@ export function processLayerSegments(
         concatInputs.push(videoStreamRef);
       } else {
         console.warn(
-          `❌ Layer ${layerIndex}: Could not find file index for segment ${segmentIndex}`,
+          `[HandleFilterComplex] Layer${layerIndex}: Could not find file index for segment ${segmentIndex}`,
         );
       }
     }
@@ -804,14 +816,14 @@ function determineTargetDimensions(
     const path = getInputPath(input);
 
     console.log(
-      `📐 Checking input: ${path}, isVideo: ${FILE_EXTENSIONS.VIDEO.test(path)}, width: ${trackInfo.width}, height: ${trackInfo.height}`,
+      `[HandleFilterComplex] Checking input${path}, isVideo: ${FILE_EXTENSIONS.VIDEO.test(path)}, width: ${trackInfo.width}, height: ${trackInfo.height}`,
     );
 
     if (!isGapInput(path) && FILE_EXTENSIONS.VIDEO.test(path)) {
       // Found a video file - check if it has explicit dimensions
       if (trackInfo.width && trackInfo.height) {
         console.log(
-          `📐 ✅ Using video input dimensions from inputs: ${trackInfo.width}x${trackInfo.height}`,
+          `[HandleFilterComplex] Using video input dimensions from inputs${trackInfo.width}x${trackInfo.height}`,
         );
         return { width: trackInfo.width, height: trackInfo.height };
       }
@@ -825,7 +837,7 @@ function determineTargetDimensions(
       // Found a video file - check if it has explicit dimensions
       if (segment.input.width && segment.input.height) {
         console.log(
-          `📐 Using video input dimensions from timeline: ${segment.input.width}x${segment.input.height}`,
+          `[HandleFilterComplex] Using video input dimensions from timeline${segment.input.width}x${segment.input.height}`,
         );
         return { width: segment.input.width, height: segment.input.height };
       }
@@ -835,7 +847,7 @@ function determineTargetDimensions(
   // Fallback to job's video dimensions
   const dimensions = job.videoDimensions || VIDEO_DEFAULTS.SIZE;
   console.log(
-    `📐 Using project dimensions (fallback): ${dimensions.width}x${dimensions.height}`,
+    `[HandleFilterComplex] Using project dimensions (fallback)${dimensions.width}x${dimensions.height}`,
   );
   return dimensions;
 }
@@ -912,10 +924,10 @@ export function buildSeparateTimelineFilterComplex(
     ).length;
     if (duplicateCount > 0) {
       console.log(
-        `\n💾 INFO: Found ${duplicateCount} file(s) used multiple times in timeline`,
+        `[HandleFilterComplex] INFO: Found${duplicateCount} file(s) used multiple times in timeline`,
       );
       console.log(
-        `   Using direct input references for better memory efficiency (no split buffering)\n`,
+        '[HandleFilterComplex] Using direct input references for better memory efficiency (no split buffering)',
       );
     }
   }
@@ -929,7 +941,7 @@ export function buildSeparateTimelineFilterComplex(
     // Export dimensions are explicitly set - use these as target for ALL clips
     targetDimensions = job.videoDimensions;
     console.log(
-      `📐 Using explicit export dimensions as target: ${targetDimensions.width}x${targetDimensions.height}`,
+      `[HandleFilterComplex] Using explicit export dimensions as target${targetDimensions.width}x${targetDimensions.height}`,
     );
   } else {
     // No explicit export dimensions - determine from first video
@@ -945,7 +957,7 @@ export function buildSeparateTimelineFilterComplex(
       ? determineTargetDimensions(firstVideoTimeline, job)
       : VIDEO_DEFAULTS.SIZE;
     console.log(
-      `📐 Determined target dimensions from first video: ${targetDimensions.width}x${targetDimensions.height}`,
+      `[HandleFilterComplex] Determined target dimensions from first video${targetDimensions.width}x${targetDimensions.height}`,
     );
   }
 
@@ -958,7 +970,7 @@ export function buildSeparateTimelineFilterComplex(
 
   if (targetAspectRatio) {
     console.log(
-      `📐 Using target aspect ratio from job.operations.aspect: ${targetAspectRatio}`,
+      `[HandleFilterComplex] Using target aspect ratio from job.operations.aspect${targetAspectRatio}`,
     );
   } else {
     // Fallback to trackInfo aspect ratio
@@ -972,7 +984,7 @@ export function buildSeparateTimelineFilterComplex(
       ) {
         targetAspectRatio = trackInfo.aspectRatio;
         console.log(
-          `📐 Fallback: Using aspect ratio from trackInfo: ${targetAspectRatio}`,
+          `[HandleFilterComplex] Fallback: Using aspect ratio from trackInfo${targetAspectRatio}`,
         );
         break;
       }
@@ -981,11 +993,11 @@ export function buildSeparateTimelineFilterComplex(
 
   // Log hardware acceleration status
   const hwStatus = getHardwareAccelerationStatus(hwAccel);
-  console.log(`🎮 Hardware Acceleration: ${hwStatus}`);
+  console.log(`[HandleFilterComplex] Hardware Acceleration${hwStatus}`);
 
-  console.log('\n🎬 ========================================');
-  console.log('🎬 BUILDING FILTER COMPLEX - TRACK SUMMARY');
-  console.log('🎬 ========================================\n');
+  console.log('[HandleFilterComplex] ========================================');
+  console.log('[HandleFilterComplex] BUILDING FILTER COMPLEX - TRACK SUMMARY');
+  console.log('[HandleFilterComplex] ========================================');
 
   // Collect all tracks from job.inputs in frontend order with layer information
   interface TrackLogEntry {
@@ -1110,10 +1122,10 @@ export function buildSeparateTimelineFilterComplex(
   };
 
   console.log(
-    `📊 Total Tracks: ${allTracks.length} (${tracksByType.video} video, ${tracksByType.image} image, ${tracksByType.text} text, ${tracksByType.audio} audio)`,
+    `[HandleFilterComplex] Total Tracks${allTracks.length} (${tracksByType.video} video, ${tracksByType.image} image, ${tracksByType.text} text, ${tracksByType.audio} audio)`,
   );
   console.log(
-    `📊 Layers: ${new Set(allTracks.map((t) => t.layer)).size} layer(s)\n`,
+    `[HandleFilterComplex] Layers${new Set(allTracks.map((t) => t.layer)).size} layer(s) `,
   );
 
   // Log each track individually in layer order (no categorization by type)
@@ -1122,10 +1134,12 @@ export function buildSeparateTimelineFilterComplex(
     // Print layer header when layer changes
     if (track.layer !== currentLayer) {
       if (currentLayer !== -999) {
-        console.log(''); // Blank line between layers
+        console.log('[HandleFilterComplex] Log'); // Blank line between layers
       }
       const layerTracks = allTracks.filter((t) => t.layer === track.layer);
-      console.log(`🎬 Layer ${track.layer} (${layerTracks.length} track(s))`);
+      console.log(
+        `[HandleFilterComplex] Layer${track.layer} (${layerTracks.length} track(s))`,
+      );
       currentLayer = track.layer;
     }
 
@@ -1139,17 +1153,21 @@ export function buildSeparateTimelineFilterComplex(
 
     const trackNum = idx + 1;
 
-    console.log(`   ${typeIcon} [${trackNum}] ${track.name}`);
     console.log(
-      `      Type: ${track.type.toUpperCase()} | Layer: ${track.layer}`,
+      `[HandleFilterComplex] Log${typeIcon} [${trackNum}] ${track.name}`,
+    );
+    console.log(
+      `[HandleFilterComplex] Type${track.type.toUpperCase()} | Layer: ${track.layer}`,
     );
 
     if (track.duration !== undefined) {
-      console.log(`      Duration: ${track.duration.toFixed(2)}s`);
+      console.log(
+        `[HandleFilterComplex] Duration${track.duration.toFixed(2)}s`,
+      );
     }
     if (track.startTime !== undefined && track.endTime !== undefined) {
       console.log(
-        `      Timeline: ${track.startTime.toFixed(2)}s - ${track.endTime.toFixed(2)}s`,
+        `[HandleFilterComplex] Timeline${track.startTime.toFixed(2)}s - ${track.endTime.toFixed(2)}s`,
       );
     }
 
@@ -1157,16 +1175,18 @@ export function buildSeparateTimelineFilterComplex(
     if (track.trackInfo) {
       if (track.trackInfo.width && track.trackInfo.height) {
         console.log(
-          `      Dimensions: ${track.trackInfo.width}x${track.trackInfo.height}`,
+          `[HandleFilterComplex] Dimensions${track.trackInfo.width}x${track.trackInfo.height}`,
         );
       }
       if (track.trackInfo.detectedAspectRatioLabel) {
         console.log(
-          `      Aspect Ratio: ${track.trackInfo.detectedAspectRatioLabel}`,
+          `[HandleFilterComplex] Aspect Ratio${track.trackInfo.detectedAspectRatioLabel}`,
         );
       }
       if (track.trackInfo.sourceFps) {
-        console.log(`      Source FPS: ${track.trackInfo.sourceFps}`);
+        console.log(
+          `[HandleFilterComplex] Source FPS${track.trackInfo.sourceFps}`,
+        );
       }
     }
     if (track.text) {
@@ -1174,11 +1194,11 @@ export function buildSeparateTimelineFilterComplex(
         track.text.length > 60
           ? track.text.substring(0, 60) + '...'
           : track.text;
-      console.log(`      Text: "${fullText}"`);
+      console.log(`[HandleFilterComplex] Text: "${fullText}"`);
     }
   });
 
-  console.log('\n🎬 ========================================\n');
+  console.log('[HandleFilterComplex] ========================================');
 
   // Collect all layers using layer handling functions
   const allLayers = collectAllLayers(videoLayers, imageLayers, job);
@@ -1190,7 +1210,7 @@ export function buildSeparateTimelineFilterComplex(
   );
 
   console.log(
-    `\n🎬 Processing ${sortedLayers.length} independent layers in order:\n`,
+    `[HandleFilterComplex] Processing${sortedLayers.length} independent layers in order: `,
   );
   sortedLayers.forEach(([layerNum, track]) => {
     const types: string[] = [];
@@ -1198,16 +1218,18 @@ export function buildSeparateTimelineFilterComplex(
       types.push(`video(${track.videoTimeline.segments.length})`);
     if (track.imageSegments) types.push(`image(${track.imageSegments.length})`);
     if (track.textSegments) types.push(`text(${track.textSegments.length})`);
-    console.log(`   Layer ${layerNum}: ${types.join(', ')}`);
+    console.log(`[HandleFilterComplex] Layer${layerNum}: ${types.join(', ')}`);
   });
-  console.log('');
+  console.log('[HandleFilterComplex] Log');
 
   const bottomMostVideoImageLayer = findBottomMostVideoImageLayer(sortedLayers);
 
   // ============================================
   // PHASE 1: Prepare all video/image layers first
   // ============================================
-  console.log('\n📋 PHASE 1: Preparing all video/image layers...\n');
+  console.log(
+    '[HandleFilterComplex] PHASE 1: Preparing all video/image layers',
+  );
   const layerLabels = new Map<number, string>(); // Maps layer number to prepared layer label
   const hasVideoLayers = videoLayers.size > 0;
   const hasImageLayers = imageLayers.size > 0;
@@ -1215,7 +1237,7 @@ export function buildSeparateTimelineFilterComplex(
   // Prepare video layers
   for (const [layerNum, track] of sortedLayers) {
     if (track.videoTimeline) {
-      console.log(`   📹 Preparing video layer ${layerNum}`);
+      console.log(`[HandleFilterComplex] Preparing video layer${layerNum}`);
 
       const isBottomLayer = layerNum === bottomMostVideoImageLayer;
 
@@ -1269,7 +1291,7 @@ export function buildSeparateTimelineFilterComplex(
 
         layerLabels.set(layerNum, layerLabel);
         console.log(
-          `   ✅ Prepared video layer ${layerNum} -> [${layerLabel}]`,
+          `[HandleFilterComplex] Prepared video layer${layerNum} -> [${layerLabel}]`,
         );
       }
     }
@@ -1279,7 +1301,9 @@ export function buildSeparateTimelineFilterComplex(
   if (!hasVideoLayers && hasImageLayers) {
     for (const [layerNum, track] of sortedLayers) {
       if (track.imageSegments && track.imageSegments.length > 0) {
-        console.log(`   🖼️ Preparing image layer ${layerNum} as base layer`);
+        console.log(
+          `[HandleFilterComplex] Preparing image layer${layerNum} as base layer`,
+        );
 
         const isBottomLayer = layerNum === bottomMostVideoImageLayer;
         const imageTimeline: ProcessedTimeline = {
@@ -1341,7 +1365,7 @@ export function buildSeparateTimelineFilterComplex(
 
           layerLabels.set(layerNum, layerLabel);
           console.log(
-            `   ✅ Prepared image layer ${layerNum} -> [${layerLabel}]`,
+            `[HandleFilterComplex] Prepared image layer${layerNum} -> [${layerLabel}]`,
           );
         }
       }
@@ -1367,7 +1391,7 @@ export function buildSeparateTimelineFilterComplex(
         const paddedLabel = `layer_${layerNum}_padded_start`;
 
         console.log(
-          `   ⏱️ Delaying overlay layer ${layerNum} by ${overlayStartTime.toFixed(3)}s using PTS offset (RAM-efficient, no frame generation)`,
+          `[HandleFilterComplex] ⏱ Delaying overlay layer${layerNum} by ${overlayStartTime.toFixed(3)}s using PTS offset (RAM-efficient, no frame generation)`,
         );
 
         // Use setpts to delay the video timeline instead of generating black frames
@@ -1380,7 +1404,7 @@ export function buildSeparateTimelineFilterComplex(
         // Update the layer label to use the delayed version
         layerLabels.set(layerNum, paddedLabel);
         console.log(
-          `   ✅ Delayed overlay layer ${layerNum} -> [${paddedLabel}] (PTS offset: +${overlayStartTime.toFixed(3)}s, no frame generation)`,
+          `[HandleFilterComplex] Delayed overlay layer${layerNum} -> [${paddedLabel}] (PTS offset: +${overlayStartTime.toFixed(3)}s, no frame generation)`,
         );
       }
     }
@@ -1423,7 +1447,7 @@ export function buildSeparateTimelineFilterComplex(
     if (baseLayerDuration < totalVideoDuration) {
       const gapDuration = totalVideoDuration - baseLayerDuration;
       console.log(
-        `\n   🕳️ Padding Layer ${bottomMostVideoImageLayer} (base layer) with black clip: ${baseLayerDuration.toFixed(3)}s -> ${totalVideoDuration.toFixed(3)}s (gap: ${gapDuration.toFixed(3)}s)`,
+        `[HandleFilterComplex] Padding Layer${bottomMostVideoImageLayer} (base layer) with black clip: ${baseLayerDuration.toFixed(3)}s -> ${totalVideoDuration.toFixed(3)}s (gap: ${gapDuration.toFixed(3)}s)`,
       );
 
       // Create a black gap clip to extend the base layer
@@ -1444,7 +1468,7 @@ export function buildSeparateTimelineFilterComplex(
       // Update the layer label to use the padded version
       layerLabels.set(bottomMostVideoImageLayer, paddedBaseLabel);
       console.log(
-        `   ✅ Padded base layer ${bottomMostVideoImageLayer} -> [${paddedBaseLabel}] (extends to ${totalVideoDuration.toFixed(3)}s)`,
+        `[HandleFilterComplex] Padded base layer${bottomMostVideoImageLayer} -> [${paddedBaseLabel}] (extends to ${totalVideoDuration.toFixed(3)}s)`,
       );
     }
   }
@@ -1452,7 +1476,7 @@ export function buildSeparateTimelineFilterComplex(
   // ============================================
   // PHASE 2: Build complete overlay order
   // ============================================
-  console.log('\n📋 PHASE 2: Building overlay order...\n');
+  console.log('[HandleFilterComplex] PHASE 2: Building overlay order');
   const overlayOrder = buildOverlayOrder(sortedLayers);
 
   // Update overlay items with prepared layer labels
@@ -1465,7 +1489,9 @@ export function buildSeparateTimelineFilterComplex(
     }
   });
 
-  console.log(`🎬 Overlay order (${overlayOrder.length} items):`);
+  console.log(
+    `[HandleFilterComplex] Overlay order (${overlayOrder.length} items):`,
+  );
   overlayOrder.forEach((overlay, idx) => {
     const info =
       overlay.type === 'video'
@@ -1476,14 +1502,16 @@ export function buildSeparateTimelineFilterComplex(
             ? `image segment`
             : `text segment`;
     console.log(
-      `   ${idx + 1}. Layer ${overlay.layer} (${overlay.type}): ${info}`,
+      `[HandleFilterComplex] Log${idx + 1}. Layer ${overlay.layer} (${overlay.type}): ${info}`,
     );
   });
 
   // ============================================
   // PHASE 3: Process overlays in layer order
   // ============================================
-  console.log('\n📋 PHASE 3: Processing overlays in layer order...\n');
+  console.log(
+    '[HandleFilterComplex] PHASE 3: Processing overlays in layer order',
+  );
   let currentCompositeLabel = '';
 
   // Check if we need a base layer (black background) before processing overlays
@@ -1500,7 +1528,7 @@ export function buildSeparateTimelineFilterComplex(
     );
     currentCompositeLabel = 'video_base';
     console.log(
-      `   ✅ Created black base layer [${currentCompositeLabel}] for non-video overlays`,
+      `[HandleFilterComplex] Created black base layer [${currentCompositeLabel}] for non-video overlays`,
     );
   }
 
@@ -1509,7 +1537,7 @@ export function buildSeparateTimelineFilterComplex(
     const isLast = i === overlayOrder.length - 1;
 
     console.log(
-      `\n🎬 Processing overlay ${i + 1}/${overlayOrder.length}: Layer ${overlay.layer} (${overlay.type})`,
+      `[HandleFilterComplex] Processing overlay${i + 1}/${overlayOrder.length}: Layer ${overlay.layer} (${overlay.type})`,
     );
 
     if (
@@ -1519,7 +1547,7 @@ export function buildSeparateTimelineFilterComplex(
       // Video overlay or image layer prepared as base layer
       if (!overlay.layerLabel) {
         console.warn(
-          `⚠️ No layer label for ${overlay.type} layer ${overlay.layer}, skipping`,
+          `[HandleFilterComplex] No layer label for${overlay.type} layer ${overlay.layer}, skipping`,
         );
         continue;
       }
@@ -1533,7 +1561,7 @@ export function buildSeparateTimelineFilterComplex(
         // This is the first video/image layer - it becomes the base
         currentCompositeLabel = layerLabel;
         console.log(
-          `   ✅ Layer ${overlay.layer} (${overlay.type}) is base layer -> [${currentCompositeLabel}]`,
+          `[HandleFilterComplex] Layer${overlay.layer} (${overlay.type}) is base layer -> [${currentCompositeLabel}]`,
         );
       } else if (overlay.type === 'video' && videoTimeline) {
         // Overlay this video layer on top of current composite
@@ -1552,14 +1580,20 @@ export function buildSeparateTimelineFilterComplex(
         const endTime = Math.round(overlayEndTime * 1000) / 1000;
 
         // Debug logging to verify overlay timing
-        console.log(`   ⏱️ Layer ${overlay.layer} overlay timing:`);
-        console.log(`      - Timeline start: ${overlayStartTime.toFixed(3)}s`);
-        console.log(`      - Timeline end: ${overlayEndTime.toFixed(3)}s`);
         console.log(
-          `      - Total video duration: ${totalVideoDuration.toFixed(3)}s`,
+          `[HandleFilterComplex] ⏱ Layer${overlay.layer} overlay timing:`,
         );
         console.log(
-          `      - Enable expression: between(t,${startTime.toFixed(3)},${endTime.toFixed(3)})`,
+          `[HandleFilterComplex] Timeline start${overlayStartTime.toFixed(3)}s`,
+        );
+        console.log(
+          `[HandleFilterComplex] Timeline end${overlayEndTime.toFixed(3)}s`,
+        );
+        console.log(
+          `[HandleFilterComplex] Total video duration${totalVideoDuration.toFixed(3)}s`,
+        );
+        console.log(
+          `[HandleFilterComplex] Enable expression: between(t${startTime.toFixed(3)},${endTime.toFixed(3)})`,
         );
 
         // Get transform positioning (use original coordinates, not scaled)
@@ -1588,7 +1622,7 @@ export function buildSeparateTimelineFilterComplex(
                 : `(H-h)/2-${Math.abs(transformY)}*H/2`; // Use Math.abs to ensure proper subtraction
 
             console.log(
-              `   📍 Using transform positioning: x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}, scale=${transformScale.toFixed(2)} (video already scaled)`,
+              `[HandleFilterComplex] Using transform positioning: x=${transformX.toFixed(3)}, y=${transformY.toFixed(3)}, scale=${transformScale.toFixed(2)} (video already scaled)`,
             );
           }
         }
@@ -1619,7 +1653,7 @@ export function buildSeparateTimelineFilterComplex(
         videoFilters.push(overlayFilter);
         currentCompositeLabel = compositeLabel;
         console.log(
-          `   ✅ Overlaid video layer ${overlay.layer} on [${currentCompositeLabel}] (enabled from ${startTime.toFixed(2)}s to ${endTime.toFixed(2)}s)`,
+          `[HandleFilterComplex] Overlaid video layer${overlay.layer} on [${currentCompositeLabel}] (enabled from ${startTime.toFixed(2)}s to ${endTime.toFixed(2)}s)`,
         );
       }
     } else if (overlay.type === 'image' && !overlay.layerLabel) {
@@ -1637,7 +1671,7 @@ export function buildSeparateTimelineFilterComplex(
 
       if (fileIndex === undefined) {
         console.warn(
-          `❌ Could not find file index for image segment ${originalIndex}`,
+          `[HandleFilterComplex] Could not find file index for image segment${originalIndex}`,
         );
         continue;
       }
@@ -1679,7 +1713,7 @@ export function buildSeparateTimelineFilterComplex(
       );
 
       console.log(
-        `📐 Image: duration=${imageDuration.toFixed(3)}s, enabled ${startTime.toFixed(3)}s-${endTime.toFixed(3)}s`,
+        `[HandleFilterComplex] Image: duration=${imageDuration.toFixed(3)}s, enabled ${startTime.toFixed(3)}s-${endTime.toFixed(3)}s`,
       );
 
       // Apply scaling if needed
@@ -1710,7 +1744,7 @@ export function buildSeparateTimelineFilterComplex(
         videoFilters.push(scaleFilter);
         currentImageRef = imageScaledRef;
         console.log(
-          `📐 Image scaling: ${sourceWidth}x${sourceHeight} → ${scaledWidth}x${scaledHeight} (scale: ${transform.scale || 1.0})`,
+          `[HandleFilterComplex] Image scaling${sourceWidth}x${sourceHeight} → ${scaledWidth}x${scaledHeight} (scale: ${transform.scale || 1.0})`,
         );
       }
 
@@ -1760,7 +1794,7 @@ export function buildSeparateTimelineFilterComplex(
       videoFilters.push(overlayFilter);
       currentCompositeLabel = compositeLabel;
       console.log(
-        `   ✅ Overlaid image at layer ${overlay.layer} -> [${compositeLabel}]`,
+        `[HandleFilterComplex] Overlaid image at layer${overlay.layer} -> [${compositeLabel}]`,
       );
     } else if (overlay.type === 'text') {
       // Text overlay - handle multi-line text by chaining multiple drawtext filters
@@ -1789,7 +1823,7 @@ export function buildSeparateTimelineFilterComplex(
       });
 
       console.log(
-        `   ✅ Applied ${drawtextFilters.length} text overlay filter(s) at layer ${overlay.layer} -> [${currentCompositeLabel}]`,
+        `[HandleFilterComplex] Applied${drawtextFilters.length} text overlay filter(s) at layer ${overlay.layer} -> [${currentCompositeLabel}]`,
       );
     }
   }
@@ -1838,7 +1872,7 @@ export function buildSeparateTimelineFilterComplex(
       // Audio-only export - create a minimal 2x2 black frame video that matches audio duration
       // FFmpeg requires at least 2x2 pixels (1x1 is invalid)
       console.log(
-        '🎵 Audio-only export detected, creating minimal 2x2 black frame video',
+        '[HandleFilterComplex] Audio-only export detected, creating minimal 2x2 black frame video',
       );
       const totalDuration = audioTimeline.totalDuration || 1;
       // Create a single black frame (1 frame at target FPS), then loop it to match audio duration
@@ -1856,11 +1890,13 @@ export function buildSeparateTimelineFilterComplex(
       );
       currentVideoLabel = 'video_base';
       console.log(
-        `✅ Created minimal 2x2 black frame video matching audio duration: ${totalDuration.toFixed(3)}s`,
+        `[HandleFilterComplex] Created minimal 2x2 black frame video matching audio duration${totalDuration.toFixed(3)}s`,
       );
     } else {
       // Fallback for other cases (shouldn't normally happen)
-      console.log('⚠️ No video layers found, creating black base');
+      console.log(
+        '[HandleFilterComplex] No video layers found, creating black base',
+      );
       const totalDuration =
         audioTimeline.totalDuration || totalVideoDuration || 1;
       videoFilters.push(
@@ -1878,7 +1914,7 @@ export function buildSeparateTimelineFilterComplex(
     if (inputRef !== 'audio') {
       audioConcatFilter = `[${inputRef}]acopy[audio]`;
     }
-    console.log(`✅ Final audio output: [audio]`);
+    console.log('[HandleFilterComplex] Final audio output: [audio]');
   }
 
   // Note: Image overlays will be applied AFTER aspect ratio crop
@@ -1896,14 +1932,28 @@ export function buildSeparateTimelineFilterComplex(
   let aspectRatioCropFilter = '';
   let croppedVideoLabel = currentVideoLabel; // Track the current video label after crop
 
-  console.log('📐 Checking aspect ratio conversion conditions:');
-  console.log('   - targetAspectRatio (from trackInfo):', targetAspectRatio);
-  console.log('   - job.operations.aspect:', job.operations.aspect);
-  console.log('   - finalAspectRatio (used):', finalAspectRatio);
-  console.log('   - hasVideoContent:', hasVideoContent);
-  console.log('   - targetDimensions (source video):', targetDimensions);
   console.log(
-    '   - desiredOutputDimensions (custom/final):',
+    '[HandleFilterComplex] Checking aspect ratio conversion conditions',
+  );
+  console.log(
+    '[HandleFilterComplex] targetAspectRatio (from trackInfo)',
+    targetAspectRatio,
+  );
+  console.log(
+    '[HandleFilterComplex] job.operations.aspect',
+    job.operations.aspect,
+  );
+  console.log(
+    '[HandleFilterComplex] finalAspectRatio (used)',
+    finalAspectRatio,
+  );
+  console.log('[HandleFilterComplex] hasVideoContent', hasVideoContent);
+  console.log(
+    '[HandleFilterComplex] targetDimensions (source video)',
+    targetDimensions,
+  );
+  console.log(
+    '[HandleFilterComplex] desiredOutputDimensions (custom/final)',
     desiredOutputDimensions,
   );
 
@@ -1924,7 +1974,7 @@ export function buildSeparateTimelineFilterComplex(
 
       if (videoPositionX !== undefined || videoPositionY !== undefined) {
         console.log(
-          `📐 Video position in canvas detected for dynamic cropping: x=${videoPositionX ?? 0}, y=${videoPositionY ?? 0}`,
+          `[HandleFilterComplex] Video position in canvas detected for dynamic cropping: x=${videoPositionX ?? 0}, y=${videoPositionY ?? 0}`,
         );
       }
     }
@@ -1946,10 +1996,10 @@ export function buildSeparateTimelineFilterComplex(
     // using the same scale+crop logic as non-transform videos
     aspectRatioCroppedDimensions = desiredOutputDimensions;
     console.log(
-      `📐 Video has transform - aspect ratio conversion handled in createBlackBackgroundWithOverlay (same logic as non-transform)`,
+      '[HandleFilterComplex] Video has transform - aspect ratio conversion handled in createBlackBackgroundWithOverlay (same logic as non-transform)',
     );
     console.log(
-      `📐 Final dimensions after transform overlay + crop: ${desiredOutputDimensions.width}x${desiredOutputDimensions.height}`,
+      `[HandleFilterComplex] Final dimensions after transform overlay + crop${desiredOutputDimensions.width}x${desiredOutputDimensions.height}`,
     );
   }
 
@@ -1959,25 +2009,25 @@ export function buildSeparateTimelineFilterComplex(
     const desiredRatio =
       desiredOutputDimensions.width / desiredOutputDimensions.height;
 
-    console.log(`📐 Aspect ratio analysis:`);
+    console.log('[HandleFilterComplex] Aspect ratio analysis');
     console.log(
-      `   - Source video: ${sourceRatio.toFixed(3)} (${targetDimensions.width}x${targetDimensions.height})`,
+      `[HandleFilterComplex] Source video${sourceRatio.toFixed(3)} (${targetDimensions.width}x${targetDimensions.height})`,
     );
     if (finalAspectRatio) {
       const targetRatio = parseAspectRatio(finalAspectRatio);
       console.log(
-        `   - Target aspect ratio: ${targetRatio.toFixed(3)} (${finalAspectRatio})`,
+        `[HandleFilterComplex] Target aspect ratio${targetRatio.toFixed(3)} (${finalAspectRatio})`,
       );
     }
     console.log(
-      `   - Desired output: ${desiredRatio.toFixed(3)} (${desiredOutputDimensions.width}x${desiredOutputDimensions.height})`,
+      `[HandleFilterComplex] Desired output${desiredRatio.toFixed(3)} (${desiredOutputDimensions.width}x${desiredOutputDimensions.height})`,
     );
 
     // Check if we need to convert - compare source with DESIRED output ratio (not targetRatio)
     // This ensures we crop/scale when custom dimensions have a different aspect ratio
     const ratioDifference = Math.abs(desiredRatio - sourceRatio) / sourceRatio;
     console.log(
-      `📐 Ratio difference (source vs desired output): ${(ratioDifference * 100).toFixed(2)}%`,
+      `[HandleFilterComplex] Ratio difference (source vs desired output)${(ratioDifference * 100).toFixed(2)}%`,
     );
 
     if (ratioDifference > 0.01) {
@@ -1988,13 +2038,13 @@ export function buildSeparateTimelineFilterComplex(
       if (isPortraitToLandscape) {
         // Portrait → Landscape: NO CROP, just pad/scale to fit
         console.log(
-          `📐 Portrait → Landscape conversion: NO CROP, scale to fit with padding`,
+          '[HandleFilterComplex] Portrait → Landscape conversion: NO CROP, scale to fit with padding',
         );
 
         // Don't apply crop filter - let the video maintain its aspect ratio
         // The final downscale will handle fitting it into the landscape frame
         console.log(
-          `📐 Skipping crop for portrait→landscape (will be handled by final downscale with padding)`,
+          '[HandleFilterComplex] Skipping crop for portrait→landscape (will be handled by final downscale with padding)',
         );
 
         // Set aspectRatioCroppedDimensions to source dimensions (no crop applied)
@@ -2003,13 +2053,13 @@ export function buildSeparateTimelineFilterComplex(
         // Landscape → Portrait: NO CROP (inverse of portrait→landscape)
         // Center the landscape video, allow width to be cropped, add padding top/bottom
         console.log(
-          `📐 Landscape → Portrait conversion: NO CROP, scale to fit with padding (inverse of portrait→landscape)`,
+          '[HandleFilterComplex] Landscape → Portrait conversion: NO CROP, scale to fit with padding (inverse of portrait→landscape)',
         );
 
         // Don't apply crop filter - let the video maintain its aspect ratio
         // The final downscale will handle fitting it into the portrait frame with padding
         console.log(
-          `📐 Skipping crop for landscape→portrait (will be handled by final downscale with padding)`,
+          '[HandleFilterComplex] Skipping crop for landscape→portrait (will be handled by final downscale with padding)',
         );
 
         // Set aspectRatioCroppedDimensions to source dimensions (no crop applied)
@@ -2041,7 +2091,7 @@ export function buildSeparateTimelineFilterComplex(
           cropHeight = Math.round(cropWidth / desiredRatio);
 
           console.log(
-            `📐 Wider target: preserving width (${cropWidth}), cropping height to ${cropHeight}`,
+            `[HandleFilterComplex] Wider target: preserving width (${cropWidth}), cropping height to ${cropHeight}`,
           );
         } else {
           // Target is taller than source (e.g., landscape 16:9 → portrait 9:16)
@@ -2061,7 +2111,7 @@ export function buildSeparateTimelineFilterComplex(
           cropWidth = Math.round(cropHeight * desiredRatio);
 
           console.log(
-            `📐 Taller target (landscape→portrait): preserving height (${cropHeight}), cropping width to ${cropWidth}`,
+            `[HandleFilterComplex] Taller target (landscape→portrait): preserving height (${cropHeight}), cropping width to ${cropWidth}`,
           );
         }
 
@@ -2085,11 +2135,11 @@ export function buildSeparateTimelineFilterComplex(
         // Log crop positioning info
         if (videoPositionX !== undefined || videoPositionY !== undefined) {
           console.log(
-            `📐 Dynamic crop positioning: video position in canvas(${videoPositionX ?? 0}, ${videoPositionY ?? 0}) → crop offset(${cropX}, ${cropY})`,
+            `[HandleFilterComplex] Dynamic crop positioning: video position in canvas(${videoPositionX ?? 0}, ${videoPositionY ?? 0}) → crop offset(${cropX}, ${cropY})`,
           );
         } else {
           console.log(
-            `📐 Center crop positioning (default): crop offset(${cropX}, ${cropY})`,
+            `[HandleFilterComplex] Center crop positioning (default): crop offset(${cropX}, ${cropY})`,
           );
         }
 
@@ -2108,18 +2158,18 @@ export function buildSeparateTimelineFilterComplex(
 
         const croppedAspectRatio = cropWidth / cropHeight;
         console.log(
-          `📐 Crop filter (no pre-scale): crop=${cropWidth}:${cropHeight}:${cropX}:${cropY},setsar=1`,
+          `[HandleFilterComplex] Crop filter (no pre-scale): crop=${cropWidth}:${cropHeight}:${cropX}:${cropY},setsar=1`,
         );
         console.log(
-          `📐 Dimensions after aspect ratio crop: ${cropWidth}x${cropHeight}`,
+          `[HandleFilterComplex] Dimensions after aspect ratio crop${cropWidth}x${cropHeight}`,
         );
         console.log(
-          `📐 Cropped aspect ratio: ${croppedAspectRatio.toFixed(4)} (should be ${desiredRatio.toFixed(4)})`,
+          `[HandleFilterComplex] Cropped aspect ratio${croppedAspectRatio.toFixed(4)} (should be ${desiredRatio.toFixed(4)})`,
         );
       }
     } else {
       console.log(
-        `📐 Aspect ratios are similar (${(ratioDifference * 100).toFixed(2)}% difference), no conversion needed`,
+        `[HandleFilterComplex] Aspect ratios are similar (${(ratioDifference * 100).toFixed(2)}% difference), no conversion needed`,
       );
     }
   }
@@ -2129,10 +2179,13 @@ export function buildSeparateTimelineFilterComplex(
   let finalDownscaleFilter = '';
   let videoLabelAfterDownscale = croppedVideoLabel;
 
-  console.log('📐 Checking final downscale conditions:');
-  console.log('   - Desired output dimensions:', desiredOutputDimensions);
+  console.log('[HandleFilterComplex] Checking final downscale conditions');
   console.log(
-    '   - Aspect ratio cropped dimensions:',
+    '[HandleFilterComplex] Desired output dimensions',
+    desiredOutputDimensions,
+  );
+  console.log(
+    '[HandleFilterComplex] Aspect ratio cropped dimensions',
     aspectRatioCroppedDimensions,
   );
 
@@ -2151,17 +2204,17 @@ export function buildSeparateTimelineFilterComplex(
       Math.abs(croppedRatio - desiredOutputRatio) / desiredOutputRatio;
 
     console.log(
-      `📐 Final downscale needed: ${aspectRatioCroppedDimensions.width}x${aspectRatioCroppedDimensions.height} → ${desiredOutputDimensions.width}x${desiredOutputDimensions.height}`,
+      `[HandleFilterComplex] Final downscale needed${aspectRatioCroppedDimensions.width}x${aspectRatioCroppedDimensions.height} → ${desiredOutputDimensions.width}x${desiredOutputDimensions.height}`,
     );
     console.log(
-      `📐 Aspect ratio check: cropped=${croppedRatio.toFixed(4)}, desired=${desiredOutputRatio.toFixed(4)}, diff=${(aspectRatioDiff * 100).toFixed(2)}%`,
+      `[HandleFilterComplex] Aspect ratio check: cropped=${croppedRatio.toFixed(4)}, desired=${desiredOutputRatio.toFixed(4)}, diff=${(aspectRatioDiff * 100).toFixed(2)}%`,
     );
 
     // Simple scale since aspect ratios should already match from the crop
     // If there's a mismatch, log a warning
     if (aspectRatioDiff > 0.001) {
       console.warn(
-        `⚠️ Aspect ratio mismatch detected! This may cause distortion.`,
+        '[HandleFilterComplex] Aspect ratio mismatch detected! This may cause distortion',
       );
     }
 
@@ -2180,7 +2233,9 @@ export function buildSeparateTimelineFilterComplex(
     );
     videoLabelAfterDownscale = 'video_downscaled';
   } else {
-    console.log('📐 No final downscale needed, dimensions match');
+    console.log(
+      '[HandleFilterComplex] No final downscale needed, dimensions match',
+    );
     videoLabelAfterDownscale = croppedVideoLabel;
   }
 
@@ -2199,7 +2254,9 @@ export function buildSeparateTimelineFilterComplex(
     // Verify font directories exist
     for (const fontDir of fontDirectories) {
       if (!fs.existsSync(fontDir)) {
-        console.warn(`⚠️ Font directory does not exist: ${fontDir}`);
+        console.warn(
+          `[HandleFilterComplex] Font directory does not exist${fontDir}`,
+        );
       }
     }
     fontsDirParam = buildFontDirectoriesParameter(job.subtitleFontFamilies);
@@ -2220,21 +2277,21 @@ export function buildSeparateTimelineFilterComplex(
     const escapedPath = escapePathForFilter(subtitlePath);
     const fileExtension = subtitlePath.toLowerCase().split('.').pop();
 
-    console.log(`📝 [Subtitles] Using subtitle file: ${subtitlePath}`);
-    console.log(`📝 [Subtitles] Escaped path for filter: ${escapedPath}`);
+    console.log(`[Subtitles] Using subtitle file${subtitlePath}`);
+    console.log(`[Subtitles] Escaped path for filter${escapedPath}`);
 
     if (fileExtension === 'ass' || fileExtension === 'ssa') {
       // Apply subtitles to the video after downscale
       subtitleFilter = `[${currentVideoLabelForText}]subtitles='${escapedPath}'${fontsDirParam}[video_with_subtitles]`;
       currentVideoLabelForText = 'video_with_subtitles';
       console.log(
-        '📝 [Subtitles] Added ASS subtitles filter with fontsdir - applied AFTER downscale at final output dimensions',
+        '[Subtitles] Added ASS subtitles filter with fontsdir - applied AFTER downscale at final output dimensions',
       );
     } else {
       subtitleFilter = `[${currentVideoLabelForText}]subtitles='${escapedPath}'${fontsDirParam}[video_with_subtitles]`;
       currentVideoLabelForText = 'video_with_subtitles';
       console.log(
-        `📝 [Subtitles] Added subtitles filter (format: ${fileExtension}) - applied AFTER downscale`,
+        `[Subtitles] Added subtitles filter (format${fileExtension}) - applied AFTER downscale`,
       );
     }
   }
@@ -2250,7 +2307,7 @@ export function buildSeparateTimelineFilterComplex(
       `${tempVideoRef}trim=duration=${totalVideoDuration.toFixed(6)}[video]`,
     );
     console.log(
-      `✅ Trimmed final video stream to exact ${totalVideoDuration.toFixed(3)}s`,
+      `[HandleFilterComplex] Trimmed final video stream to exact${totalVideoDuration.toFixed(3)}s`,
     );
   } else if (currentVideoLabelForText !== 'video') {
     // If no subtitles, trim to exact duration
@@ -2258,7 +2315,7 @@ export function buildSeparateTimelineFilterComplex(
       `[${currentVideoLabelForText}]trim=duration=${totalVideoDuration.toFixed(6)}[video]`,
     );
     console.log(
-      `✅ Trimmed final video stream to exact ${totalVideoDuration.toFixed(3)}s`,
+      `[HandleFilterComplex] Trimmed final video stream to exact${totalVideoDuration.toFixed(3)}s`,
     );
   } else {
     // Already named [video], need to use temp ref to avoid circular reference
@@ -2268,7 +2325,7 @@ export function buildSeparateTimelineFilterComplex(
     );
     videoFilters.push(`${tempVideoRef}copy[video]`);
     console.log(
-      `✅ Trimmed final video stream to exact ${totalVideoDuration.toFixed(3)}s`,
+      `[HandleFilterComplex] Trimmed final video stream to exact${totalVideoDuration.toFixed(3)}s`,
     );
   }
 
@@ -2282,22 +2339,24 @@ export function buildSeparateTimelineFilterComplex(
   if (audioConcatFilter) allFilters.push(audioConcatFilter);
   if (aspectRatioCropFilter) {
     console.log(
-      '📐 ✅ ADDING ASPECT RATIO CROP FILTER TO CHAIN:',
+      '[HandleFilterComplex] ADDING ASPECT RATIO CROP FILTER TO CHAIN',
       aspectRatioCropFilter,
     );
     allFilters.push(aspectRatioCropFilter);
   } else {
-    console.log('📐 ❌ NO ASPECT RATIO CROP FILTER TO ADD');
+    console.log('[HandleFilterComplex] NO ASPECT RATIO CROP FILTER TO ADD');
   }
   if (finalDownscaleFilter) {
     console.log(
-      '📐 ✅ ADDING FINAL DOWNSCALE FILTER TO CHAIN:',
+      '[HandleFilterComplex] ADDING FINAL DOWNSCALE FILTER TO CHAIN',
       finalDownscaleFilter,
     );
     allFilters.push(finalDownscaleFilter);
   }
   if (subtitleFilter) {
-    console.log('📝 ✅ ADDING SUBTITLE FILTER TO CHAIN (AFTER DOWNSCALE)');
+    console.log(
+      '[HandleFilterComplex] ADDING SUBTITLE FILTER TO CHAIN (AFTER DOWNSCALE)',
+    );
     allFilters.push(subtitleFilter);
   }
   // Note: Text and image overlays are already processed in layer order during main compositing loop
@@ -2369,19 +2428,21 @@ export function handleFilterComplex(
 
     // Add hardware upload filter for VAAPI if needed
     if (hwAccel?.type === 'vaapi') {
-      console.log('🎮 Adding VAAPI hardware upload filter');
+      console.log('[HandleFilterComplex] Adding VAAPI hardware upload filter');
       filterComplex +=
         ';[video]format=nv12,hwupload=extra_hw_frames=64:derive_device=vaapi[video_hw]';
       cmd.args.push('-filter_complex', filterComplex);
       if (shouldMapAudio) {
         cmd.args.push('-map', '[video_hw]', '-map', '[audio]');
         if (isAudioOnlyExport) {
-          console.log('🎵 Mapping audio for audio-only export');
+          console.log(
+            '[HandleFilterComplex] Mapping audio for audio-only export',
+          );
         }
       } else {
         cmd.args.push('-map', '[video_hw]');
         console.log(
-          'ℹ️ Not mapping audio - no video, image, or audio inputs detected',
+          '[HandleFilterComplex] ℹ Not mapping audio - no video, image, or audio inputs detected',
         );
       }
     } else {
@@ -2389,12 +2450,14 @@ export function handleFilterComplex(
       if (shouldMapAudio) {
         cmd.args.push('-map', '[video]', '-map', '[audio]');
         if (isAudioOnlyExport) {
-          console.log('🎵 Mapping audio for audio-only export');
+          console.log(
+            '[HandleFilterComplex] Mapping audio for audio-only export',
+          );
         }
       } else {
         cmd.args.push('-map', '[video]');
         console.log(
-          'ℹ️ Not mapping audio - no video, image, or audio inputs detected',
+          '[HandleFilterComplex] ℹ Not mapping audio - no video, image, or audio inputs detected',
         );
       }
     }

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Skeleton } from '@/frontend/components/ui/skeleton';
 import { cn } from '@/frontend/utils/utils';
-import { Film } from 'lucide-react';
+import { ClosedCaption, Film, Type } from 'lucide-react';
 import React, {
   useCallback,
   useEffect,
@@ -42,6 +42,7 @@ import {
 import { VideoSpriteSheetStrip } from './videoSpriteSheetStrip';
 
 const DRAG_ACTIVATION_THRESHOLD = 5;
+const EMPTY_DRAG_TRACK_IDS: string[] = [];
 
 /**
  * Calculate grid interval that matches the ruler's tick interval exactly.
@@ -88,8 +89,8 @@ const parseMediaDragPayload = (
           mediaId: parsed.mediaId || parsed.mediaIds?.[0],
         };
       }
-    } catch (error) {
-      console.warn('Failed to parse drag payload', error);
+    } catch {
+      // Ignore malformed drag payloads.
     }
   }
 
@@ -191,11 +192,11 @@ const TrackItemWrapper: React.FC<{
 
     return (
       <div
+        data-track-id={track.id}
         className={cn(
           'absolute rounded flex items-center select-none transition-opacity duration-150',
           getTrackItemHeightClasses(track.type),
           isDuplicationFeedback ? 'overflow-visible' : 'overflow-hidden',
-          isSelected ? 'border-2 border-secondary' : '',
           getCursorClass(),
           track.visible ? 'opacity-100' : 'opacity-50',
           isDuplicationFeedback ? 'track-duplicate-feedback z-50' : 'z-10',
@@ -213,6 +214,9 @@ const TrackItemWrapper: React.FC<{
         onContextMenu={onContextMenu}
       >
         {children}
+        {isSelected && (
+          <div className="pointer-events-none absolute inset-0 rounded border-2 border-secondary z-30" />
+        )}
       </div>
     );
   },
@@ -546,6 +550,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 allTracks,
                 excludeIds,
                 timeline.currentFrame,
+                timeline.markers || [],
               );
 
               const snapResult = checkSnapPosition(
@@ -589,6 +594,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 allTracks,
                 excludeIds,
                 timeline.currentFrame,
+                timeline.markers || [],
               );
 
               const snapResult = checkSnapPosition(
@@ -650,6 +656,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 allTracks,
                 excludeIds,
                 timeline.currentFrame,
+                timeline.markers || [],
               );
 
               const startSnap = checkSnapPosition(
@@ -718,52 +725,73 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
 
     const handleMouseUp = useCallback(() => {
       const state = useVideoEditorStore.getState();
-      const { playback, endDraggingTrack, clearDragGhost, moveTrackToRow } =
-        state;
+      const {
+        playback,
+        endDraggingTrack,
+        clearDragGhost,
+        moveTrackToRow,
+        normalizeTrackRowsAfterDrop,
+      } = state;
 
       if (
         isDragging &&
         dragThresholdMetRef.current &&
         playback.dragGhost?.isActive &&
-        playback.dragGhost.targetRow
+        playback.dragGhost.targetRow &&
+        playback.dragGhost.targetFrame !== null
       ) {
-        const targetRowId = playback.dragGhost.targetRow;
-        const targetFrame = playback.dragGhost.targetFrame;
+        const dragGhost = playback.dragGhost;
+        const targetRowId = dragGhost.targetRow;
+        const targetFrame = dragGhost.targetFrame;
         const parsedRow = parseRowId(targetRowId);
 
-        console.log(
-          `🎬 DROP: track=${track.type}, currentRow=${track.trackRowIndex ?? 0}, targetRow=${parsedRow ? parsedRow.rowIndex : 'null'}`,
-        );
-
         if (parsedRow) {
-          const currentRowIndex = track.trackRowIndex ?? 0;
+          const draggedTrackIds =
+            dragGhost.selectedTrackIds?.length > 0
+              ? dragGhost.selectedTrackIds
+              : dragGhost.trackId
+                ? [dragGhost.trackId]
+                : [];
+          const draggedTracks = state.tracks.filter((t: VideoTrack) =>
+            draggedTrackIds.includes(t.id),
+          );
+          const primaryTrack = draggedTracks.find(
+            (t: VideoTrack) => t.id === dragGhost.trackId,
+          );
 
-          if (parsedRow.type !== track.type) {
-            console.log(
-              `   ❌ INVALID: Cannot drop ${track.type} on ${parsedRow.type} row`,
-            );
-            endDraggingTrack();
-            clearDragGhost();
-            setIsResizing(false);
-            setIsDragging(false);
-            hasAutoSelectedRef.current = false;
-            dragThresholdMetRef.current = false;
-            return;
-          }
+          if (primaryTrack && parsedRow.type === primaryTrack.type) {
+            const primaryRowIndex = primaryTrack.trackRowIndex ?? 0;
+            const primaryStartFrame = primaryTrack.startFrame;
+            const rowDelta = Math.round(parsedRow.rowIndex) - primaryRowIndex;
 
-          const normalizedTargetIndex = Math.round(parsedRow.rowIndex);
-          if (normalizedTargetIndex !== currentRowIndex) {
-            moveTrackToRow(
-              track.id,
-              parsedRow.rowIndex,
-              targetFrame !== null && targetFrame !== undefined
-                ? targetFrame
-                : undefined,
-            );
-          } else {
-            console.log(
-              `   ⏸️ No row change (same row ${currentRowIndex}, target was ${parsedRow.rowIndex})`,
-            );
+            const orderedTracks = [...draggedTracks].sort((a, b) => {
+              const rowDiff = (a.trackRowIndex ?? 0) - (b.trackRowIndex ?? 0);
+              if (rowDiff !== 0) return rowDiff;
+              return a.startFrame - b.startFrame;
+            });
+            const excludeTrackIds = orderedTracks.map((t) => t.id);
+
+            orderedTracks.forEach((draggedTrack) => {
+              const frameOffset = draggedTrack.startFrame - primaryStartFrame;
+              const targetStartFrame = targetFrame + frameOffset;
+              const targetRowIndex = Math.max(
+                0,
+                Math.round((draggedTrack.trackRowIndex ?? 0) + rowDelta),
+              );
+
+              moveTrackToRow(
+                draggedTrack.id,
+                targetRowIndex,
+                targetStartFrame,
+                {
+                  skipNormalize: true,
+                  excludeTrackIds,
+                  skipLinkedMove: true,
+                },
+              );
+            });
+
+            normalizeTrackRowsAfterDrop();
           }
         }
       }
@@ -780,7 +808,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-    }, [isDragging, track.id, track.type, track.trackRowIndex]);
+    }, [isDragging]);
 
     useEffect(() => {
       if (isResizing || isDragging) {
@@ -794,15 +822,6 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         };
       }
     }, [isResizing, isDragging, handleMouseMove, handleMouseUp]);
-
-    useEffect(() => {
-      return () => {
-        const { playback, endDraggingTrack } = useVideoEditorStore.getState();
-        if (playback.isDraggingTrack) {
-          endDraggingTrack();
-        }
-      };
-    }, []);
 
     const trackContent = useMemo(() => {
       const contentHeight = getTrackItemHeight(track.type);
@@ -872,18 +891,40 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
         );
       }
 
+      const trackLabel =
+        track.type === 'subtitle' && track.subtitleText
+          ? track.subtitleText
+          : track.type === 'text' && track.textContent
+            ? track.textContent
+            : track.name;
+
+      if (track.type === 'text' || track.type === 'subtitle') {
+        const TrackTypeIcon = track.type === 'subtitle' ? ClosedCaption : Type;
+
+        return (
+          <div
+            className={cn(
+              'h-full w-full px-2 py-1 flex items-center gap-1.5 text-[11px] overflow-hidden',
+              isSelected ? 'text-secondary' : 'text-white/90 hover:text-white',
+            )}
+          >
+            <TrackTypeIcon className="h-3 w-3 shrink-0 text-inherit" />
+            <span className="min-w-0 overflow-hidden whitespace-nowrap">
+              {trackLabel}
+            </span>
+          </div>
+        );
+      }
+
       return (
-        <div className="text-white text-[11px] h-fit whitespace-nowrap overflow-hidden text-ellipsis px-2 py-1">
-          {track.type === 'subtitle' && track.subtitleText
-            ? track.subtitleText
-            : track.type === 'text' && track.textContent
-              ? track.textContent
-              : track.name}
+        <div className="text-white text-[11px] h-fit whitespace-nowrap overflow-hidden px-2 py-1">
+          {trackLabel}
         </div>
       );
     }, [
       track,
       track.muted,
+      isSelected,
       frameWidth,
       width,
       zoomLevel,
@@ -1019,6 +1060,13 @@ interface TrackRowProps {
   isPlaceholder?: boolean;
 }
 
+type TranscribingTrackLoader = {
+  trackId: string;
+  subtitleRowIndex: number;
+  startFrame: number;
+  endFrame: number;
+};
+
 const TrackRow: React.FC<TrackRowProps> = React.memo(
   ({
     rowDef,
@@ -1055,9 +1103,19 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
     const transcribingSubtitleRowIndex = useVideoEditorStore(
       (state) => state.transcribingSubtitleRowIndex,
     );
+    const transcribingTrackLoaders = useVideoEditorStore(
+      (state) => state.transcribingTrackLoaders || [],
+    );
+    const currentTranscribingTrackId = useVideoEditorStore(
+      (state) => state.currentTranscribingTrackId,
+    );
     const isTranscribing = useVideoEditorStore((state) => state.isTranscribing);
     const addTrackFromMediaLibrary = useVideoEditorStore(
       (state) => state.addTrackFromMediaLibrary,
+    );
+    const activeDragTrackIds = useVideoEditorStore(
+      (state) =>
+        state.playback.dragGhost?.selectedTrackIds ?? EMPTY_DRAG_TRACK_IDS,
     );
 
     // Get all tracks from store for FPS calculation
@@ -1076,11 +1134,92 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
       return parsed;
     }, [rowDef.id, rowDef.trackTypes]);
 
-    const isSubtitleRowTranscribing =
-      rowDef.trackTypes.includes('subtitle') &&
-      isTranscribing &&
-      transcribingSubtitleRowIndex !== null &&
-      parsedRow.rowIndex === transcribingSubtitleRowIndex;
+    const subtitleTrackLoadersInRow = useMemo(() => {
+      if (!rowDef.trackTypes.includes('subtitle')) return [];
+
+      const matchedLoaders = (
+        transcribingTrackLoaders as TranscribingTrackLoader[]
+      ).filter((loader) => loader.subtitleRowIndex === parsedRow.rowIndex);
+
+      const hasWindow = typeof window !== 'undefined';
+      const viewportWidth = hasWindow ? window.innerWidth : timelineWidth;
+      const viewportStart = scrollX;
+      const viewportEnd = scrollX + viewportWidth;
+      const bufferSize = viewportWidth * 0.5;
+
+      return matchedLoaders
+        .map((loader) => {
+          const liveTrack = allTracks.find(
+            (track) => track.id === loader.trackId,
+          );
+          const startFrame = Math.max(
+            0,
+            liveTrack?.startFrame ?? loader.startFrame,
+          );
+          const rawEndFrame = liveTrack?.endFrame ?? loader.endFrame;
+          const endFrame = Math.max(startFrame + 1, rawEndFrame);
+          const left = startFrame * frameWidth;
+          const width = Math.max(1, (endFrame - startFrame) * frameWidth);
+          const right = left + width;
+
+          return {
+            trackId: loader.trackId,
+            left,
+            width,
+            right,
+          };
+        })
+        .filter(
+          (loader) =>
+            loader.right >= viewportStart - bufferSize &&
+            loader.left <= viewportEnd + bufferSize,
+        );
+    }, [
+      rowDef.trackTypes,
+      transcribingTrackLoaders,
+      parsedRow.rowIndex,
+      allTracks,
+      frameWidth,
+      scrollX,
+      timelineWidth,
+    ]);
+
+    const fallbackSubtitleLoaderInRow = useMemo(() => {
+      if (!rowDef.trackTypes.includes('subtitle')) return null;
+      if (subtitleTrackLoadersInRow.length > 0) return null;
+      if (!isTranscribing || transcribingSubtitleRowIndex === null) return null;
+      if (parsedRow.rowIndex !== transcribingSubtitleRowIndex) return null;
+
+      if (!currentTranscribingTrackId) return null;
+
+      const liveTrack = allTracks.find(
+        (track) => track.id === currentTranscribingTrackId,
+      );
+      if (!liveTrack) return null;
+
+      const startFrame = Math.max(0, liveTrack.startFrame);
+      const endFrame = Math.max(startFrame + 1, liveTrack.endFrame);
+      return {
+        trackId: currentTranscribingTrackId,
+        left: startFrame * frameWidth,
+        width: Math.max(1, (endFrame - startFrame) * frameWidth),
+      };
+    }, [
+      rowDef.trackTypes,
+      subtitleTrackLoadersInRow.length,
+      isTranscribing,
+      transcribingSubtitleRowIndex,
+      parsedRow.rowIndex,
+      currentTranscribingTrackId,
+      allTracks,
+      frameWidth,
+    ]);
+
+    const subtitleSkeletonLoaders = useMemo(() => {
+      if (subtitleTrackLoadersInRow.length > 0)
+        return subtitleTrackLoadersInRow;
+      return fallbackSubtitleLoaderInRow ? [fallbackSubtitleLoaderInRow] : [];
+    }, [subtitleTrackLoadersInRow, fallbackSubtitleLoaderInRow]);
 
     const hasTracks = tracks.length > 0;
     const isRowSelected = useMemo(
@@ -1104,8 +1243,14 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
       const viewportStart = scrollX;
       const viewportEnd = scrollX + viewportWidth;
       const bufferSize = viewportWidth * 0.5;
+      const activeDragSet = new Set(activeDragTrackIds);
 
       return tracks.filter((track) => {
+        // Never cull tracks that are currently being dragged.
+        if (activeDragSet.has(track.id)) {
+          return true;
+        }
+
         const trackStart = track.startFrame * frameWidth;
         const trackEnd = track.endFrame * frameWidth;
 
@@ -1114,7 +1259,7 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
           trackStart <= viewportEnd + bufferSize
         );
       });
-    }, [tracks, scrollX, frameWidth, zoomLevel]);
+    }, [tracks, scrollX, frameWidth, zoomLevel, activeDragTrackIds]);
 
     const handleDragOver = useCallback(
       (e: React.DragEvent) => {
@@ -1269,11 +1414,8 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
                   targetFrame,
                   targetRowIndex,
                 );
-              } catch (error) {
-                console.error(
-                  `Failed to add media ${mediaId} to timeline:`,
-                  error,
-                );
+              } catch {
+                // Silent by design: drag/drop operations can fail without user impact.
               }
             }
             return;
@@ -1282,8 +1424,8 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
           if (e.dataTransfer.files) {
             onDrop(rowDef.id, e.dataTransfer.files);
           }
-        } catch (error) {
-          console.error('Error handling drop:', error);
+        } catch {
+          // Silent by design: drop parsing/import can fail for invalid payloads.
         }
       },
       [
@@ -1354,47 +1496,36 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
         /> */}
 
         <div className="h-full flex items-center relative z-10">
-          {isSubtitleRowTranscribing ? (
-            <div className="h-full w-full flex items-center gap-2 px-2">
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[120px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[80px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[150px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[100px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[90px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[110px] rounded')}
-              />
-              <Skeleton
-                className={cn(skeletonHeightClass, 'w-[130px] rounded')}
-              />
+          {visibleTracks.map((track) => (
+            <TrackItem
+              key={`${track.id}-${track.source}-${track.name}`}
+              track={track}
+              frameWidth={frameWidth}
+              zoomLevel={zoomLevel}
+              isSelected={selectedTrackIds.includes(track.id)}
+              onSelect={(multiSelect) => onTrackSelect(track.id, multiSelect)}
+              onMove={(newStartFrame) => onTrackMove(track.id, newStartFrame)}
+              onResize={(newStartFrame, newEndFrame) =>
+                onTrackResize(track.id, newStartFrame, newEndFrame)
+              }
+              isSplitModeActive={isSplitModeActive}
+            />
+          ))}
+          {subtitleSkeletonLoaders.map((loader) => (
+            <div
+              key={`subtitle-loader-${loader.trackId}`}
+              className={cn(
+                'absolute z-20 rounded overflow-hidden pointer-events-none',
+                skeletonHeightClass,
+              )}
+              style={{
+                transform: `translate3d(${loader.left}px, 0, 0)`,
+                width: `${loader.width}px`,
+              }}
+            >
+              <Skeleton className="h-full w-full rounded" />
             </div>
-          ) : (
-            visibleTracks.map((track) => (
-              <TrackItem
-                key={`${track.id}-${track.source}-${track.name}`}
-                track={track}
-                frameWidth={frameWidth}
-                zoomLevel={zoomLevel}
-                isSelected={selectedTrackIds.includes(track.id)}
-                onSelect={(multiSelect) => onTrackSelect(track.id, multiSelect)}
-                onMove={(newStartFrame) => onTrackMove(track.id, newStartFrame)}
-                onResize={(newStartFrame, newEndFrame) =>
-                  onTrackResize(track.id, newStartFrame, newEndFrame)
-                }
-                isSplitModeActive={isSplitModeActive}
-              />
-            ))
-          )}
+          ))}
         </div>
 
         {isBaseVideoRow && !hasVideoTracks && (
@@ -1503,6 +1634,9 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
     const transcribingSubtitleRowIndex = useVideoEditorStore(
       (state) => state.transcribingSubtitleRowIndex,
     );
+    const transcribingTrackLoaders = useVideoEditorStore(
+      (state) => state.transcribingTrackLoaders || [],
+    );
 
     const isEmptyTimeline = tracks.length === 0;
     const hasVideoTracks = tracks.some((track) => track.type === 'video');
@@ -1541,8 +1675,11 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
       () =>
         generateDynamicRows(migratedTracks, {
           transcribingSubtitleRowIndex,
+          transcribingSubtitleRowIndices: (
+            transcribingTrackLoaders as TranscribingTrackLoader[]
+          ).map((loader) => loader.subtitleRowIndex),
         }),
-      [migratedTracks, transcribingSubtitleRowIndex],
+      [migratedTracks, transcribingSubtitleRowIndex, transcribingTrackLoaders],
     );
 
     const [subtitleImportConfirmation, setSubtitleImportConfirmation] =
@@ -1601,9 +1738,6 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
         const tracksToSelect = [trackId];
         if (selectedTrack?.isLinked && selectedTrack.linkedTrackId) {
           tracksToSelect.push(selectedTrack.linkedTrackId);
-          console.log(
-            `🔗 Selecting linked track pair: ${trackId} and ${selectedTrack.linkedTrackId}`,
-          );
         }
 
         if (multiSelect) {
@@ -1831,8 +1965,8 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
               },
               { addToTimeline: true, showToasts: true },
             );
-          } catch (error) {
-            console.error('Failed to import dropped files:', error);
+          } catch {
+            // Silent by design: invalid files are filtered by import pipeline.
           }
         }
       },
@@ -2012,11 +2146,8 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
                 targetFrame,
                 targetRowIndex ?? 0,
               );
-            } catch (error) {
-              console.error(
-                `Failed to add media ${mediaId} to timeline:`,
-                error,
-              );
+            } catch {
+              // Silent by design: add-track failures during drag are non-fatal.
             }
           }
           return;
@@ -2039,8 +2170,8 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
             { addToTimeline: true, showToasts: true },
           );
         }
-      } catch (error) {
-        console.error('Error handling placeholder drop:', error);
+      } catch {
+        // Silent by design: placeholder drop failures should not spam console.
       }
     };
 
@@ -2101,6 +2232,7 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
             return (
               <div
                 key={rowDef.id}
+                data-timeline-row-id={rowDef.id}
                 className={cn(
                   isVideoZero && 'sticky bottom-0 z-30 bg-background',
                 )}

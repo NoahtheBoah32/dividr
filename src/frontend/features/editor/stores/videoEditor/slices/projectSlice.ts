@@ -3,15 +3,120 @@
 import { projectService } from '@/backend/services/projectService';
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
 import { StateCreator } from 'zustand';
-import { AUTO_SAVE_CONFIG } from '../utils/constants';
+import {
+  AUTO_SAVE_CONFIG,
+  AUTO_SAVE_INTERVAL_MAX_MS,
+  AUTO_SAVE_INTERVAL_MIN_MS,
+  AutoSaveIntervalMs,
+  DEFAULT_AUTO_SAVE_PREFERENCES,
+} from '../utils/constants';
 
-const SPRITE_SHEET_SKIP_DURATION_SECONDS = 1800;
 const EXTRACTED_AUDIO_MARKER = '_extracted.';
 
 // Auto-save manager state (module-level to persist across re-renders)
 let autoSaveTimeoutId: NodeJS.Timeout | null = null;
+let autoSaveIntervalId: NodeJS.Timeout | null = null;
 let lastSaveTimestamp = 0;
 let pendingAutoSave = false;
+
+export interface AutoSavePreferences {
+  enabled: boolean;
+  intervalMs: AutoSaveIntervalMs;
+}
+
+const isValidAutoSaveIntervalMs = (
+  value: unknown,
+): value is AutoSaveIntervalMs =>
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  value >= AUTO_SAVE_INTERVAL_MIN_MS &&
+  value <= AUTO_SAVE_INTERVAL_MAX_MS;
+
+export const normalizeAutoSavePreferences = (
+  value?: Partial<AutoSavePreferences>,
+): AutoSavePreferences => ({
+  enabled: value?.enabled ?? DEFAULT_AUTO_SAVE_PREFERENCES.enabled,
+  intervalMs: isValidAutoSaveIntervalMs(value?.intervalMs)
+    ? Math.round(value.intervalMs)
+    : DEFAULT_AUTO_SAVE_PREFERENCES.intervalMs,
+});
+
+const clearAutoSaveTimeout = (): void => {
+  if (!autoSaveTimeoutId) return;
+  clearTimeout(autoSaveTimeoutId);
+  autoSaveTimeoutId = null;
+};
+
+const clearAutoSaveInterval = (): void => {
+  if (!autoSaveIntervalId) return;
+  clearInterval(autoSaveIntervalId);
+  autoSaveIntervalId = null;
+};
+
+const canAutoSave = (state: any): boolean => {
+  const preferences = normalizeAutoSavePreferences(state.autoSavePreferences);
+  return (
+    preferences.enabled &&
+    !!state.currentProjectId &&
+    !!state.hasUnsavedChanges &&
+    !state.isSaving
+  );
+};
+
+const executeAutoSave = (get: () => any): void => {
+  const state = get() as any;
+  if (!canAutoSave(state)) return;
+
+  const now = Date.now();
+  if (now - lastSaveTimestamp < AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS) {
+    const remainingDelay =
+      AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS - (now - lastSaveTimestamp);
+    clearAutoSaveTimeout();
+    autoSaveTimeoutId = setTimeout(() => {
+      autoSaveTimeoutId = null;
+      executeAutoSave(get);
+    }, remainingDelay);
+    return;
+  }
+
+  lastSaveTimestamp = now;
+  state
+    .saveProjectData()
+    .catch((error) => console.error('[ProjectSlice] Operation failed', error));
+};
+
+const scheduleAutoSave = (get: () => any, delayMs: number): void => {
+  clearAutoSaveTimeout();
+  autoSaveTimeoutId = setTimeout(() => {
+    autoSaveTimeoutId = null;
+    executeAutoSave(get);
+  }, delayMs);
+};
+
+const restartPeriodicAutoSave = (get: () => any): void => {
+  clearAutoSaveInterval();
+
+  const state = get() as any;
+  const preferences = normalizeAutoSavePreferences(state.autoSavePreferences);
+
+  if (!preferences.enabled || !state.currentProjectId) {
+    return;
+  }
+
+  autoSaveIntervalId = setInterval(() => {
+    const currentState = get() as any;
+    const currentPreferences = normalizeAutoSavePreferences(
+      currentState.autoSavePreferences,
+    );
+
+    if (!currentPreferences.enabled || !currentState.currentProjectId) {
+      clearAutoSaveInterval();
+      return;
+    }
+
+    executeAutoSave(get);
+  }, preferences.intervalMs);
+};
 
 const scheduleWaveformRehydrate = (get: () => any): void => {
   setTimeout(() => {
@@ -67,28 +172,58 @@ const scheduleWaveformRehydrate = (get: () => any): void => {
         waveformTargets.add(mediaItem.id);
       });
 
-      if (waveformTargets.size > 0) {
-        console.log(
-          `🔄 Rehydrating waveforms for ${waveformTargets.size} media item(s)`,
-        );
-      }
+      void waveformTargets.size;
 
       waveformTargets.forEach((mediaId) => {
         state
           .generateWaveformForMedia?.(mediaId)
           .catch((error: Error) =>
-            console.warn('Waveform rehydrate failed:', error),
+            console.warn('[ProjectSlice] Waveform rehydrate failed', error),
           );
       });
     } catch (error) {
-      console.warn('Waveform rehydrate scheduling failed:', error);
+      console.warn(
+        '[ProjectSlice] Waveform rehydrate scheduling failed',
+        error,
+      );
+    }
+  }, 0);
+};
+
+const scheduleSpriteRehydrate = (get: () => any): void => {
+  setTimeout(() => {
+    try {
+      const state = get() as any;
+      const mediaLibrary: any[] = state.mediaLibrary || [];
+
+      const spriteTargets = mediaLibrary.filter((item) => {
+        if (item?.type !== 'video') return false;
+        const hasAnySheets = (item.spriteSheets?.spriteSheets?.length || 0) > 0;
+        const isGenerating = item.jobStates?.spriteSheet === 'processing';
+        const isTranscoding =
+          item.transcoding?.status === 'pending' ||
+          item.transcoding?.status === 'processing';
+        return !hasAnySheets && !isGenerating && !isTranscoding;
+      });
+
+      void spriteTargets.length;
+
+      spriteTargets.forEach((item) => {
+        state
+          .generateSpriteSheetForMedia?.(item.id)
+          .catch((error: Error) =>
+            console.warn('[ProjectSlice] Sprite rehydrate failed', error),
+          );
+      });
+    } catch (error) {
+      console.warn('[ProjectSlice] Sprite rehydrate scheduling failed', error);
     }
   }, 0);
 };
 
 export interface ProjectSlice {
   currentProjectId: string | null;
-  isAutoSaveEnabled: boolean;
+  autoSavePreferences: AutoSavePreferences;
   isSaving: boolean;
   lastSavedAt: string | null;
   hasUnsavedChanges: boolean;
@@ -96,6 +231,7 @@ export interface ProjectSlice {
   loadProjectData: (projectId: string) => Promise<void>;
   saveProjectData: () => Promise<void>;
   setAutoSave: (enabled: boolean) => void;
+  setAutoSavePreferences: (preferences: Partial<AutoSavePreferences>) => void;
   markUnsavedChanges: () => void;
   clearUnsavedChanges: () => void;
   syncWithProjectStore: () => void;
@@ -119,7 +255,7 @@ export const createProjectSlice: StateCreator<
   ProjectSlice
 > = (set, get) => ({
   currentProjectId: null,
-  isAutoSaveEnabled: true,
+  autoSavePreferences: normalizeAutoSavePreferences(),
   isSaving: false,
   lastSavedAt: null,
   hasUnsavedChanges: false,
@@ -131,6 +267,9 @@ export const createProjectSlice: StateCreator<
   setCurrentProjectId: (projectId) => {
     // If setting to null (exiting editor), clear all drag states
     if (projectId === null) {
+      clearAutoSaveTimeout();
+      clearAutoSaveInterval();
+      pendingAutoSave = false;
       set((state: any) => ({
         currentProjectId: projectId,
         hasUnsavedChanges: false,
@@ -146,6 +285,7 @@ export const createProjectSlice: StateCreator<
       }));
     } else {
       set({ currentProjectId: projectId, hasUnsavedChanges: false });
+      restartPeriodicAutoSave(get);
     }
   },
 
@@ -179,9 +319,6 @@ export const createProjectSlice: StateCreator<
                 track.source,
               );
               if (previewResult.success && previewResult.url) {
-                console.log(
-                  `🔄 Regenerated previewUrl for track: ${track.name}`,
-                );
                 return {
                   ...track,
                   previewUrl: previewResult.url,
@@ -189,7 +326,7 @@ export const createProjectSlice: StateCreator<
               }
             } catch (error) {
               console.warn(
-                `⚠️ Failed to regenerate previewUrl for track ${track.name}:`,
+                `[ProjectSlice] Failed to regenerate previewUrl for track${track.name}:`,
                 error,
               );
             }
@@ -209,35 +346,26 @@ export const createProjectSlice: StateCreator<
       );
       const normalizedMediaLibrary = loadedMediaLibrary.map((item: any) => {
         if (item?.type === 'video') {
-          const shouldDisableSprites =
-            item.duration >= SPRITE_SHEET_SKIP_DURATION_SECONDS;
           return {
             ...item,
-            spriteSheetDisabled:
-              item.spriteSheetDisabled ?? shouldDisableSprites,
+            // Reset legacy duration-based flag so sprites can render on long videos.
+            spriteSheetDisabled: false,
           };
         }
         return item;
       });
 
       // Log what we're loading for debugging data persistence issues
-      console.log(
-        `📂 Loading project "${project.metadata.title}": ${loadedTracks.length} tracks, ${loadedMediaLibrary.length} media items`,
-      );
 
       // Log transform data for text/subtitle tracks to help debug transform persistence
       loadedTracks.forEach((track: any) => {
         if (track.type === 'text' && track.textTransform) {
-          console.log(
-            `  📝 Text track "${track.name}" transform:`,
-            track.textTransform,
-          );
+          // Access retained for debugging workflows without console noise.
+          void track.textTransform;
         }
         if (track.type === 'subtitle' && track.subtitleTransform) {
-          console.log(
-            `  📝 Subtitle track "${track.name}" transform:`,
-            track.subtitleTransform,
-          );
+          // Access retained for debugging workflows without console noise.
+          void track.subtitleTransform;
         }
       });
 
@@ -249,6 +377,10 @@ export const createProjectSlice: StateCreator<
         tracks: loadedTracks,
         mediaLibrary: normalizedMediaLibrary,
         timeline: { ...state.timeline, ...videoEditor.timeline },
+        duplicationFeedbackTrackIds: new Set(),
+        insertionFeedbackTrackIds: new Set(),
+        lastInsertedTrackId: null,
+        trackInsertionSequence: 0,
         playback: {
           ...state.playback,
           ...videoEditor.playback,
@@ -292,12 +424,12 @@ export const createProjectSlice: StateCreator<
         groupStartState: null,
         groupActionName: null,
       }));
+      restartPeriodicAutoSave(get);
 
       scheduleWaveformRehydrate(get);
-
-      console.log(`✅ Loaded project data for: ${project.metadata.title}`);
+      scheduleSpriteRehydrate(get);
     } catch (error) {
-      console.error('Failed to load project data:', error);
+      console.error('[ProjectSlice] Failed to load project data', error);
       throw error;
     }
   },
@@ -305,7 +437,7 @@ export const createProjectSlice: StateCreator<
   saveProjectData: async () => {
     const state = get() as any;
     if (!state.currentProjectId) {
-      console.warn('No current project ID set, cannot save');
+      console.warn('[ProjectSlice] No current project ID set, cannot save');
       return;
     }
 
@@ -331,7 +463,8 @@ export const createProjectSlice: StateCreator<
         !state.hasUnsavedChanges
       ) {
         console.warn(
-          `⚠️ SAFETY BLOCK: Attempted to save empty timeline (0 tracks) over populated one (${existingTrackCount} tracks). ` +
+          '[ProjectSlice] Warning',
+          `Safety block: attempted to save empty timeline (0 tracks) over populated one (${existingTrackCount} tracks). ` +
             `This may indicate a data loss condition. Save operation aborted.`,
         );
         set({ isSaving: false });
@@ -350,9 +483,6 @@ export const createProjectSlice: StateCreator<
         : undefined;
 
       // Log what we're saving for debugging data persistence issues
-      console.log(
-        `💾 Saving project "${currentProject.metadata.title}": ${tracksToSave.length} tracks, ${mediaLibraryToSave.length} media items`,
-      );
 
       // Update the project with current video editor state
       const updatedProject = {
@@ -379,6 +509,9 @@ export const createProjectSlice: StateCreator<
 
       // Save to IndexedDB
       await projectService.updateProject(updatedProject);
+      await useProjectStore
+        .getState()
+        .saveProjectToSourceFile(state.currentProjectId, updatedProject);
 
       // Update local state
       set({
@@ -389,19 +522,47 @@ export const createProjectSlice: StateCreator<
 
       // Sync with ProjectStore to update the project list
       get().syncWithProjectStore();
-
-      console.log(
-        `💾 Saved project data for: ${updatedProject.metadata.title}`,
-      );
     } catch (error) {
-      console.error('Failed to save project data:', error);
+      console.error('[ProjectSlice] Failed to save project data', error);
       set({ isSaving: false });
       throw error;
     }
   },
 
   setAutoSave: (enabled) => {
-    set({ isAutoSaveEnabled: enabled });
+    get().setAutoSavePreferences({ enabled });
+  },
+
+  setAutoSavePreferences: (preferences) => {
+    const state = get() as any;
+    const nextPreferences = normalizeAutoSavePreferences({
+      ...state.autoSavePreferences,
+      ...preferences,
+    });
+
+    set({ autoSavePreferences: nextPreferences });
+
+    if (!nextPreferences.enabled) {
+      clearAutoSaveTimeout();
+      clearAutoSaveInterval();
+      pendingAutoSave = false;
+      return;
+    }
+
+    restartPeriodicAutoSave(get);
+
+    const isInContinuousOperation =
+      state.playback?.isDraggingTransform ||
+      state.playback?.isDraggingTrack ||
+      state.playback?.isDraggingPlayhead;
+
+    if (
+      state.hasUnsavedChanges &&
+      state.currentProjectId &&
+      !isInContinuousOperation
+    ) {
+      scheduleAutoSave(get, nextPreferences.intervalMs);
+    }
   },
 
   markUnsavedChanges: () => {
@@ -413,7 +574,10 @@ export const createProjectSlice: StateCreator<
     }
 
     // Skip auto-save scheduling if disabled or no project
-    if (!state.isAutoSaveEnabled || !state.currentProjectId) {
+    const autoSavePreferences = normalizeAutoSavePreferences(
+      state.autoSavePreferences,
+    );
+    if (!autoSavePreferences.enabled || !state.currentProjectId) {
       return;
     }
 
@@ -431,106 +595,33 @@ export const createProjectSlice: StateCreator<
       return;
     }
 
-    // Clear any existing timeout and reset the debounce timer
-    if (autoSaveTimeoutId) {
-      clearTimeout(autoSaveTimeoutId);
-      autoSaveTimeoutId = null;
-    }
-
-    // Schedule new auto-save with the standard debounce delay
-    autoSaveTimeoutId = setTimeout(() => {
-      const currentState = get() as any;
-      autoSaveTimeoutId = null;
-
-      // Double-check conditions before saving
-      if (
-        !currentState.hasUnsavedChanges ||
-        !currentState.currentProjectId ||
-        currentState.isSaving
-      ) {
-        return;
-      }
-
-      // Prevent saves too close together
-      const now = Date.now();
-      if (now - lastSaveTimestamp < AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS) {
-        // Reschedule for later
-        const remainingDelay =
-          AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS - (now - lastSaveTimestamp);
-        autoSaveTimeoutId = setTimeout(() => {
-          const s = get() as any;
-          if (s.hasUnsavedChanges && s.currentProjectId && !s.isSaving) {
-            lastSaveTimestamp = Date.now();
-            s.saveProjectData().catch(console.error);
-          }
-        }, remainingDelay);
-        return;
-      }
-
-      lastSaveTimestamp = now;
-      currentState.saveProjectData().catch(console.error);
-    }, AUTO_SAVE_CONFIG.DEBOUNCE_DELAY_MS);
+    // Clear any existing timeout and schedule a save using the configured interval
+    scheduleAutoSave(get, autoSavePreferences.intervalMs);
   },
 
   triggerAutoSaveOnCommit: () => {
     const state = get() as any;
+    const autoSavePreferences = normalizeAutoSavePreferences(
+      state.autoSavePreferences,
+    );
 
     // Only proceed if we have pending changes and auto-save is enabled
     if (
       !state.hasUnsavedChanges ||
-      !state.isAutoSaveEnabled ||
+      !autoSavePreferences.enabled ||
       !state.currentProjectId
     ) {
       pendingAutoSave = false;
       return;
     }
 
-    // Clear any existing debounce timeout
-    if (autoSaveTimeoutId) {
-      clearTimeout(autoSaveTimeoutId);
-      autoSaveTimeoutId = null;
-    }
-
-    // Use shorter delay for commit saves to provide quick feedback
-    autoSaveTimeoutId = setTimeout(() => {
-      const currentState = get() as any;
-      autoSaveTimeoutId = null;
-      pendingAutoSave = false;
-
-      if (
-        !currentState.hasUnsavedChanges ||
-        !currentState.currentProjectId ||
-        currentState.isSaving
-      ) {
-        return;
-      }
-
-      // Prevent saves too close together
-      const now = Date.now();
-      if (now - lastSaveTimestamp < AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS) {
-        // Reschedule for later
-        const remainingDelay =
-          AUTO_SAVE_CONFIG.MIN_SAVE_INTERVAL_MS - (now - lastSaveTimestamp);
-        autoSaveTimeoutId = setTimeout(() => {
-          const s = get() as any;
-          if (s.hasUnsavedChanges && s.currentProjectId && !s.isSaving) {
-            lastSaveTimestamp = Date.now();
-            s.saveProjectData().catch(console.error);
-          }
-        }, remainingDelay);
-        return;
-      }
-
-      lastSaveTimestamp = now;
-      currentState.saveProjectData().catch(console.error);
-    }, AUTO_SAVE_CONFIG.COMMIT_DELAY_MS);
+    // Commit-path saves use the same configured user interval
+    pendingAutoSave = false;
+    scheduleAutoSave(get, autoSavePreferences.intervalMs);
   },
 
   cancelPendingAutoSave: () => {
-    if (autoSaveTimeoutId) {
-      clearTimeout(autoSaveTimeoutId);
-      autoSaveTimeoutId = null;
-    }
+    clearAutoSaveTimeout();
     pendingAutoSave = false;
   },
 
@@ -541,7 +632,11 @@ export const createProjectSlice: StateCreator<
   syncWithProjectStore: () => {
     // Trigger ProjectStore to reload projects
     const projectStore = useProjectStore.getState();
-    projectStore.loadProjects().catch(console.error);
+    projectStore
+      .loadProjects()
+      .catch((error) =>
+        console.error('[ProjectSlice] Operation failed', error),
+      );
   },
 
   exportProject: () => {
@@ -568,9 +663,8 @@ export const createProjectSlice: StateCreator<
           : state.textStyle,
         hasUnsavedChanges: true,
       });
-      console.log('✅ Project imported successfully');
     } catch (error) {
-      console.error('Failed to import project:', error);
+      console.error('[ProjectSlice] Failed to import project', error);
     }
   },
 
@@ -580,37 +674,32 @@ export const createProjectSlice: StateCreator<
       throw new Error('No project loaded');
     }
 
-    try {
-      // Get current project
-      const currentProject = await projectService.getProject(
-        state.currentProjectId,
-      );
-      if (!currentProject) {
-        throw new Error('Current project not found');
-      }
-
-      // Update project with new thumbnail
-      const updatedProject = {
-        ...currentProject,
-        metadata: {
-          ...currentProject.metadata,
-          thumbnail: thumbnailData,
-          updatedAt: new Date().toISOString(),
-        },
-      };
-
-      // Save to IndexedDB
-      await projectService.updateProject(updatedProject);
-
-      // Sync with ProjectStore to update the project list AND current project
-      get().syncWithProjectStore();
-
-      // Also update the current project in ProjectStore immediately
-      const projectStore = useProjectStore.getState();
-      projectStore.setCurrentProject(updatedProject);
-    } catch (error) {
-      console.log(error);
-      throw error;
+    // Get current project
+    const currentProject = await projectService.getProject(
+      state.currentProjectId,
+    );
+    if (!currentProject) {
+      throw new Error('Current project not found');
     }
+
+    // Update project with new thumbnail
+    const updatedProject = {
+      ...currentProject,
+      metadata: {
+        ...currentProject.metadata,
+        thumbnail: thumbnailData,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+
+    // Save to IndexedDB
+    await projectService.updateProject(updatedProject);
+
+    // Sync with ProjectStore to update the project list AND current project
+    get().syncWithProjectStore();
+
+    // Also update the current project in ProjectStore immediately
+    const projectStore = useProjectStore.getState();
+    projectStore.setCurrentProject(updatedProject);
   },
 });

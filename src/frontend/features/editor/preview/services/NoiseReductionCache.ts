@@ -46,9 +46,9 @@ type SubscriptionCallback = () => void;
 const DEBUG_NOISE_REDUCTION_CACHE = false;
 
 function logCache(message: string, data?: unknown) {
-  if (DEBUG_NOISE_REDUCTION_CACHE) {
-    console.log(`[NoiseReductionCache] ${message}`, data || '');
-  }
+  if (!DEBUG_NOISE_REDUCTION_CACHE) return;
+  void message;
+  void data;
 }
 
 // =============================================================================
@@ -621,7 +621,10 @@ class NoiseReductionCacheImpl {
         try {
           callback();
         } catch (error) {
-          console.error('Subscriber callback error:', error);
+          console.error(
+            '[NoiseReductionCache] Subscriber callback error',
+            error,
+          );
         }
       });
     }
@@ -700,7 +703,7 @@ class NoiseReductionCacheImpl {
           try {
             cb();
           } catch (e) {
-            console.error(e);
+            console.error('[NoiseReductionCache] Error', e);
           }
         });
       }

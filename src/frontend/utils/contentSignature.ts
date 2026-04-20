@@ -94,7 +94,7 @@ export async function generateContentSignatureFromPath(
     // The 'total' field in the response gives us the file size
     const sizeCheck = await window.electronAPI.getFileStream?.(filePath, 0, 1);
     if (!sizeCheck?.success || sizeCheck.total === undefined) {
-      console.warn(`Could not get file size for: ${filePath}`);
+      console.warn(`[ContentSignature] Could not get file size for${filePath}`);
       return null;
     }
 
@@ -108,7 +108,9 @@ export async function generateContentSignatureFromPath(
       Math.min(CHUNK_SIZE, fileSize),
     );
     if (!firstChunkResult?.success || !firstChunkResult.data) {
-      console.warn(`Could not read first chunk for: ${filePath}`);
+      console.warn(
+        `[ContentSignature] Could not read first chunk for${filePath}`,
+      );
       return null;
     }
     const firstChunk = base64ToUint8Array(firstChunkResult.data);
@@ -121,7 +123,9 @@ export async function generateContentSignatureFromPath(
       fileSize,
     );
     if (!lastChunkResult?.success || !lastChunkResult.data) {
-      console.warn(`Could not read last chunk for: ${filePath}`);
+      console.warn(
+        `[ContentSignature] Could not read last chunk for${filePath}`,
+      );
       return null;
     }
     const lastChunk = base64ToUint8Array(lastChunkResult.data);
@@ -153,7 +157,10 @@ export async function generateContentSignatureFromPath(
       generatedAt: Date.now(),
     };
   } catch (error) {
-    console.error(`Error generating content signature for ${filePath}:`, error);
+    console.error(
+      `[ContentSignature] Error generating content signature for${filePath}:`,
+      error,
+    );
     return null;
   }
 }

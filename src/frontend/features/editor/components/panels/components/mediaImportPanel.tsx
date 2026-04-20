@@ -55,7 +55,6 @@ import { useVideoEditorStore } from '../../../stores/videoEditor/index';
 import { VideoTrack } from '../../../stores/videoEditor/types';
 import { isSubtitleFile } from '../../../stores/videoEditor/utils/subtitleParser';
 import { getNextAvailableRowIndex } from '../../../timeline/utils/dynamicTrackRows';
-import { DuplicateMediaDialog } from '../../dialogs/batchDuplicateMediaDialog';
 import { KaraokeConfirmationDialog } from '../../dialogs/karaokeConfirmationDialog';
 import { ProxyWarningDialog } from '../../dialogs/proxyWarningDialog';
 
@@ -112,51 +111,33 @@ const getFileIcon = (type: string, fileName?: string) => {
   return <File className="size-6 text-black" />;
 };
 
-const MediaCover: React.FC<{ file: MediaItem }> = React.memo(({ file }) => {
-  const isVideo = file.type.startsWith('video/');
-  const isImage = file.type.startsWith('image/');
-  const [hasError, setHasError] = useState(false);
+const MediaCover: React.FC<{ file: MediaItem; isImportFeedback?: boolean }> =
+  React.memo(({ file, isImportFeedback = false }) => {
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+    const [hasError, setHasError] = useState(false);
 
-  useEffect(() => {
-    setHasError(false);
-  }, [file.url, file.thumbnail, file.type]);
+    useEffect(() => {
+      setHasError(false);
+    }, [file.url, file.thumbnail, file.type]);
 
-  if (isVideo && file.thumbnail && !hasError) {
-    return (
-      <div className="w-full h-full bg-muted rounded-md overflow-hidden relative flex items-center justify-center">
-        <img
-          src={file.thumbnail}
-          alt={file.name}
-          className="w-full h-full object-contain"
-          loading="lazy"
-          onError={() => setHasError(true)}
-        />
-        {file.duration && (
-          <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
-            <Clock
-              className="-ms-0.5 opacity-60"
-              size={12}
-              aria-hidden="true"
-            />
-            {formatDuration(file.duration)}
-          </Badge>
-        )}
-        {file.hasGeneratedKaraoke && (
-          <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
-            <KaraokeIcon />
-          </Badge>
-        )}
-      </div>
-    );
-  }
-
-  if (isImage || isVideo) {
-    if (hasError) {
+    if (isVideo && file.thumbnail && !hasError) {
       return (
-        <div className="w-full h-full bg-gradient-to-br from-secondary via-blue-300/50 to-secondary rounded-md flex items-center justify-center text-muted-foreground relative">
-          {getFileIcon(file.type, file.name)}
+        <div
+          className={cn(
+            'w-full h-full bg-muted rounded-md overflow-hidden relative flex items-center justify-center',
+            isImportFeedback && 'media-item-insert-feedback',
+          )}
+        >
+          <img
+            src={file.thumbnail}
+            alt={file.name}
+            className="w-full h-full object-contain"
+            loading="lazy"
+            onError={() => setHasError(true)}
+          />
           {file.duration && (
-            <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+            <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
               <Clock
                 className="-ms-0.5 opacity-60"
                 size={12}
@@ -166,7 +147,83 @@ const MediaCover: React.FC<{ file: MediaItem }> = React.memo(({ file }) => {
             </Badge>
           )}
           {file.hasGeneratedKaraoke && (
-            <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+            <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
+              <KaraokeIcon />
+            </Badge>
+          )}
+        </div>
+      );
+    }
+
+    if (isImage || isVideo) {
+      if (hasError) {
+        return (
+          <div
+            className={cn(
+              'w-full h-full bg-gradient-to-br from-secondary via-blue-300/50 to-secondary rounded-md flex items-center justify-center text-muted-foreground relative',
+              isImportFeedback && 'media-item-insert-feedback',
+            )}
+          >
+            {getFileIcon(file.type, file.name)}
+            {file.duration && (
+              <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
+                <Clock
+                  className="-ms-0.5 opacity-60"
+                  size={12}
+                  aria-hidden="true"
+                />
+                {formatDuration(file.duration)}
+              </Badge>
+            )}
+            {file.hasGeneratedKaraoke && (
+              <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
+                <KaraokeIcon />
+              </Badge>
+            )}
+          </div>
+        );
+      }
+
+      return (
+        <div
+          className={cn(
+            'w-full h-full bg-muted rounded-md overflow-hidden relative flex items-center justify-center',
+            isImportFeedback && 'media-item-insert-feedback',
+          )}
+        >
+          {isImage ? (
+            <img
+              src={file.url}
+              alt={file.name}
+              className="w-full h-full object-contain"
+              loading="lazy"
+              onError={() => setHasError(true)}
+            />
+          ) : (
+            <video
+              src={file.url}
+              className="w-full h-full object-contain"
+              muted
+              preload="metadata"
+              onError={() => setHasError(true)}
+              onLoadedMetadata={(e) => {
+                const video = e.target as HTMLVideoElement;
+                video.currentTime = 1;
+              }}
+            />
+          )}
+          {file.duration && (
+            <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
+              <Clock
+                className="-ms-0.5 opacity-60"
+                size={12}
+                aria-hidden="true"
+              />
+              {formatDuration(file.duration)}
+            </Badge>
+          )}
+          {file.hasGeneratedKaraoke && (
+            <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
               <KaraokeIcon />
             </Badge>
           )}
@@ -175,30 +232,15 @@ const MediaCover: React.FC<{ file: MediaItem }> = React.memo(({ file }) => {
     }
 
     return (
-      <div className="w-full h-full bg-muted rounded-md overflow-hidden relative flex items-center justify-center">
-        {isImage ? (
-          <img
-            src={file.url}
-            alt={file.name}
-            className="w-full h-full object-contain"
-            loading="lazy"
-            onError={() => setHasError(true)}
-          />
-        ) : (
-          <video
-            src={file.url}
-            className="w-full h-full object-contain"
-            muted
-            preload="metadata"
-            onError={() => setHasError(true)}
-            onLoadedMetadata={(e) => {
-              const video = e.target as HTMLVideoElement;
-              video.currentTime = 1;
-            }}
-          />
+      <div
+        className={cn(
+          'w-full h-full bg-gradient-to-br from-secondary via-blue-300/50 to-secondary rounded-md flex items-center justify-center text-muted-foreground relative',
+          isImportFeedback && 'media-item-insert-feedback',
         )}
+      >
+        {getFileIcon(file.type, file.name)}
         {file.duration && (
-          <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+          <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
             <Clock
               className="-ms-0.5 opacity-60"
               size={12}
@@ -208,34 +250,17 @@ const MediaCover: React.FC<{ file: MediaItem }> = React.memo(({ file }) => {
           </Badge>
         )}
         {file.hasGeneratedKaraoke && (
-          <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+          <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
             <KaraokeIcon />
           </Badge>
         )}
       </div>
     );
-  }
-
-  return (
-    <div className="w-full h-full bg-gradient-to-br from-secondary via-blue-300/50 to-secondary rounded-md flex items-center justify-center text-muted-foreground relative">
-      {getFileIcon(file.type, file.name)}
-      {file.duration && (
-        <Badge className="absolute bottom-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
-          <Clock className="-ms-0.5 opacity-60" size={12} aria-hidden="true" />
-          {formatDuration(file.duration)}
-        </Badge>
-      )}
-      {file.hasGeneratedKaraoke && (
-        <Badge className="p-[5px] absolute top-2 right-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
-          <KaraokeIcon />
-        </Badge>
-      )}
-    </div>
-  );
-});
+  });
 
 interface FileItemProps {
   file: MediaItem;
+  isImportFeedback: boolean;
   isAnyTranscribing: boolean;
   onAddToTimeline: (fileId: string) => Promise<void>;
   onMediaDragStart: (e: React.DragEvent, mediaId: string) => void;
@@ -246,6 +271,7 @@ interface FileItemProps {
 const FileItem: React.FC<FileItemProps> = React.memo(
   ({
     file,
+    isImportFeedback,
     isAnyTranscribing,
     onAddToTimeline,
     onMediaDragStart,
@@ -257,7 +283,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
     return (
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="flex flex-col space-y-2">
+          <div data-media-id={file.id} className="flex flex-col space-y-2">
             <div
               draggable={!file.isOnTimeline && !isLocked}
               onDragStart={(e) => {
@@ -268,7 +294,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                 }
               }}
               className={cn(
-                'group relative h-[98px] rounded-md transition-all duration-200 overflow-hidden',
+                'group/media-item relative isolate h-[98px] rounded-md transition-all duration-200 overflow-hidden',
                 !file.isOnTimeline &&
                   !isLocked &&
                   'cursor-grab active:cursor-grabbing',
@@ -298,7 +324,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                               : 'Click or drag to add to timeline (starts at frame 0)'
               }
             >
-              <MediaCover file={file} />
+              <MediaCover file={file} isImportFeedback={isImportFeedback} />
               {(file.isTranscoding || file.isProxyProcessing) && (
                 <div className="absolute bottom-0 p-2 left-0 right-0 h-8 bg-gradient-to-t from-black/80 to-transparent flex items-end justify-end">
                   <Loader2 className="w-5 h-5 animate-spin text-white drop-shadow-lg" />
@@ -342,7 +368,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                   </Badge>
                 </div>
               )}
-              <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <div className="absolute inset-0 bg-background/35 opacity-0 group-hover/media-item:opacity-100 transition-opacity duration-200">
                 <div className="absolute bottom-1 right-2">
                   {!isLocked && (
                     <Button
@@ -361,7 +387,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                 </div>
               </div>
               {file.isOnTimeline && (
-                <Badge className="absolute top-2 left-2 bg-black/20 text-white group-hover:opacity-0 transition-opacity duration-200">
+                <Badge className="absolute top-2 left-2 bg-black/20 text-white group-hover/media-item:opacity-0 transition-opacity duration-200">
                   Added
                 </Badge>
               )}
@@ -425,6 +451,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
       prevProps.file.transcodingFailed === nextProps.file.transcodingFailed &&
       prevProps.file.transcodingError === nextProps.file.transcodingError &&
       prevProps.file.isProxyProcessing === nextProps.file.isProxyProcessing &&
+      prevProps.isImportFeedback === nextProps.isImportFeedback &&
       prevProps.isAnyTranscribing === nextProps.isAnyTranscribing &&
       prevProps.onAddToTimeline === nextProps.onAddToTimeline &&
       prevProps.onMediaDragStart === nextProps.onMediaDragStart &&
@@ -434,6 +461,8 @@ const FileItem: React.FC<FileItemProps> = React.memo(
     );
   },
 );
+
+type MediaTab = 'all' | 'videos' | 'audio' | 'images' | 'subtitles';
 
 const getTabLabel = (tabType: string, count: number) => {
   switch (tabType) {
@@ -487,13 +516,6 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     (state) => state.transcriptionProgress,
   );
 
-  // Duplicate detection state (unified for single or multiple files)
-  const batchDuplicateDetection = useVideoEditorStore(
-    (state) => state.batchDuplicateDetection,
-  );
-  const hideBatchDuplicateDialog = useVideoEditorStore(
-    (state) => state.hideBatchDuplicateDialog,
-  );
   const transcodingBlockedMedia = useVideoEditorStore(
     (state) => state.transcodingBlockedMedia,
   );
@@ -506,9 +528,20 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     currentTranscribingMediaId || currentTranscribingTrackId
   );
 
+  const [activeTab, setActiveTab] = useState<MediaTab>('all');
   const [dragActive, setDragActive] = useState(false);
+  const [recentlyImportedMediaIds, setRecentlyImportedMediaIds] = useState<
+    Set<string>
+  >(new Set());
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const previousMediaIdsRef = useRef<Set<string>>(new Set());
+  const hasInitialMediaSnapshotRef = useRef(false);
+  const mediaScrollContainerRefs = useRef<
+    Partial<Record<MediaTab, HTMLDivElement | null>>
+  >({});
+  const pendingMediaAnimationFramesRef = useRef<number[]>([]);
+  const pendingMediaFeedbackTimeoutsRef = useRef<number[]>([]);
 
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     show: boolean;
@@ -613,7 +646,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
   const removeFile = (id: string) => {
     const mediaItem = mediaLibrary.find((item) => item.id === id);
     if (!mediaItem) {
-      console.warn(`Media item ${id} not found`);
+      console.warn(`[MediaImportPanel] Media item${id} not found`);
       return;
     }
     const affectedTracks = tracks.filter(
@@ -639,11 +672,8 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     if (!deleteConfirmation.mediaId) return;
     try {
       removeFromMediaLibrary(deleteConfirmation.mediaId, true);
-      console.log(
-        `✅ Successfully deleted media "${deleteConfirmation.mediaName}" and ${deleteConfirmation.affectedTracksCount} associated track(s)`,
-      );
     } catch (error) {
-      console.error('Failed to remove media:', error);
+      console.error('[MediaImportPanel] Failed to remove media', error);
     }
   }, [deleteConfirmation, removeFromMediaLibrary]);
 
@@ -913,9 +943,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
         const existingSubtitles = tracks.filter(
           (track) => track.type === 'subtitle',
         );
-        console.log(
-          `🗑️ Deleting ${existingSubtitles.length} existing subtitle tracks...`,
-        );
+
         // Batch delete for better performance
         if (existingSubtitles.length > 0) {
           const { setSelectedTracks, removeSelectedTracks } =
@@ -931,54 +959,16 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           keepExistingSubtitles:
             !deleteExisting &&
             tracks.some((track) => track.type === 'subtitle'),
-          onProgress: (progress) => {
-            console.log('📊 Transcription progress:', progress);
+          onProgress: () => {
+            // Progress is handled by store state; no console output here.
           },
         });
 
-        console.log('🎤 Karaoke Generation Result:', result);
-
-        // Log detailed transcription info if available
         if (result.transcriptionResult) {
-          console.log('\n📝 Transcription Details:');
-          console.log('   Language:', result.transcriptionResult.language);
-          console.log(
-            '   Confidence:',
-            (result.transcriptionResult.language_probability * 100).toFixed(1) +
-              '%',
-          );
-          console.log(
-            '   Duration:',
-            result.transcriptionResult.duration.toFixed(2) + 's',
-          );
-          console.log(
-            '   Processing Time:',
-            result.transcriptionResult.processing_time.toFixed(2) + 's',
-          );
-          console.log('   Model:', result.transcriptionResult.model);
-          console.log('   Device:', result.transcriptionResult.device);
-          console.log('   Segments:', result.transcriptionResult.segment_count);
-          if (result.transcriptionResult.real_time_factor) {
-            console.log(
-              '   Speed:',
-              result.transcriptionResult.real_time_factor.toFixed(2) + 'x',
-              result.transcriptionResult.faster_than_realtime ? '🚀' : '',
-            );
-          }
-          console.log('\n📄 Full Text:', result.transcriptionResult.text);
-          console.log('\n🎯 Word Timestamps:');
-          result.transcriptionResult.segments.forEach((segment, idx) => {
-            console.log(
-              `\n  Segment ${idx + 1} [${segment.start.toFixed(2)}s - ${segment.end.toFixed(2)}s]:`,
-              segment.text,
-            );
-            if (segment.words) {
-              segment.words.forEach((word) => {
-                console.log(
-                  `    [${word.start.toFixed(2)}s - ${word.end.toFixed(2)}s] "${word.word}" (confidence: ${(word.confidence * 100).toFixed(1)}%)`,
-                );
-              });
-            }
+          // Accessed intentionally to preserve potential lazy getters/shape checks.
+          void result.transcriptionResult.real_time_factor;
+          result.transcriptionResult.segments.forEach((segment) => {
+            void segment.words;
           });
         }
 
@@ -994,7 +984,10 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           toast.error(result.error || 'Failed to generate karaoke subtitles');
         }
       } catch (error) {
-        console.error('Error generating karaoke subtitles:', error);
+        console.error(
+          '[MediaImportPanel] Error generating karaoke subtitles',
+          error,
+        );
         toast.error(
           error instanceof Error
             ? error.message
@@ -1025,6 +1018,113 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
       handleConfirmKaraokeGeneration(fileId, deleteExisting);
     }
   }, [pendingKaraokeAction, handleConfirmKaraokeGeneration]);
+
+  const getMediaTabForItem = useCallback(
+    (item: { mimeType: string; name: string }): MediaTab => {
+      if (item.mimeType.startsWith('video/')) return 'videos';
+      if (item.mimeType.startsWith('audio/')) return 'audio';
+      if (item.mimeType.startsWith('image/')) return 'images';
+      if (item.mimeType.startsWith('text/') || isSubtitleFile(item.name)) {
+        return 'subtitles';
+      }
+      return 'all';
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      pendingMediaAnimationFramesRef.current.forEach((id) =>
+        cancelAnimationFrame(id),
+      );
+      pendingMediaFeedbackTimeoutsRef.current.forEach((id) =>
+        window.clearTimeout(id),
+      );
+      pendingMediaAnimationFramesRef.current = [];
+      pendingMediaFeedbackTimeoutsRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    const currentMediaIds = mediaLibrary.map((item) => item.id);
+
+    if (!hasInitialMediaSnapshotRef.current) {
+      previousMediaIdsRef.current = new Set(currentMediaIds);
+      hasInitialMediaSnapshotRef.current = true;
+      return;
+    }
+
+    const previousMediaIds = previousMediaIdsRef.current;
+    const addedItems = mediaLibrary.filter(
+      (item) => !previousMediaIds.has(item.id),
+    );
+    previousMediaIdsRef.current = new Set(currentMediaIds);
+
+    if (addedItems.length === 0) {
+      return;
+    }
+
+    const addedIds = addedItems.map((item) => item.id);
+    const latestAddedItem = addedItems[addedItems.length - 1];
+    const preferredTab = getMediaTabForItem(latestAddedItem);
+    const targetTab: MediaTab =
+      activeTab === 'all' || activeTab === preferredTab
+        ? activeTab
+        : preferredTab;
+
+    setRecentlyImportedMediaIds((previousSet) => {
+      const nextSet = new Set(previousSet);
+      addedIds.forEach((id) => nextSet.add(id));
+      return nextSet;
+    });
+
+    if (targetTab !== activeTab) {
+      setActiveTab(targetTab);
+    }
+
+    let attempts = 0;
+    const maxAttempts = 20;
+
+    const tryScrollToImportedItem = () => {
+      attempts += 1;
+
+      const container = mediaScrollContainerRefs.current[targetTab];
+      const mediaElement = container?.querySelector<HTMLElement>(
+        `[data-media-id="${latestAddedItem.id}"]`,
+      );
+
+      if (mediaElement) {
+        mediaElement.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'nearest',
+        });
+        return;
+      }
+
+      if (attempts < maxAttempts) {
+        const nextFrameId = requestAnimationFrame(tryScrollToImportedItem);
+        pendingMediaAnimationFramesRef.current.push(nextFrameId);
+      }
+    };
+
+    const firstFrameId = requestAnimationFrame(() => {
+      const nextFrameId = requestAnimationFrame(() => {
+        tryScrollToImportedItem();
+      });
+      pendingMediaAnimationFramesRef.current.push(nextFrameId);
+    });
+    pendingMediaAnimationFramesRef.current.push(firstFrameId);
+
+    const clearFeedbackTimeout = window.setTimeout(() => {
+      setRecentlyImportedMediaIds((previousSet) => {
+        const nextSet = new Set(previousSet);
+        addedIds.forEach((id) => nextSet.delete(id));
+        return nextSet;
+      });
+    }, 1100);
+    pendingMediaFeedbackTimeoutsRef.current.push(clearFeedbackTimeout);
+  }, [activeTab, getMediaTabForItem, mediaLibrary]);
 
   const uploadArea = useMemo(
     () => (
@@ -1070,6 +1170,10 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
 
   const fileListContent = (files: MediaItem[], tabType: string) => (
     <div
+      data-media-scroll-container={tabType}
+      ref={(element) => {
+        mediaScrollContainerRefs.current[tabType as MediaTab] = element;
+      }}
       className="w-full h-full overflow-y-auto relative"
       onDragEnter={handleDragIn}
       onDragLeave={handleDragOut}
@@ -1085,6 +1189,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
             <FileItem
               key={file.id}
               file={file}
+              isImportFeedback={recentlyImportedMediaIds.has(file.id)}
               isAnyTranscribing={isAnyTranscribing}
               onAddToTimeline={handleAddToTimeline}
               onMediaDragStart={handleMediaDragStart}
@@ -1094,11 +1199,6 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           ))}
         </div>
       </div>
-      {dragActive && (
-        <div className="absolute inset-0 border-2 border-dashed flex items-center justify-center border-secondary bg-secondary/10 rounded-lg pointer-events-none z-10">
-          <p className="text-sm text-muted-foreground">Drop files to import</p>
-        </div>
-      )}
     </div>
   );
 
@@ -1205,6 +1305,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
       getMediaItems,
       getFilteredFiles,
       uploadArea,
+      recentlyImportedMediaIds,
       dragActive,
       handleDragIn,
       handleDragOut,
@@ -1239,10 +1340,14 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
             Import
             <PlusCircle className="size-4" />
           </Button>
-          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
             <Tabs
-              defaultValue="all"
-              className="flex-1 min-h-0 gap-4 flex flex-col"
+              value={activeTab}
+              onValueChange={(value) => setActiveTab(value as MediaTab)}
+              className={cn(
+                'flex-1 min-h-0 gap-4 flex flex-col',
+                dragActive && 'opacity-10 transition-opacity duration-100',
+              )}
             >
               <TabsList variant="text" className="w-full justify-start">
                 <TabsTrigger value="all" variant="text">
@@ -1278,6 +1383,13 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
                 {getTabContent('subtitles')}
               </TabsContent>
             </Tabs>
+            {dragActive && (
+              <div className="absolute inset-0 border-2 border-dashed flex items-center justify-center border-secondary bg-secondary/10 rounded-lg pointer-events-none z-20">
+                <p className="text-sm text-muted-foreground">
+                  Drop files to import
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </BasePanel>
@@ -1342,36 +1454,6 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
               deleteExisting,
             );
           }
-        }}
-      />
-
-      {/* Unified duplicate media dialog - works for single or multiple duplicates */}
-      <DuplicateMediaDialog
-        open={batchDuplicateDetection?.show ?? false}
-        onOpenChange={(open) => {
-          if (!open) {
-            // Skip all duplicates if dialog closed (use existing)
-            const skipChoices = new Map<string, 'use-existing'>();
-            batchDuplicateDetection?.duplicates?.forEach((dup) => {
-              skipChoices.set(dup.id, 'use-existing');
-            });
-            batchDuplicateDetection?.pendingResolve?.(skipChoices);
-            hideBatchDuplicateDialog?.();
-          }
-        }}
-        duplicates={batchDuplicateDetection?.duplicates ?? []}
-        onConfirm={(choices) => {
-          batchDuplicateDetection?.pendingResolve?.(choices);
-          hideBatchDuplicateDialog?.();
-        }}
-        onCancel={() => {
-          // Skip all duplicates (use existing)
-          const skipChoices = new Map<string, 'use-existing'>();
-          batchDuplicateDetection?.duplicates?.forEach((dup) => {
-            skipChoices.set(dup.id, 'use-existing');
-          });
-          batchDuplicateDetection?.pendingResolve?.(skipChoices);
-          hideBatchDuplicateDialog?.();
         }}
       />
 

@@ -13,6 +13,7 @@ import {
   MenubarSubTrigger,
   MenubarTrigger,
 } from '@/frontend/components/ui/menubar';
+import AboutDialog from '@/frontend/features/about/About';
 import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
 import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
 import { normalizeKeyList } from '@/frontend/features/editor/shortcuts/shortcutUtils';
@@ -35,14 +36,20 @@ import {
   undoAction,
 } from '@/frontend/features/editor/stores/videoEditor/shortcuts/actions';
 import { useProjectShortcutDialog } from '@/frontend/features/editor/stores/videoEditor/shortcuts/hooks/useProjectShortcutDialog';
+import { normalizeAutoSavePreferences } from '@/frontend/features/editor/stores/videoEditor/slices/projectSlice';
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
+import { hasPendingUnsavedChanges } from '@/frontend/hooks/unsavedChangesState';
 import { Check } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { HotkeysDialog } from './HotkeysDialog';
+import { PreferencesDialog } from './PreferencesDialog';
 
 const AppMenuBarComponent = () => {
   const [showHotkeys, setShowHotkeys] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+  const [showPreferences, setShowPreferences] = useState(false);
   const navigate = useNavigate();
   const importMediaFromDialog = useVideoEditorStore(
     (state) => state.importMediaFromDialog,
@@ -76,19 +83,91 @@ const AppMenuBarComponent = () => {
   const removeSelectedTracks = useVideoEditorStore(
     (state) => state.removeSelectedTracks,
   );
+  const autoSavePreferences = useVideoEditorStore(
+    (state) => state.autoSavePreferences,
+  );
+  const setAutoSavePreferences = useVideoEditorStore(
+    (state) => state.setAutoSavePreferences,
+  );
+  const editorCurrentProjectId = useVideoEditorStore(
+    (state) => state.currentProjectId,
+  );
+  const editorLastSavedAt = useVideoEditorStore((state) => state.lastSavedAt);
+  const editorIsSaving = useVideoEditorStore((state) => state.isSaving);
+  const saveProjectData = useVideoEditorStore((state) => state.saveProjectData);
+  const hasUnsavedChanges = useVideoEditorStore(
+    (state) => state.hasUnsavedChanges,
+  );
 
   // Project save state
-  const { lastSavedAt, isSaving, currentProject } = useProjectStore();
+  const currentProject = useProjectStore((state) => state.currentProject);
 
-  // Check if project is saved (saved within last 5 seconds means "just saved")
+  // Use both active project metadata and editor dirty state to avoid false "Saved"
+  // indicators when switching between multiple projects.
   const isProjectSaved = useMemo(() => {
-    if (!lastSavedAt || !currentProject) return false;
-    const timeSinceLastSave = Date.now() - new Date(lastSavedAt).getTime();
-    return timeSinceLastSave < 5000; // Consider "saved" if within 5 seconds
-  }, [lastSavedAt, currentProject]);
+    if (!currentProject || !editorCurrentProjectId) return false;
+    if (currentProject.id !== editorCurrentProjectId) return false;
+    if (hasUnsavedChanges || editorIsSaving) return false;
+
+    const editorSavedAtMs = editorLastSavedAt
+      ? new Date(editorLastSavedAt).getTime()
+      : Number.NaN;
+    if (!Number.isFinite(editorSavedAtMs)) return false;
+
+    const metadataUpdatedAtMs = currentProject.metadata?.updatedAt
+      ? new Date(currentProject.metadata.updatedAt).getTime()
+      : Number.NaN;
+
+    if (!Number.isFinite(metadataUpdatedAtMs)) {
+      return true;
+    }
+
+    return editorSavedAtMs >= metadataUpdatedAtMs;
+  }, [
+    currentProject,
+    editorCurrentProjectId,
+    hasUnsavedChanges,
+    editorIsSaving,
+    editorLastSavedAt,
+  ]);
 
   // Setup confirmation dialog for close project
   const { showConfirmation, ConfirmationDialog } = useProjectShortcutDialog();
+
+  const runProjectSwitchWithUnsavedGuard = useCallback(
+    (actionLabel: string, action: () => Promise<void>) => {
+      if (!hasPendingUnsavedChanges(hasUnsavedChanges, editorIsSaving)) {
+        void action();
+        return;
+      }
+
+      showConfirmation({
+        title: 'You have unsaved changes.',
+        message: `Save your current project before you ${actionLabel}?`,
+        confirmText: 'Save & Continue',
+        cancelText: 'Cancel',
+        onConfirm: () => {
+          void (async () => {
+            try {
+              await saveProjectData();
+              await action();
+            } catch (error) {
+              console.error('[AppMenuBar] Save before switch failed', error);
+              toast.error('Failed to save project. Please try again.');
+            }
+          })();
+        },
+        secondaryAction: {
+          text: 'Continue Without Saving',
+          variant: 'destructive',
+          onClick: () => {
+            void action();
+          },
+        },
+      });
+    },
+    [editorIsSaving, hasUnsavedChanges, saveProjectData, showConfirmation],
+  );
 
   const handleOpenHotkeys = useCallback(() => {
     setShowHotkeys(true);
@@ -139,23 +218,33 @@ const AppMenuBarComponent = () => {
 
   // Project action handlers - memoized to prevent re-creation
   const handleNewProject = useCallback(() => {
-    newProjectAction(navigate).catch(console.error);
-  }, [navigate]);
+    runProjectSwitchWithUnsavedGuard('create a new project', () =>
+      newProjectAction(navigate),
+    );
+  }, [navigate, runProjectSwitchWithUnsavedGuard]);
 
   const handleOpenProject = useCallback(() => {
-    openProjectAction(navigate).catch(console.error);
-  }, [navigate]);
+    runProjectSwitchWithUnsavedGuard('open another project', () =>
+      openProjectAction(navigate),
+    );
+  }, [navigate, runProjectSwitchWithUnsavedGuard]);
 
   const handleSaveProject = useCallback(() => {
-    saveProjectAction().catch(console.error);
+    saveProjectAction().catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, []);
 
   const handleSaveProjectAs = useCallback(() => {
-    saveProjectAsAction().catch(console.error);
+    saveProjectAsAction().catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, []);
 
   const handleImportMedia = useCallback(() => {
-    importMediaAction(importMediaFromDialog).catch(console.error);
+    importMediaAction(importMediaFromDialog).catch((error) =>
+      console.error('[AppMenuBar] Operation failed', error),
+    );
   }, [importMediaFromDialog]);
 
   const handleExportVideo = useCallback(() => {
@@ -163,8 +252,10 @@ const AppMenuBarComponent = () => {
   }, [tracksLength]);
 
   const handleCloseProject = useCallback(() => {
-    closeProjectAction(navigate, showConfirmation).catch(console.error);
-  }, [navigate, showConfirmation]);
+    runProjectSwitchWithUnsavedGuard('close this project', () =>
+      closeProjectAction(navigate, showConfirmation),
+    );
+  }, [navigate, runProjectSwitchWithUnsavedGuard, showConfirmation]);
 
   // Edit action handlers - memoized to prevent re-creation
   const handleUndo = useCallback(() => {
@@ -212,6 +303,42 @@ const AppMenuBarComponent = () => {
     removeSelectedTracks();
   }, [selectedTrackIds.length, removeSelectedTracks]);
 
+  const handleOpenAbout = useCallback(() => {
+    setShowAbout(true);
+  }, [navigate]);
+
+  const normalizedAutoSavePreferences = useMemo(
+    () => normalizeAutoSavePreferences(autoSavePreferences),
+    [autoSavePreferences],
+  );
+
+  const handleOpenPreferences = useCallback(() => {
+    setShowPreferences(true);
+  }, []);
+
+  const handleAutoSaveToggle = useCallback(
+    (checked: boolean | 'indeterminate') => {
+      setAutoSavePreferences({ enabled: checked === true });
+    },
+    [setAutoSavePreferences],
+  );
+
+  const handleCheckUpdates = useCallback(async () => {
+    try {
+      toast.promise(window.electronAPI.releaseCheckForUpdates(), {
+        loading: 'Checking for updates...',
+        success: (result) =>
+          result.updateAvailable
+            ? `Update available: v${result.latest?.latestVersion}`
+            : 'DiviDr is up to date',
+        error: (error) =>
+          error instanceof Error ? error.message : 'Update check failed',
+      });
+    } catch (error) {
+      console.warn('[AppMenuBar] Update check failed', error);
+    }
+  }, []);
+
   return (
     <div className="flex items-center">
       <Menubar variant="minimal">
@@ -235,14 +362,19 @@ const AppMenuBarComponent = () => {
             </MenubarItem>
             <MenubarItem
               onClick={handleSaveProject}
-              disabled={isProjectSaved || isSaving || !currentProject}
+              disabled={
+                isProjectSaved ||
+                editorIsSaving ||
+                !currentProject ||
+                currentProject.id !== editorCurrentProjectId
+              }
             >
               <span className="flex items-center gap-2 flex-1">
                 Save Project
                 {isProjectSaved && (
                   <Check className="size-3.5 text-green-500" />
                 )}
-                {isSaving && (
+                {editorIsSaving && (
                   <span className="text-xs text-muted-foreground">
                     Saving...
                   </span>
@@ -370,7 +502,10 @@ const AppMenuBarComponent = () => {
         <MenubarMenu>
           <MenubarTrigger>Settings</MenubarTrigger>
           <MenubarContent>
-            <MenubarCheckboxItem disabled>
+            <MenubarCheckboxItem
+              checked={normalizedAutoSavePreferences.enabled}
+              onCheckedChange={handleAutoSaveToggle}
+            >
               Auto-save Projects
             </MenubarCheckboxItem>
             <MenubarCheckboxItem checked disabled>
@@ -398,7 +533,9 @@ const AppMenuBarComponent = () => {
               </MenubarSubContent>
             </MenubarSub>
             <MenubarSeparator />
-            <MenubarItem disabled>Preferences...</MenubarItem>
+            <MenubarItem onClick={handleOpenPreferences}>
+              Preferences...
+            </MenubarItem>
             <MenubarItem disabled>Reset to Defaults</MenubarItem>
           </MenubarContent>
         </MenubarMenu>
@@ -414,13 +551,20 @@ const AppMenuBarComponent = () => {
             <MenubarItem disabled>Report Bug</MenubarItem>
             <MenubarItem disabled>Feature Request</MenubarItem>
             <MenubarSeparator />
-            <MenubarItem disabled>About Dividr</MenubarItem>
-            <MenubarItem disabled>Check for Updates</MenubarItem>
+            <MenubarItem onClick={handleOpenAbout}>About DiviDr</MenubarItem>
+            <MenubarItem onClick={handleCheckUpdates}>
+              Check for Updates
+            </MenubarItem>
           </MenubarContent>
         </MenubarMenu>
       </Menubar>
 
       <HotkeysDialog open={showHotkeys} onOpenChange={handleCloseHotkeys} />
+      <AboutDialog open={showAbout} onOpenChange={setShowAbout} />
+      <PreferencesDialog
+        open={showPreferences}
+        onOpenChange={setShowPreferences}
+      />
       <ConfirmationDialog />
     </div>
   );

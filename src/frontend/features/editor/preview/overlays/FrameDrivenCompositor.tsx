@@ -2,7 +2,7 @@
  * FrameDrivenCompositor - Canvas-based video compositor for multi-layer playback.
  *
  * Key features:
- * - One video element per clip (handles same-source overlaps)
+ * - One video element per stream lane (source + row)
  * - Per-layer frame hold prevents black frames during buffering
  * - Continuous compositing during playback via rAF loop
  */
@@ -17,9 +17,11 @@ import {
 } from 'react';
 import { VideoTrack } from '../../stores/videoEditor/index';
 import {
+  buildMediaStreamKey,
   FrameRequest,
   getVideoSource,
   hasVisibleClipsAtFrame,
+  normalizeSourceId,
   resolveFrameRequests,
 } from '../services/FrameResolver';
 
@@ -54,7 +56,7 @@ const SEEK_TOLERANCE_PLAYBACK = 0.25;
 
 interface ManagedVideo {
   element: HTMLVideoElement;
-  clipId: string;
+  instanceKey: string;
   sourceUrl: string;
   isReady: boolean;
   lastSeekTime: number;
@@ -118,9 +120,9 @@ export const FrameDrivenCompositor = forwardRef<
     }, [width, height]);
 
     // Video element management
-    const getOrCreateVideoForClip = useCallback(
-      (clipId: string, sourceUrl: string): ManagedVideo => {
-        let managed = videosRef.current.get(clipId);
+    const getOrCreateVideoForStream = useCallback(
+      (instanceKey: string, sourceUrl: string): ManagedVideo => {
+        let managed = videosRef.current.get(instanceKey);
 
         if (managed) {
           if (managed.sourceUrl !== sourceUrl) {
@@ -140,7 +142,7 @@ export const FrameDrivenCompositor = forwardRef<
 
         managed = {
           element: video,
-          clipId,
+          instanceKey,
           sourceUrl,
           isReady: false,
           lastSeekTime: -1,
@@ -148,7 +150,7 @@ export const FrameDrivenCompositor = forwardRef<
         };
 
         const onReady = () => {
-          const m = videosRef.current.get(clipId);
+          const m = videosRef.current.get(instanceKey);
           if (m) {
             m.isReady = true;
             if (!isPlayingRef.current) {
@@ -161,11 +163,11 @@ export const FrameDrivenCompositor = forwardRef<
         video.addEventListener('loadeddata', onReady);
         video.addEventListener('playing', onReady);
         video.addEventListener('waiting', () => {
-          const m = videosRef.current.get(clipId);
+          const m = videosRef.current.get(instanceKey);
           if (m) m.isReady = false;
         });
 
-        videosRef.current.set(clipId, managed);
+        videosRef.current.set(instanceKey, managed);
         return managed;
       },
       [],
@@ -173,26 +175,31 @@ export const FrameDrivenCompositor = forwardRef<
 
     // Sync video elements with tracks
     useEffect(() => {
-      const activeClipIds = new Set<string>();
+      const activeInstanceKeys = new Set<string>();
 
       for (const track of videoTracks) {
         const url = getVideoSource(track);
         if (url) {
-          activeClipIds.add(track.id);
-          getOrCreateVideoForClip(track.id, url);
+          const sourceId = normalizeSourceId(url);
+          const instanceKey = buildMediaStreamKey(
+            sourceId,
+            track.trackRowIndex,
+          );
+          activeInstanceKeys.add(instanceKey);
+          getOrCreateVideoForStream(instanceKey, url);
         }
       }
 
-      videosRef.current.forEach((managed, clipId) => {
-        if (!activeClipIds.has(clipId)) {
+      videosRef.current.forEach((managed, instanceKey) => {
+        if (!activeInstanceKeys.has(instanceKey)) {
           managed.element.pause();
           managed.element.src = '';
           managed.element.load();
           managed.lastDrawnFrame?.close();
-          videosRef.current.delete(clipId);
+          videosRef.current.delete(instanceKey);
         }
       });
-    }, [videoTracks, getOrCreateVideoForClip]);
+    }, [videoTracks, getOrCreateVideoForStream]);
 
     // Cleanup on unmount
     useEffect(() => {
@@ -334,8 +341,8 @@ export const FrameDrivenCompositor = forwardRef<
 
         // Sync video elements
         for (const request of requests) {
-          const managed = getOrCreateVideoForClip(
-            request.clipId,
+          const managed = getOrCreateVideoForStream(
+            request.instanceKey,
             request.sourceUrl,
           );
           const video = managed.element;
@@ -365,8 +372,8 @@ export const FrameDrivenCompositor = forwardRef<
         }
 
         // Pause inactive videos
-        videosRef.current.forEach((managed, clipId) => {
-          const isActive = requests.some((r) => r.clipId === clipId);
+        videosRef.current.forEach((managed, instanceKey) => {
+          const isActive = requests.some((r) => r.instanceKey === instanceKey);
           if (!isActive && !managed.element.paused) {
             managed.element.pause();
           }
@@ -378,7 +385,7 @@ export const FrameDrivenCompositor = forwardRef<
 
         let renderedAny = false;
         for (const request of requests) {
-          const managed = videosRef.current.get(request.clipId);
+          const managed = videosRef.current.get(request.instanceKey);
           if (!managed) continue;
 
           if (
@@ -418,7 +425,7 @@ export const FrameDrivenCompositor = forwardRef<
         isPlaying,
         playbackRate,
         drawVideoFrame,
-        getOrCreateVideoForClip,
+        getOrCreateVideoForStream,
       ],
     );
 
@@ -496,14 +503,18 @@ export const FrameDrivenCompositor = forwardRef<
       // since the track reference changes on any store update
       // Compare relevant transform properties to detect actual visual changes
       const currentTracksTransformKey = tracks
-        .filter((t) => t.type === 'video' && t.visible)
+        .filter((t) => t.type === 'video')
         .map((t) => {
           const transform = t.textTransform;
           const x = transform?.x ?? 0;
           const y = transform?.y ?? 0;
           const scale = transform?.scale ?? 1;
           const rotation = transform?.rotation ?? 0;
-          return `${t.id}:${x},${y},${scale},${rotation}`;
+          const width = transform?.width ?? t.width ?? baseVideoWidth;
+          const height = transform?.height ?? t.height ?? baseVideoHeight;
+          const opacity = t.textStyle?.opacity ?? 100;
+          const visible = t.visible ? 1 : 0;
+          return `${t.id}:${visible}:${x},${y},${scale},${rotation},${width},${height},${opacity}`;
         })
         .join('|');
 
@@ -513,7 +524,15 @@ export const FrameDrivenCompositor = forwardRef<
         // This ensures rotation changes from Properties Panel are reflected immediately
         compositeFrame(currentFrame, false);
       }
-    }, [tracks, currentFrame, compositeFrame]);
+    }, [tracks, currentFrame, compositeFrame, baseVideoWidth, baseVideoHeight]);
+
+    // Re-render immediately when canvas size or base video dimensions change
+    // This keeps paused preview in sync after aspect ratio or zoom updates.
+    useEffect(() => {
+      // Use refs to avoid re-rendering every frame during playback.
+      compositeFrameRef.current(currentFrameRef.current, true);
+      lastRenderedFrameRef.current = currentFrameRef.current;
+    }, [width, height, baseVideoWidth, baseVideoHeight]);
 
     // Playback render loop
     useEffect(() => {

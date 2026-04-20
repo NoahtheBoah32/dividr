@@ -41,11 +41,7 @@ export function generateSubtitleContent(
   const timeOffset =
     timelineStartFrame !== undefined ? timelineStartFrame / timeline.fps : 0;
 
-  if (timeOffset > 0) {
-    console.log(
-      `📝 Export starts at frame ${timelineStartFrame} (${timeOffset.toFixed(3)}s)`,
-    );
-  }
+  void timeOffset;
 
   // Extract subtitle segments from subtitle tracks with frame-based timing
   const subtitleSegments =
@@ -64,18 +60,8 @@ export function generateSubtitleContent(
           const startTime = relativeStartFrame / timeline.fps;
           const endTime = relativeEndFrame / timeline.fps;
 
-          console.log(
-            `[Subtitle] "${track.subtitleText?.substring(0, 30)}" - frames ${track.startFrame}-${track.endFrame} -> relative ${relativeStartFrame}-${relativeEndFrame} -> ${startTime.toFixed(3)}s-${endTime.toFixed(3)}s`,
-          );
-
-          // Log raw track style for debugging export payload
-          if (track.subtitleStyle || track.textStyle) {
-            console.log(`📦 [Export Payload] Track ${index + 1} raw style:`, {
-              trackId: track.id,
-              subtitleStyle: track.subtitleStyle,
-              textStyle: track.textStyle,
-            });
-          }
+          void track.subtitleStyle;
+          void track.textStyle;
 
           // Extract per-segment styling if available (prioritize subtitleStyle over textStyle)
           const trackStyle = track.subtitleStyle || track.textStyle;
@@ -128,21 +114,7 @@ export function generateSubtitleContent(
               }
             : undefined;
 
-          // Log converted style for debugging
-          if (style) {
-            console.log(
-              `📦 [Export Payload] Track ${index + 1} converted style:`,
-              {
-                fontFamily: style.fontFamily,
-                fontSize: style.fontSize,
-                fontWeight: style.fontWeight,
-                fontStyle: style.fontStyle,
-                strokeColor: style.strokeColor,
-                color: style.color,
-                opacity: style.opacity,
-              },
-            );
-          }
+          void style;
 
           // Process text through textWrapUtils (single source of truth for line breaks)
           // - Normalizes CRLF/CR to LF
@@ -198,12 +170,7 @@ export function generateSubtitleContent(
               }
             : undefined;
 
-          // Log position data for debugging
-          if (position) {
-            console.log(
-              `📍 [Export Payload] Track ${index + 1} position: x=${position.x.toFixed(3)}, y=${position.y.toFixed(3)}, scale=${position.scale}`,
-            );
-          }
+          void position;
 
           return {
             startTime,
@@ -236,7 +203,6 @@ export function generateSubtitleContent(
   );
 
   if (validSegments.length === 0) {
-    console.log('⚠️ No valid subtitle segments after filtering');
     return {
       subtitleContent: '',
       currentTextStyle: undefined,
@@ -250,8 +216,6 @@ export function generateSubtitleContent(
     segment.index = index + 1;
   });
 
-  console.log(`📝 Final subtitle count: ${validSegments.length} segments`);
-
   // Get current text style (for subtitles that don't have per-segment styling)
   const currentTextStyle = getTextStyleForSubtitle(textStyle.activeStyle);
 
@@ -261,11 +225,6 @@ export function generateSubtitleContent(
     currentTextStyle,
     videoDimensions,
   );
-
-  console.log(
-    `📝 [Subtitles] Generated subtitle content: ${validSegments.length} segments`,
-  );
-  console.log('📝 [Subtitles] Fonts used:', assResult.fontFamilies.join(', '));
 
   return {
     subtitleContent: assResult.content,

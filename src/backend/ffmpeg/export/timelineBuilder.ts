@@ -53,7 +53,7 @@ export function buildSeparateTimelines(
   imageLayers: Map<number, ProcessedTimeline>;
   audio: ProcessedTimeline;
 } {
-  console.log('🎬 Building timelines with multi-layer support');
+  console.log('[TimelineBuilder] Building timelines with multi-layer support');
 
   // Separate inputs by type and organize by layer
   const videoInputsByLayer = new Map<
@@ -83,7 +83,7 @@ export function buildSeparateTimelines(
 
     if (FILE_EXTENSIONS.VIDEO.test(path)) {
       console.log(
-        `📹 Adding video input ${originalIndex} to layer ${layer} (trackRowIndex: ${trackInfo.trackRowIndex ?? 'N/A'}): ${path}`,
+        `[TimelineBuilder] Adding video input${originalIndex} to layer ${layer} (trackRowIndex: ${trackInfo.trackRowIndex ?? 'N/A'}): ${path}`,
       );
       if (!videoInputsByLayer.has(layer)) {
         videoInputsByLayer.set(layer, []);
@@ -95,7 +95,7 @@ export function buildSeparateTimelines(
       existing.push({ trackInfo, originalIndex });
     } else if (FILE_EXTENSIONS.IMAGE.test(path)) {
       console.log(
-        `🖼️ Adding image input ${originalIndex} to layer ${layer} (trackRowIndex: ${trackInfo.trackRowIndex ?? 'N/A'}): ${path} (timeline: ${trackInfo.timelineStartFrame}-${trackInfo.timelineEndFrame})`,
+        `[TimelineBuilder] Adding image input${originalIndex} to layer ${layer} (trackRowIndex: ${trackInfo.trackRowIndex ?? 'N/A'}): ${path} (timeline: ${trackInfo.timelineStartFrame}-${trackInfo.timelineEndFrame})`,
       );
       if (!imageInputsByLayer.has(layer)) {
         imageInputsByLayer.set(layer, []);
@@ -106,13 +106,15 @@ export function buildSeparateTimelines(
       }
       existing.push({ trackInfo, originalIndex });
     } else if (FILE_EXTENSIONS.AUDIO.test(path)) {
-      console.log(`🎵 Adding audio input ${originalIndex}: ${path}`);
+      console.log(
+        `[TimelineBuilder] Adding audio input${originalIndex}: ${path}`,
+      );
       audioInputs.push({ trackInfo, originalIndex });
     }
   });
 
   console.log(
-    `📊 Input counts: video layers=${videoInputsByLayer.size}, image layers=${imageInputsByLayer.size}, audio=${audioInputs.length}`,
+    `[TimelineBuilder] Input counts: video layers=${videoInputsByLayer.size}, image layers=${imageInputsByLayer.size}, audio=${audioInputs.length}`,
   );
 
   // Build video timelines for each layer
@@ -138,7 +140,7 @@ export function buildSeparateTimelines(
 
   for (const [layer, layerInputs] of videoInputsByLayer.entries()) {
     console.log(
-      `🎥 Building video layer ${layer} with ${layerInputs.length} inputs`,
+      `[TimelineBuilder] Building video layer${layer} with ${layerInputs.length} inputs`,
     );
     let videoSegments = buildVideoTimeline(layerInputs, targetFrameRate);
 
@@ -146,12 +148,12 @@ export function buildSeparateTimelines(
     // Audio layers are not considered when determining bottom-most layer
     if (layer === bottomMostVideoImageLayer) {
       console.log(
-        `   🎬 Layer ${layer} is bottom-most video/image layer - filling gaps with black video clips`,
+        `[TimelineBuilder] Layer${layer} is bottom-most video/image layer - filling gaps with black video clips`,
       );
       videoSegments = fillTimelineGaps(videoSegments, targetFrameRate, 'video');
     } else {
       console.log(
-        `   🎬 Layer ${layer} is upper layer - skipping gap filling (will be transparent)`,
+        `[TimelineBuilder] Layer${layer} is upper layer - skipping gap filling (will be transparent)`,
       );
       // Don't fill gaps for upper layers - they'll be transparent where there's no content
     }
@@ -172,7 +174,7 @@ export function buildSeparateTimelines(
   const imageLayers = new Map<number, ProcessedTimeline>();
   for (const [layer, layerInputs] of imageInputsByLayer.entries()) {
     console.log(
-      `🖼️ Building image layer ${layer} with ${layerInputs.length} inputs`,
+      `[TimelineBuilder] Building image layer${layer} with ${layerInputs.length} inputs`,
     );
     const imageSegments = buildImageTimeline(layerInputs, targetFrameRate);
 
@@ -240,7 +242,7 @@ function fillTimelineGaps(
     if (gapDuration > minGapThreshold) {
       // Only add gap if it's larger than half a frame (to avoid rounding issues)
       console.log(
-        `🕳️ Found ${timelineType} gap: ${currentTime.toFixed(2)}s-${segment.startTime.toFixed(2)}s (${gapDuration.toFixed(2)}s)`,
+        `[TimelineBuilder] Found${timelineType} gap: ${currentTime.toFixed(2)}s-${segment.startTime.toFixed(2)}s (${gapDuration.toFixed(2)}s)`,
       );
 
       // Add gap segment
@@ -266,7 +268,7 @@ function fillTimelineGaps(
     } else if (gapDuration > 0 && gapDuration <= minGapThreshold) {
       // Tiny gap (less than half a frame) - adjust segment to start at currentTime
       console.log(
-        `🔧 Adjusting segment to eliminate tiny gap of ${gapDuration.toFixed(4)}s`,
+        `[TimelineBuilder] Adjusting segment to eliminate tiny gap of${gapDuration.toFixed(4)}s`,
       );
       const adjustedSegment = {
         ...segment,
@@ -283,7 +285,7 @@ function fillTimelineGaps(
   });
 
   console.log(
-    `✅ ${timelineType} timeline after filling gaps: ${filledSegments.length} segments`,
+    `[TimelineBuilder] Log${timelineType} timeline after filling gaps: ${filledSegments.length} segments`,
   );
   return filledSegments;
 }
@@ -323,7 +325,7 @@ function buildVideoTimeline(
     });
 
     console.log(
-      `🎥 Video segment ${originalIndex} (layer ${layer}, trackRowIndex: ${trackRowIndex}): ${startTime.toFixed(2)}s-${endTime.toFixed(2)}s (${duration.toFixed(2)}s)`,
+      `[TimelineBuilder] Video segment${originalIndex} (layer ${layer}, trackRowIndex: ${trackRowIndex}): ${startTime.toFixed(2)}s-${endTime.toFixed(2)}s (${duration.toFixed(2)}s)`,
     );
   });
 
@@ -355,7 +357,7 @@ function buildImageTimeline(
     // Skip images with zero or negative duration
     if (duration <= 0) {
       console.warn(
-        `⚠️ Skipping image segment ${originalIndex} - invalid duration: ${duration.toFixed(2)}s (startFrame: ${startFrame}, endFrame: ${endFrame})`,
+        `[TimelineBuilder] Skipping image segment${originalIndex} - invalid duration: ${duration.toFixed(2)}s (startFrame: ${startFrame}, endFrame: ${endFrame})`,
       );
       return;
     }
@@ -376,7 +378,7 @@ function buildImageTimeline(
     });
 
     console.log(
-      `🖼️ Image segment ${originalIndex} (layer ${layer}, trackRowIndex: ${trackRowIndex}): ${startTime.toFixed(2)}s-${endTime.toFixed(2)}s (${duration.toFixed(2)}s)`,
+      `[TimelineBuilder] Image segment${originalIndex} (layer ${layer}, trackRowIndex: ${trackRowIndex}): ${startTime.toFixed(2)}s-${endTime.toFixed(2)}s (${duration.toFixed(2)}s)`,
     );
   });
 
@@ -409,7 +411,7 @@ function buildAudioTimeline(
     });
 
     console.log(
-      `🎵 Audio segment ${originalIndex}: ${startTime.toFixed(2)}s-${endTime.toFixed(2)}s (${duration.toFixed(2)}s)`,
+      `[TimelineBuilder] Audio segment${originalIndex}: ${startTime.toFixed(2)}s-${endTime.toFixed(2)}s (${duration.toFixed(2)}s)`,
     );
   });
 
@@ -441,10 +443,10 @@ export function handleTimelineProcessing(
   // based on actual timeline coverage from timelineStartFrame/timelineEndFrame
 
   // Log video layers
-  console.log('Final Video Layers:');
+  console.log('[TimelineBuilder] Final Video Layers');
   for (const [layer, timeline] of videoLayers.entries()) {
     console.log(
-      `  Layer ${layer}:`,
+      `[TimelineBuilder] Layer${layer}:`,
       timeline.segments.map(
         (s) =>
           `${s.input.path}${s.input.gapType ? ` (${s.input.gapType} gap)` : ''} [${s.startTime.toFixed(2)}s-${s.endTime.toFixed(2)}s]`,
@@ -453,10 +455,10 @@ export function handleTimelineProcessing(
   }
 
   // Log image layers
-  console.log('Final Image Layers:');
+  console.log('[TimelineBuilder] Final Image Layers');
   for (const [layer, timeline] of imageLayers.entries()) {
     console.log(
-      `  Layer ${layer}:`,
+      `[TimelineBuilder] Layer${layer}:`,
       timeline.segments.map(
         (s) =>
           `${s.input.path} [${s.startTime.toFixed(2)}s-${s.endTime.toFixed(2)}s]`,
@@ -465,7 +467,7 @@ export function handleTimelineProcessing(
   }
 
   console.log(
-    'Final Audio Timeline:',
+    '[TimelineBuilder] Final Audio Timeline',
     finalAudioTimeline.segments.map(
       (s) =>
         `${s.input.path}${s.input.gapType ? ` (${s.input.gapType} gap)` : ''} [${s.startTime.toFixed(2)}s-${s.endTime.toFixed(2)}s]`,

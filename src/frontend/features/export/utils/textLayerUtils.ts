@@ -39,11 +39,7 @@ export function generateTextLayerSegments(
   const timeOffset =
     timelineStartFrame !== undefined ? timelineStartFrame / timeline.fps : 0;
 
-  if (timeOffset > 0) {
-    console.log(
-      `📝 [TextLayers] Export starts at frame ${timelineStartFrame} (${timeOffset.toFixed(3)}s)`,
-    );
-  }
+  void timeOffset;
 
   // Extract text segments from text tracks with frame-based timing
   const textSegments: TextSegment[] =
@@ -61,10 +57,6 @@ export function generateTextLayerSegments(
 
           const startTime = relativeStartFrame / timeline.fps;
           const endTime = relativeEndFrame / timeline.fps;
-
-          console.log(
-            `[TextLayers] "${track.textContent?.substring(0, 30)}" - frames ${track.startFrame}-${track.endFrame} -> relative ${relativeStartFrame}-${relativeEndFrame} -> ${startTime.toFixed(3)}s-${endTime.toFixed(3)}s`,
-          );
 
           // Convert track textStyle to text layer style format
           // CRITICAL: Must handle explicit false values to allow per-clip overrides
@@ -153,12 +145,6 @@ export function generateTextLayerSegments(
           // This matches how video/image tracks determine their layer
           const layer = track.trackRowIndex ?? 0;
 
-          // Debug: show the final text being sent to export (with visible line breaks)
-          const debugCleanText = cleanText.replace(/\n/g, '\\n');
-          console.log(
-            `📤 [TextLayers] Export text for track ${index + 1}: "${debugCleanText}"`,
-          );
-
           return {
             startTime,
             endTime,
@@ -172,7 +158,6 @@ export function generateTextLayerSegments(
       : [];
 
   if (textSegments.length === 0) {
-    console.log('📝 [TextLayers] No text segments to process');
     return {
       textSegments: [],
       currentTextStyle: undefined,
@@ -185,7 +170,6 @@ export function generateTextLayerSegments(
   );
 
   if (validSegments.length === 0) {
-    console.log('⚠️ [TextLayers] No valid text segments after filtering');
     return {
       textSegments: [],
       currentTextStyle: undefined,
@@ -197,10 +181,6 @@ export function generateTextLayerSegments(
   validSegments.forEach((segment, index) => {
     segment.index = index + 1;
   });
-
-  console.log(
-    `📝 [TextLayers] Final text segment count: ${validSegments.length} segments`,
-  );
 
   // Get current text style
   const currentTextStyle = getTextStyleForSubtitle(textStyle.activeStyle);

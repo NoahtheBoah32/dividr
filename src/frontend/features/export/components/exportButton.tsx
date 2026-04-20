@@ -8,7 +8,6 @@ import { useProjectStore } from '@/frontend/features/projects/store/projectStore
 import { cn } from '@/frontend/utils/utils';
 import React, { useCallback, useState } from 'react';
 import { useVideoEditorStore } from '../../editor/stores/videoEditor/index';
-import { useTimelineDuration } from '../../editor/timeline/hooks/useTimelineDuration';
 import { ExportModal } from '../../export/ExportModal';
 import { RenderProcessDialog } from '../components/renderProcessDialog';
 import { useExportHandler } from '../hooks/useExportHandler';
@@ -34,7 +33,6 @@ const ExportButton: React.FC<ExportButtonProps> = ({
   const tracks = useVideoEditorStore((state) => state.tracks);
   const render = useVideoEditorStore((state) => state.render);
   const { currentProject } = useProjectStore();
-  const duration = useTimelineDuration();
 
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
 
@@ -56,38 +54,6 @@ const ExportButton: React.FC<ExportButtonProps> = ({
     format: string;
     outputPath: string;
   } | null>(null);
-
-  // Parse FFmpeg time format (HH:MM:SS.FF) to seconds
-  const parseTimeToSeconds = useCallback((timeString: string): number => {
-    if (!timeString) return 0;
-
-    const match = timeString.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
-    if (!match) return 0;
-
-    const hours = parseInt(match[1], 10);
-    const minutes = parseInt(match[2], 10);
-    const seconds = parseInt(match[3], 10);
-    const centiseconds = parseInt(match[4], 10);
-
-    return hours * 3600 + minutes * 60 + seconds + centiseconds / 100;
-  }, []);
-
-  // Calculate time-based progress percentage
-  const calculateTimeProgress = useCallback((): number => {
-    if (!render.currentTime || duration.totalSeconds === 0) {
-      return render.progress; // Fallback to percentage-based progress
-    }
-
-    const currentSeconds = parseTimeToSeconds(render.currentTime);
-    const progressPercentage = (currentSeconds / duration.totalSeconds) * 100;
-
-    return Math.min(100, Math.max(0, progressPercentage));
-  }, [
-    render.currentTime,
-    render.progress,
-    duration.totalSeconds,
-    parseTimeToSeconds,
-  ]);
 
   // Handle opening the export modal
   const handleOpenModal = useCallback(() => {
@@ -163,10 +129,11 @@ const ExportButton: React.FC<ExportButtonProps> = ({
       <RenderProcessDialog
         isOpen={isRenderDialogOpen}
         state={renderDialogState}
-        progress={calculateTimeProgress()}
+        progress={render.progress}
         status={render.status}
-        currentTime={render.currentTime || '00:00:00.00'}
-        duration={duration.formattedTime || '00:00:00.00'}
+        elapsedSeconds={render.metrics?.elapsedSeconds}
+        etaState={render.metrics?.etaState || 'calculating'}
+        etaSeconds={render.metrics?.etaSeconds}
         errorMessage={renderError}
         outputFilePath={outputFilePath}
         onCancel={handleCancelRender}

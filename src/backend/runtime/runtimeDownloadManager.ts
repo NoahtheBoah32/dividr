@@ -130,7 +130,7 @@ export const getRuntimeExecutablePath = (): string | null => {
   const exeName = EXECUTABLE_NAMES[platform];
 
   if (!exeName) {
-    console.error(`Unsupported platform: ${platform}`);
+    console.error(`[RuntimeDownloadManager] Unsupported platform${platform}`);
     return null;
   }
 
@@ -168,7 +168,10 @@ const readVersionMetadata = (): VersionMetadata | null => {
     const content = readFileSync(versionFile, 'utf8');
     return JSON.parse(content) as VersionMetadata;
   } catch (error) {
-    console.error('Failed to read version metadata:', error);
+    console.error(
+      '[RuntimeDownloadManager] Failed to read version metadata',
+      error,
+    );
     return null;
   }
 };
@@ -512,7 +515,7 @@ export const verifyInstallation = async (): Promise<boolean> => {
   const exePath = getRuntimeExecutablePath();
 
   if (!exePath || !existsSync(exePath)) {
-    console.error('Runtime executable not found');
+    console.error('[RuntimeDownloadManager] Runtime executable not found');
     return false;
   }
 
@@ -521,7 +524,9 @@ export const verifyInstallation = async (): Promise<boolean> => {
 
     // Check file has reasonable size (at least 1MB for a PyInstaller bundle)
     if (stats.size < 1024 * 1024) {
-      console.error('Runtime executable too small, likely corrupted');
+      console.error(
+        '[RuntimeDownloadManager] Runtime executable too small, likely corrupted',
+      );
       return false;
     }
 
@@ -534,11 +539,14 @@ export const verifyInstallation = async (): Promise<boolean> => {
     }
 
     console.log(
-      `Runtime verified: ${exePath} (${(stats.size / 1024 / 1024).toFixed(1)} MB)`,
+      `[RuntimeDownloadManager] Runtime verified${exePath} (${(stats.size / 1024 / 1024).toFixed(1)} MB)`,
     );
     return true;
   } catch (error) {
-    console.error('Runtime verification failed:', error);
+    console.error(
+      '[RuntimeDownloadManager] Runtime verification failed',
+      error,
+    );
     return false;
   }
 };
@@ -559,7 +567,7 @@ const rmSyncWithRetry = (dirPath: string, maxRetries = 3): void => {
       if (isEBUSY && i < maxRetries - 1) {
         // Wait a bit and retry
         console.log(
-          `Directory locked, retrying in 1s... (${i + 1}/${maxRetries})`,
+          `[RuntimeDownloadManager] Directory locked, retrying in 1s... (${i + 1}/${maxRetries})`,
         );
         execSync('timeout /t 1 /nobreak >nul 2>&1 || sleep 1', {
           stdio: 'ignore',
@@ -601,7 +609,9 @@ export const downloadRuntime = async (
     const { release, asset } = await fetchGitHubRelease(REQUIRED_VERSION);
     const version = release.tag_name.replace(/^v/, '');
 
-    console.log(`Found release: ${release.name}, asset: ${asset.name}`);
+    console.log(
+      `[RuntimeDownloadManager] Found release${release.name}, asset: ${asset.name}`,
+    );
 
     onProgress({
       stage: 'fetching',
@@ -626,7 +636,9 @@ export const downloadRuntime = async (
     if (existsSync(zipPath)) {
       const existingSize = statSync(zipPath).size;
       if (existingSize === asset.size) {
-        console.log('ZIP already downloaded, skipping download...');
+        console.log(
+          '[RuntimeDownloadManager] ZIP already downloaded, skipping download',
+        );
         skipDownload = true;
         onProgress({
           stage: 'downloading',
@@ -652,7 +664,7 @@ export const downloadRuntime = async (
 
     // Step 4: Calculate checksum before extraction
     const checksum = calculateChecksum(zipPath);
-    console.log(`Downloaded file checksum: ${checksum}`);
+    console.log(`[RuntimeDownloadManager] Downloaded file checksum${checksum}`);
 
     // Step 5: Extract
     // Clean up existing platform directory (with retry for locked files)
@@ -692,7 +704,7 @@ export const downloadRuntime = async (
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error occurred';
 
-    console.error('Runtime download failed:', error);
+    console.error('[RuntimeDownloadManager] Runtime download failed', error);
 
     onProgress({
       stage: 'error',

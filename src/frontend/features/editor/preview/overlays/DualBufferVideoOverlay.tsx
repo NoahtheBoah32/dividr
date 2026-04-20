@@ -94,27 +94,27 @@ const DEBUG_SCRUBBING = false; // Disabled - enable for debugging scrubbing issu
 const DEBUG_FRAME_HOLD = false; // Enable for debugging frame hold mechanism
 
 function logDualBuffer(message: string, data?: unknown) {
-  if (DEBUG_DUAL_BUFFER) {
-    console.log(`[DualBuffer] ${message}`, data || '');
-  }
+  if (!DEBUG_DUAL_BUFFER) return;
+  void message;
+  void data;
 }
 
 function logTransition(message: string, data?: unknown) {
-  if (DEBUG_TRANSITIONS) {
-    console.log(`[Transition] ${message}`, data || '');
-  }
+  if (!DEBUG_TRANSITIONS) return;
+  void message;
+  void data;
 }
 
 function logScrubbing(message: string, data?: unknown) {
-  if (DEBUG_SCRUBBING) {
-    console.log(`[Scrubbing] ${message}`, data || '');
-  }
+  if (!DEBUG_SCRUBBING) return;
+  void message;
+  void data;
 }
 
 function logFrameHold(message: string, data?: unknown) {
-  if (DEBUG_FRAME_HOLD) {
-    console.log(`[FrameHold] ${message}`, data || '');
-  }
+  if (!DEBUG_FRAME_HOLD) return;
+  void message;
+  void data;
 }
 
 // =============================================================================
@@ -1469,8 +1469,8 @@ export const DualBufferVideo = forwardRef<
         }
 
         activeVideo.playbackRate = Math.max(0.25, Math.min(playbackRate, 4));
-      } catch (err) {
-        console.warn('[DualBuffer] Playback sync error:', err);
+      } catch {
+        // Silent by design: playback sync retries on next update.
       }
     }, [
       isPlaying,

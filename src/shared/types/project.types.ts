@@ -25,6 +25,8 @@ export interface ProjectMetadata {
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
   lastOpenedAt?: string; // ISO string
+  sourceFilePath?: string; // Absolute path for externally opened/saved project files
+  sourceFileName?: string; // Original filename (with extension)
 }
 
 export interface VideoEditorProjectData {
@@ -55,6 +57,7 @@ export interface ProjectSummary {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt?: string;
+  sourceFilePath?: string;
   sizeInfo?: ProjectSizeInfo;
 }
 
@@ -120,17 +123,25 @@ export const createDefaultProject = (
         zoom: 0.2555,
         scrollX: 0,
         selectedTrackIds: [],
+        markers: [],
+        selectedMarkerId: null,
         playheadVisible: true,
         snapEnabled: true, // Add this property
         isSplitModeActive: false, // Add this property
+        visibleTrackRows: ['video', 'audio'],
       },
       preview: {
         canvasWidth: 800,
         canvasHeight: 540,
         previewScale: 1,
+        panX: 0,
+        panY: 0,
+        interactionMode: 'select',
+        activeInteractionArea: 'other',
         showGrid: false,
         showSafeZones: false,
         backgroundColor: '#000000',
+        isFullscreen: false,
       },
       playback: {
         isPlaying: false,
@@ -138,6 +149,18 @@ export const createDefaultProject = (
         playbackRate: 1,
         volume: 1,
         muted: false,
+        isDraggingTrack: false,
+        wasPlayingBeforeDrag: false,
+        magneticSnapFrame: null,
+        isDraggingPlayhead: false,
+        wasPlayingBeforePlayheadDrag: false,
+        isDraggingTransform: false,
+        wasPlayingBeforeTransformDrag: false,
+        wasPlayingBeforeRender: false,
+        dragStartFrame: null,
+        boundaryCollisionCount: 0,
+        lastAttemptedFrame: null,
+        dragGhost: null,
       },
     },
     version: PROJECT_VERSION,
@@ -153,4 +176,5 @@ export const projectToSummary = (project: ProjectData): ProjectSummary => ({
   createdAt: project.metadata.createdAt,
   updatedAt: project.metadata.updatedAt,
   lastOpenedAt: project.metadata.lastOpenedAt,
+  sourceFilePath: project.metadata.sourceFilePath,
 });

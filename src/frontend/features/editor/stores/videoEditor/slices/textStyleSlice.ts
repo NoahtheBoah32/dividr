@@ -122,6 +122,11 @@ export const createTextStyleSlice: StateCreator<
   // Text Style Actions
   setActiveTextStyle: (styleId: string) =>
     set((state: any) => {
+      if (state.textStyle.activeStyle === styleId) {
+        return state;
+      }
+
+      state.recordAction?.('Change Subtitle Style Preset');
       state.markUnsavedChanges?.();
       return {
         textStyle: {
@@ -134,6 +139,15 @@ export const createTextStyleSlice: StateCreator<
   // Style application mode setter
   setStyleApplicationMode: (mode: 'all' | 'selected') =>
     set((state: any) => {
+      if (state.textStyle.styleApplicationMode === mode) {
+        return state;
+      }
+
+      state.recordAction?.(
+        mode === 'all'
+          ? 'Switch to Global Subtitle Styling'
+          : 'Switch to Per-Clip Subtitle Styling',
+      );
       state.markUnsavedChanges?.();
 
       // When switching TO 'selected' mode, snapshot current global styles
@@ -149,8 +163,6 @@ export const createTextStyleSlice: StateCreator<
         );
 
         if (hasSelectedSubtitles) {
-          state.recordAction?.('Switch to Per-Clip Styling');
-
           const updatedTracks = state.tracks.map((track: any) => {
             if (
               track.type === 'subtitle' &&
@@ -417,21 +429,32 @@ export const createTextStyleSlice: StateCreator<
     }),
 
   // Global subtitle position and transform
-  // NOTE: This is called during playback/rendering to sync position state.
-  // It should NOT trigger auto-save as it's runtime state, not user edits.
-  setGlobalSubtitlePosition: (position: {
-    x: number;
-    y: number;
-    scale?: number;
-    width?: number;
-    height?: number;
-  }) =>
-    set((state: any) => ({
-      textStyle: {
-        ...state.textStyle,
-        globalSubtitlePosition: position,
-      },
-    })),
+  setGlobalSubtitlePosition: (
+    position: {
+      x: number;
+      y: number;
+      scale?: number;
+      width?: number;
+      height?: number;
+    },
+    options?: { skipRecord?: boolean },
+  ) =>
+    set((state: any) => {
+      if (!options?.skipRecord) {
+        state.recordAction?.('Transform Subtitle');
+      }
+      state.markUnsavedChanges?.();
+
+      return {
+        textStyle: {
+          ...state.textStyle,
+          globalSubtitlePosition: {
+            ...state.textStyle.globalSubtitlePosition,
+            ...position,
+          },
+        },
+      };
+    }),
 
   // Snapshot global styles to selected subtitle tracks
   // This should be called when:

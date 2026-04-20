@@ -1,5 +1,32 @@
 import { VideoTrack } from '../../stores/videoEditor/types';
 
+type MarkerSnapSource = Array<number | { frame: number }>;
+
+const pushUniqueFrame = (
+  target: number[],
+  seen: Set<number>,
+  frame: number,
+): void => {
+  if (!Number.isFinite(frame)) return;
+  const normalizedFrame = Math.round(frame);
+  if (!seen.has(normalizedFrame)) {
+    seen.add(normalizedFrame);
+    target.push(normalizedFrame);
+  }
+};
+
+const appendMarkerFrames = (
+  target: number[],
+  seen: Set<number>,
+  markerSnapSources: MarkerSnapSource = [],
+): void => {
+  markerSnapSources.forEach((marker) => {
+    const markerFrame =
+      typeof marker === 'number' ? marker : Number(marker?.frame);
+    pushUniqueFrame(target, seen, markerFrame);
+  });
+};
+
 /**
  * Collision Detection Utility for Multi-Row Track Architecture
  *
@@ -477,17 +504,18 @@ export const findSnapPoints = (
   allTracks: VideoTrack[],
   excludeTrackIds: string[] = [],
   playheadFrame?: number,
+  markerSnapSources: MarkerSnapSource = [],
 ): { startSnapPoints: number[]; endSnapPoints: number[] } => {
   const excludeSet = new Set([track.id, ...excludeTrackIds]);
 
-  const startSnapPoints: number[] = [0]; // Always snap to frame 0
-  const endSnapPoints: number[] = [0]; // End can also snap to frame 0
+  const startSnapPoints: number[] = [];
+  const endSnapPoints: number[] = [];
+  const startSeen = new Set<number>();
+  const endSeen = new Set<number>();
 
-  // Add playhead as a snap point if provided
-  if (playheadFrame !== undefined && playheadFrame >= 0) {
-    startSnapPoints.push(playheadFrame);
-    endSnapPoints.push(playheadFrame);
-  }
+  // Priority 1: clip edges and frame 0
+  pushUniqueFrame(startSnapPoints, startSeen, 0);
+  pushUniqueFrame(endSnapPoints, endSeen, 0);
 
   // Collect snap points from ALL tracks (regardless of type or row)
   // This is CapCut-style behavior where any clip edge is a snap target
@@ -495,16 +523,26 @@ export const findSnapPoints = (
     if (excludeSet.has(t.id)) return;
 
     // Add both start and end frames as potential snap points
-    startSnapPoints.push(t.startFrame);
-    startSnapPoints.push(t.endFrame);
-    endSnapPoints.push(t.startFrame);
-    endSnapPoints.push(t.endFrame);
+    pushUniqueFrame(startSnapPoints, startSeen, t.startFrame);
+    pushUniqueFrame(startSnapPoints, startSeen, t.endFrame);
+    pushUniqueFrame(endSnapPoints, endSeen, t.startFrame);
+    pushUniqueFrame(endSnapPoints, endSeen, t.endFrame);
   });
 
-  // Remove duplicates and sort
+  // Priority 2: marker frames
+  appendMarkerFrames(startSnapPoints, startSeen, markerSnapSources);
+  appendMarkerFrames(endSnapPoints, endSeen, markerSnapSources);
+
+  // Priority 3: playhead
+  if (playheadFrame !== undefined && playheadFrame >= 0) {
+    pushUniqueFrame(startSnapPoints, startSeen, playheadFrame);
+    pushUniqueFrame(endSnapPoints, endSeen, playheadFrame);
+  }
+
+  // Arrays are intentionally NOT sorted so tie-breaks retain priority order.
   return {
-    startSnapPoints: [...new Set(startSnapPoints)].sort((a, b) => a - b),
-    endSnapPoints: [...new Set(endSnapPoints)].sort((a, b) => a - b),
+    startSnapPoints,
+    endSnapPoints,
   };
 };
 
@@ -516,23 +554,32 @@ export const findAllSnapPoints = (
   allTracks: VideoTrack[],
   excludeTrackIds: string[] = [],
   playheadFrame?: number,
+  markerSnapSources: MarkerSnapSource = [],
 ): number[] => {
   const excludeSet = new Set(excludeTrackIds);
-  const snapPoints: Set<number> = new Set([0]); // Always include frame 0
+  const snapPoints: number[] = [];
+  const seen = new Set<number>();
 
-  // Add playhead as a snap point if provided
-  if (playheadFrame !== undefined && playheadFrame >= 0) {
-    snapPoints.add(playheadFrame);
-  }
+  // Priority 1: clip edges and frame 0
+  pushUniqueFrame(snapPoints, seen, 0);
 
   // Collect all edges from all tracks
   allTracks.forEach((t) => {
     if (excludeSet.has(t.id)) return;
-    snapPoints.add(t.startFrame);
-    snapPoints.add(t.endFrame);
+    pushUniqueFrame(snapPoints, seen, t.startFrame);
+    pushUniqueFrame(snapPoints, seen, t.endFrame);
   });
 
-  return [...snapPoints].sort((a, b) => a - b);
+  // Priority 2: marker frames
+  appendMarkerFrames(snapPoints, seen, markerSnapSources);
+
+  // Priority 3: playhead
+  if (playheadFrame !== undefined && playheadFrame >= 0) {
+    pushUniqueFrame(snapPoints, seen, playheadFrame);
+  }
+
+  // Intentionally preserve priority ordering for equal-distance tie-breaks.
+  return snapPoints;
 };
 
 /**
@@ -570,6 +617,7 @@ export const calculateSnapPosition = (
   excludeTrackIds: string[] = [],
   snapThreshold = 5,
   playheadFrame?: number,
+  markerSnapSources: MarkerSnapSource = [],
 ): { snappedStartFrame: number; snapIndicatorFrame: number } | null => {
   // Get snap points from ALL tracks (not just same type)
   const { startSnapPoints, endSnapPoints } = findSnapPoints(
@@ -577,6 +625,7 @@ export const calculateSnapPosition = (
     allTracks,
     excludeTrackIds,
     playheadFrame,
+    markerSnapSources,
   );
 
   const proposedEndFrame = proposedStartFrame + trackDuration;
@@ -621,11 +670,13 @@ export const calculateMultiTrackSnapPosition = (
   excludeTrackIds: string[] = [],
   snapThreshold = 5,
   playheadFrame?: number,
+  markerSnapSources: MarkerSnapSource = [],
 ): { snappedDelta: number; snapIndicatorFrame: number } | null => {
   const allSnapPoints = findAllSnapPoints(
     allTracks,
     excludeTrackIds,
     playheadFrame,
+    markerSnapSources,
   );
 
   let bestSnap: { snappedDelta: number; snapIndicatorFrame: number } | null =

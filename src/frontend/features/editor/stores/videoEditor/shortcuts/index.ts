@@ -35,29 +35,26 @@ export class ShortcutRegistry {
       });
     }
 
-    // Get store instance for other shortcuts
-    const store = getStore();
-
     // Register timeline shortcuts
-    const timelineShortcuts = createTimelineShortcuts(store);
+    const timelineShortcuts = createTimelineShortcuts(getStore);
     timelineShortcuts.forEach((shortcut) => {
       this.shortcuts.set(shortcut.id, shortcut);
     });
 
     // Register track shortcuts
-    const trackShortcuts = createTrackShortcuts(store);
+    const trackShortcuts = createTrackShortcuts(getStore);
     trackShortcuts.forEach((shortcut) => {
       this.shortcuts.set(shortcut.id, shortcut);
     });
 
     // Register preview shortcuts
-    const previewShortcuts = createPreviewShortcuts(() => getStore());
+    const previewShortcuts = createPreviewShortcuts(getStore);
     previewShortcuts.forEach((shortcut) => {
       this.shortcuts.set(shortcut.id, shortcut);
     });
 
     // Register undo/redo shortcuts
-    const undoRedoShortcuts = createUndoRedoShortcuts(() => getStore());
+    const undoRedoShortcuts = createUndoRedoShortcuts(getStore);
     undoRedoShortcuts.forEach((shortcut) => {
       this.shortcuts.set(shortcut.id, shortcut);
     });

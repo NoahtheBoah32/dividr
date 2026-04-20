@@ -17,6 +17,12 @@ export interface TimelineSlice {
   setInPoint: (frame?: number) => void;
   setOutPoint: (frame?: number) => void;
   setSelectedTracks: (trackIds: string[]) => void;
+  addMarkerAtPlayhead: () => void;
+  addMarkerAtFrame: (frame: number) => void;
+  setSelectedMarker: (markerId: string | null) => void;
+  removeMarker: (markerId: string) => void;
+  removeSelectedMarker: () => void;
+  clearMarkers: () => void;
   toggleSnap: () => void;
   toggleSplitMode: () => void;
   setSplitMode: (active: boolean) => void;
@@ -43,6 +49,16 @@ export interface TimelineSlice {
   triggerDuplicationFeedback: (trackId: string) => void;
   clearDuplicationFeedback: (trackId: string) => void;
 
+  // Visual feedback for newly inserted tracks
+  insertionFeedbackTrackIds: Set<string>;
+  lastInsertedTrackId: string | null;
+  trackInsertionSequence: number;
+  triggerTrackInsertionFeedback: (
+    trackIds: string | string[],
+    primaryTrackId?: string,
+  ) => void;
+  clearTrackInsertionFeedback: (trackId: string) => void;
+
   // State management helpers
   markUnsavedChanges?: () => void;
 }
@@ -61,12 +77,17 @@ export const createTimelineSlice: StateCreator<
     zoom: 1,
     scrollX: 0,
     selectedTrackIds: [],
+    markers: [],
+    selectedMarkerId: null,
     playheadVisible: true,
     snapEnabled: true,
     isSplitModeActive: false,
     visibleTrackRows: ['video', 'audio'], // Default: only Media and Audio tracks visible
   },
   duplicationFeedbackTrackIds: new Set(),
+  insertionFeedbackTrackIds: new Set(),
+  lastInsertedTrackId: null,
+  trackInsertionSequence: 0,
 
   setCurrentFrame: (frame) =>
     set((state: any) => {
@@ -79,11 +100,17 @@ export const createTimelineSlice: StateCreator<
         state.tracks?.length > 0
           ? Math.max(...state.tracks.map((track: any) => track.endFrame))
           : state.timeline.totalFrames;
+      const clampedFrame = Math.max(0, Math.min(frame, effectiveEndFrame));
+
+      // Prevent store updates when frame is unchanged (critical for playback smoothness).
+      if (clampedFrame === state.timeline.currentFrame) {
+        return state;
+      }
 
       return {
         timeline: {
           ...state.timeline,
-          currentFrame: Math.max(0, Math.min(frame, effectiveEndFrame)),
+          currentFrame: clampedFrame,
         },
       };
     }),
@@ -142,8 +169,131 @@ export const createTimelineSlice: StateCreator<
 
   setSelectedTracks: (trackIds) =>
     set((state) => ({
-      timeline: { ...state.timeline, selectedTrackIds: trackIds },
+      timeline: {
+        ...state.timeline,
+        selectedTrackIds: trackIds,
+        // Track selection should own the active selection state.
+        selectedMarkerId: null,
+      },
     })),
+
+  addMarkerAtPlayhead: () => {
+    const state = get() as any;
+    state.addMarkerAtFrame(state.timeline?.currentFrame ?? 0);
+  },
+
+  addMarkerAtFrame: (frame: number) => {
+    if (!Number.isFinite(frame)) return;
+    const normalizedFrame = Math.max(0, Math.floor(frame));
+    const state = get() as any;
+    if (state.render?.isRendering) return;
+
+    const nextMarker = {
+      id:
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      frame: normalizedFrame,
+    };
+
+    state.recordAction?.('Add Marker', {
+      tracks: false,
+      mediaLibrary: false,
+      timeline: true,
+      preview: false,
+      textStyle: false,
+    });
+
+    set((current: any) => ({
+      timeline: {
+        ...current.timeline,
+        markers: [...(current.timeline.markers || []), nextMarker].sort(
+          (a: { frame: number }, b: { frame: number }) => a.frame - b.frame,
+        ),
+        selectedMarkerId: nextMarker.id,
+      },
+    }));
+
+    state.markUnsavedChanges?.();
+  },
+
+  setSelectedMarker: (markerId: string | null) =>
+    set((state) => {
+      if (state.timeline.selectedMarkerId === markerId) {
+        return state;
+      }
+      return {
+        timeline: {
+          ...state.timeline,
+          selectedMarkerId: markerId,
+        },
+      };
+    }),
+
+  removeMarker: (markerId: string) => {
+    const state = get() as any;
+    const currentMarkers = state.timeline?.markers || [];
+    if (!markerId || currentMarkers.length === 0) return;
+
+    const markerExists = currentMarkers.some(
+      (marker: { id: string }) => marker.id === markerId,
+    );
+    if (!markerExists) return;
+
+    state.recordAction?.('Delete Marker', {
+      tracks: false,
+      mediaLibrary: false,
+      timeline: true,
+      preview: false,
+      textStyle: false,
+    });
+
+    set((current: any) => ({
+      timeline: {
+        ...current.timeline,
+        markers: (current.timeline.markers || []).filter(
+          (marker: { id: string }) => marker.id !== markerId,
+        ),
+        selectedMarkerId:
+          current.timeline.selectedMarkerId === markerId
+            ? null
+            : current.timeline.selectedMarkerId,
+      },
+    }));
+
+    state.markUnsavedChanges?.();
+  },
+
+  removeSelectedMarker: () => {
+    const state = get() as any;
+    const selectedMarkerId = state.timeline?.selectedMarkerId;
+    if (!selectedMarkerId) return;
+    state.removeMarker(selectedMarkerId);
+  },
+
+  clearMarkers: () => {
+    const state = get() as any;
+    const currentMarkers = state.timeline?.markers || [];
+    if (!currentMarkers.length) return;
+
+    state.recordAction?.('Delete All Markers', {
+      tracks: false,
+      mediaLibrary: false,
+      timeline: true,
+      preview: false,
+      textStyle: false,
+    });
+
+    set((current: any) => ({
+      timeline: {
+        ...current.timeline,
+        markers: [],
+        selectedMarkerId: null,
+      },
+    }));
+
+    state.markUnsavedChanges?.();
+  },
 
   toggleSnap: () =>
     set((state) => ({
@@ -183,7 +333,6 @@ export const createTimelineSlice: StateCreator<
       // Sort according to the defined order
       newRows.sort((a, b) => order.indexOf(a) - order.indexOf(b));
 
-      console.log(`✅ Added track row: ${rowId}. Visible rows:`, newRows);
       return {
         timeline: {
           ...state.timeline,
@@ -196,14 +345,15 @@ export const createTimelineSlice: StateCreator<
     set((state) => {
       // Don't allow removing video or audio rows (they're essential)
       if (rowId === 'video' || rowId === 'audio') {
-        console.warn(`⚠️ Cannot remove essential track row: ${rowId}`);
+        console.warn(
+          `[TimelineSlice] Cannot remove essential track row${rowId}`,
+        );
         return state;
       }
 
       const newRows = state.timeline.visibleTrackRows.filter(
         (id) => id !== rowId,
       );
-      console.log(`🗑️ Removed track row: ${rowId}. Visible rows:`, newRows);
 
       return {
         timeline: {
@@ -227,13 +377,7 @@ export const createTimelineSlice: StateCreator<
     const snapPoints: SnapPoint[] = [];
     const { tracks, timeline } = state;
 
-    // Add playhead as snap point
-    snapPoints.push({
-      frame: currentFrame,
-      type: 'playhead',
-    });
-
-    // Add in/out points as snap points
+    // Priority 1: track edges + timeline bounds
     if (timeline.inPoint !== undefined) {
       snapPoints.push({
         frame: timeline.inPoint,
@@ -266,6 +410,20 @@ export const createTimelineSlice: StateCreator<
       });
     });
 
+    // Priority 2: marker frames
+    (timeline.markers || []).forEach((marker: { frame: number }) => {
+      snapPoints.push({
+        frame: marker.frame,
+        type: 'marker',
+      });
+    });
+
+    // Priority 3: playhead
+    snapPoints.push({
+      frame: currentFrame,
+      type: 'playhead',
+    });
+
     return snapPoints;
   },
 
@@ -296,27 +454,71 @@ export const createTimelineSlice: StateCreator<
 
   // Visual feedback for duplication
   triggerDuplicationFeedback: (trackId: string) => {
-    console.log(`[Animation] Adding ${trackId} to feedback set`);
     set((state) => {
       const newSet = new Set(state.duplicationFeedbackTrackIds);
       newSet.add(trackId);
-      console.log(`[Animation] Feedback set now contains:`, Array.from(newSet));
+
       return { duplicationFeedbackTrackIds: newSet };
     });
 
     // Auto-clear after animation duration (600ms)
     setTimeout(() => {
-      console.log(`[Animation] Clearing ${trackId} after 600ms`);
       get().clearDuplicationFeedback(trackId);
     }, 600);
   },
 
   clearDuplicationFeedback: (trackId: string) => {
-    console.log(`[Animation] Removing ${trackId} from feedback set`);
     set((state) => {
       const newSet = new Set(state.duplicationFeedbackTrackIds);
       newSet.delete(trackId);
       return { duplicationFeedbackTrackIds: newSet };
+    });
+  },
+
+  // Visual feedback for newly inserted tracks
+  triggerTrackInsertionFeedback: (trackIds, primaryTrackId) => {
+    const normalizedIds = Array.isArray(trackIds) ? trackIds : [trackIds];
+    const sanitizedIds = Array.from(
+      new Set(
+        normalizedIds.filter(
+          (id): id is string => typeof id === 'string' && id.length > 0,
+        ),
+      ),
+    );
+
+    if (sanitizedIds.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const newSet = new Set(state.insertionFeedbackTrackIds);
+      sanitizedIds.forEach((id) => newSet.add(id));
+
+      const targetTrackId =
+        primaryTrackId && sanitizedIds.includes(primaryTrackId)
+          ? primaryTrackId
+          : sanitizedIds[0];
+
+      return {
+        insertionFeedbackTrackIds: newSet,
+        lastInsertedTrackId: targetTrackId,
+        trackInsertionSequence: state.trackInsertionSequence + 1,
+      };
+    });
+
+    setTimeout(() => {
+      const currentState = get();
+      sanitizedIds.forEach((id) =>
+        currentState.clearTrackInsertionFeedback(id),
+      );
+    }, 1000);
+  },
+
+  clearTrackInsertionFeedback: (trackId: string) => {
+    set((state) => {
+      const newSet = new Set(state.insertionFeedbackTrackIds);
+      newSet.delete(trackId);
+      return { insertionFeedbackTrackIds: newSet };
     });
   },
 });

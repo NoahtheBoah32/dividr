@@ -28,7 +28,7 @@ export const exportVideoAction = (tracksCount: number) => {
       );
     }
   } catch (error) {
-    console.error('[Export Video] Failed:', error);
+    console.error('[ExportVideo] Failed', error);
     toast.error('Failed to open export dialog');
   }
 };

@@ -34,9 +34,14 @@ const ImagePropertiesComponent: React.FC<ImagePropertiesProps> = ({
   selectedTrackIds,
 }) => {
   const tracks = useVideoEditorStore((state) => state.tracks);
-  const updateTrack = useVideoEditorStore((state) => state.updateTrack);
-  const updateTrackProperty = useVideoEditorStore(
-    (state) => state.updateTrackProperty,
+  const canvasWidth = useVideoEditorStore(
+    (state) => state.preview.canvasWidth || 1920,
+  );
+  const canvasHeight = useVideoEditorStore(
+    (state) => state.preview.canvasHeight || 1080,
+  );
+  const updateTrackTransform = useVideoEditorStore(
+    (state) => state.updateTrackTransform,
   );
   const beginPropertyUpdate = useVideoEditorStore(
     (state) => state.beginPropertyUpdate,
@@ -66,37 +71,56 @@ const ImagePropertiesComponent: React.FC<ImagePropertiesProps> = ({
   const isMultipleSelected = selectedImageTracks.length > 1;
   const selectedTrack = selectedImageTracks[0];
   const currentTransform = selectedTrack.textTransform || DEFAULT_TRANSFORM;
+  const halfCanvasWidth = useMemo(
+    () => Math.max(canvasWidth / 2, 1),
+    [canvasWidth],
+  );
+  const halfCanvasHeight = useMemo(
+    () => Math.max(canvasHeight / 2, 1),
+    [canvasHeight],
+  );
+
+  const normalizedToPixelX = useCallback(
+    (normalized: number) => normalized * halfCanvasWidth,
+    [halfCanvasWidth],
+  );
+  const normalizedToPixelY = useCallback(
+    (normalized: number) => normalized * halfCanvasHeight,
+    [halfCanvasHeight],
+  );
+  const pixelToNormalizedX = useCallback(
+    (pixels: number) => pixels / halfCanvasWidth,
+    [halfCanvasWidth],
+  );
+  const pixelToNormalizedY = useCallback(
+    (pixels: number) => pixels / halfCanvasHeight,
+    [halfCanvasHeight],
+  );
+  const formatPositionInputValue = useCallback((value: number) => {
+    if (!Number.isFinite(value)) return '0';
+    const rounded = Math.round(value * 1000) / 1000;
+    const asString = `${rounded}`;
+    return asString.includes('.') ? asString.replace(/\.?0+$/, '') : asString;
+  }, []);
 
   // Helper function to update transform for selected tracks (creates undo entry)
   const updateTransform = useCallback(
     (transformUpdates: Partial<typeof DEFAULT_TRANSFORM>) => {
       selectedImageTracks.forEach((track) => {
-        const currentTrackTransform = track.textTransform || DEFAULT_TRANSFORM;
-        updateTrack(track.id, {
-          textTransform: {
-            ...currentTrackTransform,
-            ...transformUpdates,
-          },
-        });
+        updateTrackTransform(track.id, transformUpdates);
       });
     },
-    [selectedImageTracks, updateTrack],
+    [selectedImageTracks, updateTrackTransform],
   );
 
   // Helper function to update transform during drag (batch-safe, no individual undo entries)
   const updateTransformDrag = useCallback(
     (transformUpdates: Partial<typeof DEFAULT_TRANSFORM>) => {
       selectedImageTracks.forEach((track) => {
-        const currentTrackTransform = track.textTransform || DEFAULT_TRANSFORM;
-        updateTrackProperty(track.id, {
-          textTransform: {
-            ...currentTrackTransform,
-            ...transformUpdates,
-          },
-        });
+        updateTrackTransform(track.id, transformUpdates, { skipRecord: true });
       });
     },
-    [selectedImageTracks, updateTrackProperty],
+    [selectedImageTracks, updateTrackTransform],
   );
 
   // Check if transform has changed from default
@@ -146,12 +170,15 @@ const ImagePropertiesComponent: React.FC<ImagePropertiesProps> = ({
     return normalized > 180 ? normalized - 360 : normalized;
   }, [currentTransform.rotation]);
 
+  const [isEditingPositionX, setIsEditingPositionX] = React.useState(false);
+  const [isEditingPositionY, setIsEditingPositionY] = React.useState(false);
+
   // Local state for inputs to prevent focus loss
   const [localX, setLocalX] = React.useState(() =>
-    currentTransform.x.toFixed(2),
+    formatPositionInputValue(normalizedToPixelX(currentTransform.x)),
   );
   const [localY, setLocalY] = React.useState(() =>
-    currentTransform.y.toFixed(2),
+    formatPositionInputValue(normalizedToPixelY(currentTransform.y)),
   );
   const [localRotation, setLocalRotation] = React.useState(() =>
     displayRotation.toFixed(1),
@@ -159,38 +186,113 @@ const ImagePropertiesComponent: React.FC<ImagePropertiesProps> = ({
 
   // Update local state when track changes
   React.useEffect(() => {
-    setLocalX(currentTransform.x.toFixed(2));
-    setLocalY(currentTransform.y.toFixed(2));
+    if (!isEditingPositionX) {
+      setLocalX(
+        formatPositionInputValue(normalizedToPixelX(currentTransform.x)),
+      );
+    }
+    if (!isEditingPositionY) {
+      setLocalY(
+        formatPositionInputValue(normalizedToPixelY(currentTransform.y)),
+      );
+    }
     setLocalRotation(displayRotation.toFixed(1));
   }, [
     selectedTrack.id,
     currentTransform.x,
     currentTransform.y,
     displayRotation,
+    normalizedToPixelX,
+    normalizedToPixelY,
+    formatPositionInputValue,
+    isEditingPositionX,
+    isEditingPositionY,
   ]);
 
   const handlePositionXChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const newValue = e.target.value;
       setLocalX(newValue);
-      const value = parseFloat(newValue);
-      if (!isNaN(value)) {
-        updateTransform({ x: value });
-      }
     },
-    [updateTransform],
+    [],
   );
 
   const handlePositionYChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const newValue = e.target.value;
       setLocalY(newValue);
-      const value = parseFloat(newValue);
-      if (!isNaN(value)) {
-        updateTransform({ y: value });
+    },
+    [],
+  );
+
+  const commitPositionX = useCallback(() => {
+    const value = parseFloat(localX);
+    if (Number.isFinite(value)) {
+      updateTransform({ x: pixelToNormalizedX(value) });
+      setLocalX(formatPositionInputValue(value));
+    } else {
+      setLocalX(
+        formatPositionInputValue(normalizedToPixelX(currentTransform.x)),
+      );
+    }
+    setIsEditingPositionX(false);
+  }, [
+    localX,
+    updateTransform,
+    pixelToNormalizedX,
+    formatPositionInputValue,
+    normalizedToPixelX,
+    currentTransform.x,
+  ]);
+
+  const commitPositionY = useCallback(() => {
+    const value = parseFloat(localY);
+    if (Number.isFinite(value)) {
+      updateTransform({ y: pixelToNormalizedY(value) });
+      setLocalY(formatPositionInputValue(value));
+    } else {
+      setLocalY(
+        formatPositionInputValue(normalizedToPixelY(currentTransform.y)),
+      );
+    }
+    setIsEditingPositionY(false);
+  }, [
+    localY,
+    updateTransform,
+    pixelToNormalizedY,
+    formatPositionInputValue,
+    normalizedToPixelY,
+    currentTransform.y,
+  ]);
+
+  const handlePositionXKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.currentTarget.blur();
+      } else if (e.key === 'Escape') {
+        setLocalX(
+          formatPositionInputValue(normalizedToPixelX(currentTransform.x)),
+        );
+        setIsEditingPositionX(false);
+        e.currentTarget.blur();
       }
     },
-    [updateTransform],
+    [formatPositionInputValue, normalizedToPixelX, currentTransform.x],
+  );
+
+  const handlePositionYKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.currentTarget.blur();
+      } else if (e.key === 'Escape') {
+        setLocalY(
+          formatPositionInputValue(normalizedToPixelY(currentTransform.y)),
+        );
+        setIsEditingPositionY(false);
+        e.currentTarget.blur();
+      }
+    },
+    [formatPositionInputValue, normalizedToPixelY, currentTransform.y],
   );
 
   const handleRotationInputChange = useCallback(
@@ -426,30 +528,43 @@ const ImagePropertiesComponent: React.FC<ImagePropertiesProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">X</label>
-                  <Input
-                    type="number"
-                    value={localX}
-                    onChange={handlePositionXChange}
-                    step={0.01}
-                    className="h-8 text-xs"
-                    disabled={isMultipleSelected}
-                  />
+                  <div className="relative">
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">
+                      px
+                    </span>
+                    <Input
+                      type="number"
+                      value={localX}
+                      onChange={handlePositionXChange}
+                      onFocus={() => setIsEditingPositionX(true)}
+                      onBlur={commitPositionX}
+                      onKeyDown={handlePositionXKeyDown}
+                      step={1}
+                      className="h-8 text-xs pr-7"
+                      disabled={isMultipleSelected}
+                    />
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">Y</label>
-                  <Input
-                    type="number"
-                    value={localY}
-                    onChange={handlePositionYChange}
-                    step={0.01}
-                    className="h-8 text-xs"
-                    disabled={isMultipleSelected}
-                  />
+                  <div className="relative">
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">
+                      px
+                    </span>
+                    <Input
+                      type="number"
+                      value={localY}
+                      onChange={handlePositionYChange}
+                      onFocus={() => setIsEditingPositionY(true)}
+                      onBlur={commitPositionY}
+                      onKeyDown={handlePositionYKeyDown}
+                      step={1}
+                      className="h-8 text-xs pr-7"
+                      disabled={isMultipleSelected}
+                    />
+                  </div>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Normalized coordinates (-1 to 1, 0 = center)
-              </p>
             </div>
 
             <Separator />

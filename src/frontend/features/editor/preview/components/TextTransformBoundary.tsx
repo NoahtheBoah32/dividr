@@ -38,6 +38,7 @@ interface TextTransformBoundaryProps {
   onEditModeChange?: (isEditing: boolean) => void; // Callback when edit mode changes
   autoEnterEditMode?: boolean; // Whether to automatically enter edit mode on mount
   onEditStarted?: () => void; // Callback when auto-edit mode is triggered
+  onRequestEditMode?: (trackId: string) => void; // Request external edit-mode activation (used by boundary-only overlays)
   children: React.ReactNode;
   appliedStyle?: React.CSSProperties;
   clipContent?: boolean; // Whether to clip content to canvas bounds
@@ -84,6 +85,7 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
   onEditModeChange,
   autoEnterEditMode = false,
   onEditStarted,
+  onRequestEditMode,
   children,
   appliedStyle,
   clipContent = false,
@@ -102,7 +104,6 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
   const boundaryRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const editableRef = useRef<HTMLDivElement>(null);
-  const hasMigratedRef = useRef(false); // Track if we've already migrated coordinates
   const dragDelayTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Delay before starting drag to allow double-click
   const lastClickTimeRef = useRef<number>(0); // Track last click time for double-click detection
   const transformDragStartedRef = useRef(false); // Track if we've started transform drag for playback pause
@@ -187,49 +188,36 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
     height: 0,
   };
 
-  // Migration: If coordinates appear to be in pixel space, convert to normalized
-  // ONLY run this migration once per track to avoid interfering with drag operations
-  const normalizedTransform = React.useMemo(() => {
-    // Check if coordinates need migration (look like pixel values > 2)
-    const needsMigration =
-      !hasMigratedRef.current &&
-      (Math.abs(rawTransform.x) > 2 || Math.abs(rawTransform.y) > 2);
-
-    if (needsMigration) {
-      hasMigratedRef.current = true; // Mark as migrated
-      const normalized = pixelsToNormalized({
-        x: rawTransform.x,
-        y: rawTransform.y,
-      });
-      // Skip recording for migration - it's a system-generated coordinate fix
-      onTransformUpdate(
-        track.id,
-        {
-          x: normalized.x,
-          y: normalized.y,
-          width: rawTransform.width,
-          height: rawTransform.height,
-        },
-        { skipRecord: true },
-      );
-      return {
-        ...rawTransform,
-        x: normalized.x,
-        y: normalized.y,
-      };
-    }
-    return rawTransform;
-  }, [
-    rawTransform.x,
-    rawTransform.y,
-    rawTransform.scale,
-    rawTransform.rotation,
-    rawTransform.width,
-    rawTransform.height,
-    pixelsToNormalized,
-    onTransformUpdate,
-    track.id,
-  ]);
+  const normalizedTransform = React.useMemo(
+    () => ({
+      ...rawTransform,
+      x: Number.isFinite(rawTransform.x) ? rawTransform.x : 0,
+      y: Number.isFinite(rawTransform.y) ? rawTransform.y : 0,
+      scale:
+        Number.isFinite(rawTransform.scale) && rawTransform.scale > 0
+          ? rawTransform.scale
+          : 0.2,
+      rotation: Number.isFinite(rawTransform.rotation)
+        ? rawTransform.rotation
+        : 0,
+      width:
+        Number.isFinite(rawTransform.width) && rawTransform.width >= 0
+          ? rawTransform.width
+          : 0,
+      height:
+        Number.isFinite(rawTransform.height) && rawTransform.height >= 0
+          ? rawTransform.height
+          : 0,
+    }),
+    [
+      rawTransform.x,
+      rawTransform.y,
+      rawTransform.scale,
+      rawTransform.rotation,
+      rawTransform.width,
+      rawTransform.height,
+    ],
+  );
 
   // Allow positioning beyond video bounds for professional editing behavior
   // Content will be clipped by the overlay container, but handles remain accessible
@@ -528,7 +516,7 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
       // This enables proper spatial hit-testing - a higher z-index element
       // visible at this position should be selected instead
       // NOTE: This only applies to content area clicks, not handles (checked above)
-      if (getTopElementAtPoint) {
+      if (!isSelected && !boundaryOnly && getTopElementAtPoint) {
         const topElementId = getTopElementAtPoint(e.clientX, e.clientY);
         if (topElementId && topElementId !== track.id) {
           // Another element is above this one at the cursor position
@@ -560,8 +548,18 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
           onSelect(track.id);
         }
 
-        // Skip edit mode if boundaryOnly - let the content layer handle it
-        if (boundaryOnly) return;
+        // Boundary-only overlays cannot enter inline edit mode directly.
+        // Request edit mode from parent so the visible content instance can enter edit.
+        if (boundaryOnly) {
+          if (transformDragStartedRef.current) {
+            transformDragStartedRef.current = false;
+            endDraggingTransform();
+          }
+          e.stopPropagation();
+          e.preventDefault();
+          onRequestEditMode?.(track.id);
+          return;
+        }
 
         e.stopPropagation();
         enterEditMode(true);
@@ -606,6 +604,8 @@ export const TextTransformBoundary: React.FC<TextTransformBoundaryProps> = ({
       startDraggingTransform,
       boundaryOnly,
       getTopElementAtPoint,
+      endDraggingTransform,
+      onRequestEditMode,
     ],
   );
 

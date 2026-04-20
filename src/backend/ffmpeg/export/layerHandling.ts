@@ -64,11 +64,11 @@ export function collectAllLayers(
     : [];
 
   console.log(
-    `📝 Found ${textSegmentsForProcessing.length} text segment(s) for processing`,
+    `[LayerHandling] Found${textSegmentsForProcessing.length} text segment(s) for processing`,
   );
   textSegmentsForProcessing.forEach((seg, idx) => {
     console.log(
-      `   Text segment ${idx + 1}: layer=${seg.layer ?? 0}, text="${seg.text || '(empty)'}", time=[${seg.startTime?.toFixed(2)}s-${seg.endTime?.toFixed(2)}s]`,
+      `[LayerHandling] Text segment${idx + 1}: layer=${seg.layer ?? 0}, text="${seg.text || '(empty)'}", time=[${seg.startTime?.toFixed(2)}s-${seg.endTime?.toFixed(2)}s]`,
     );
   });
 
@@ -87,7 +87,7 @@ export function collectAllLayers(
   });
 
   console.log(
-    `📝 Text segments grouped by layer:`,
+    '[LayerHandling] Text segments grouped by layer',
     Array.from(textByLayer.entries())
       .map(([layer, segs]) => `Layer ${layer}: ${segs.length} segment(s)`)
       .join(', '),

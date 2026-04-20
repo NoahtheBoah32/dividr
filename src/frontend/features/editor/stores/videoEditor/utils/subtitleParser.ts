@@ -236,7 +236,10 @@ export async function processSubtitleFile(
       return subtitleTracks;
     }
   } catch (error) {
-    console.error(`❌ Error parsing subtitle file ${fileInfo.name}:`, error);
+    console.error(
+      `[SubtitleParser] Error parsing subtitle file${fileInfo.name}:`,
+      error,
+    );
   }
 
   // Fallback: create single subtitle track if parsing fails

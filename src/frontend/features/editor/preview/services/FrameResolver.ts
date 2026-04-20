@@ -31,6 +31,7 @@ export interface Transform {
 
 export interface FrameRequest {
   clipId: string;
+  instanceKey: string;
   sourceId: string;
   sourceUrl: string;
   sourceFrame: number;
@@ -45,6 +46,7 @@ export interface FrameRequest {
 
 export interface AudioFrameRequest {
   clipId: string;
+  streamKey: string;
   sourceId: string;
   sourceUrl: string;
   sourceTime: number;
@@ -79,6 +81,21 @@ export const normalizeSourceId = (url: string | undefined | null): string => {
   } catch {
     return url;
   }
+};
+
+/**
+ * Build a stable media stream key for timeline playback.
+ *
+ * We key by source + track row so:
+ * - Split clips on the same row/source reuse one media element (seamless cuts)
+ * - Overlapping clips on different rows get independent media elements (proper mixing)
+ */
+export const buildMediaStreamKey = (
+  sourceId: string,
+  trackRowIndex?: number,
+): string => {
+  const rowKey = Number.isFinite(trackRowIndex) ? trackRowIndex : 0;
+  return `${sourceId}::row:${rowKey}`;
 };
 
 export const getVideoSource = (
@@ -181,6 +198,7 @@ export const resolveFrameRequests = (
 
     requests.push({
       clipId: clip.clipId,
+      instanceKey: buildMediaStreamKey(clip.sourceId, clip.trackRowIndex),
       sourceId: clip.sourceId,
       sourceUrl: clip.sourceUrl,
       sourceFrame,
@@ -231,6 +249,10 @@ export const resolveAudioFrameRequests = (
 
     requests.push({
       clipId: track.id,
+      streamKey: buildMediaStreamKey(
+        normalizeSourceId(sourceUrl),
+        track.trackRowIndex,
+      ),
       sourceId: normalizeSourceId(sourceUrl),
       sourceUrl,
       sourceTime,

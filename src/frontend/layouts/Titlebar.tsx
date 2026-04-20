@@ -24,24 +24,17 @@ import { Minus, Plus, Square, Upload, X } from 'lucide-react';
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import packageJson from '../../../package.json';
 import { AutosaveIndicator } from '../features/editor/components/autoSaveIndicator';
 interface TitleBarProps {
   className?: string;
 }
 
-const VersionBadge: React.FC = () => {
-  return (
-    <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 rounded-md bg-muted/50">
-      v{packageJson.version}
-    </span>
-  );
-};
-
 const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
-  const { createNewProject, openProject, importProject } = useProjectStore();
+  const { createNewProject, openProject, importProject, currentProject } =
+    useProjectStore();
   const { theme, resolvedTheme } = useTheme();
   const { projects } = useProjectStore();
+  const isDev = (import.meta as any).env?.DEV === true;
 
   const location = useLocation();
 
@@ -49,11 +42,24 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
   const isWindows =
     typeof navigator !== 'undefined' &&
     /Windows/i.test(navigator.userAgent || '');
-  const isDev = (import.meta as any).env?.DEV === true;
   const titlebarRef = React.useRef<HTMLDivElement>(null);
 
   // Determine context based on current route
   const isInVideoEditor = location.pathname.startsWith('/video-editor');
+
+  React.useEffect(() => {
+    const appTitle = 'DiviDr';
+    if (!isInVideoEditor) {
+      document.title = appTitle;
+      return;
+    }
+
+    const projectTitle = currentProject?.metadata?.title?.trim();
+    document.title =
+      projectTitle && projectTitle.length > 0
+        ? `${projectTitle} - ${appTitle}`
+        : appTitle;
+  }, [currentProject?.metadata?.title, isInVideoEditor]);
 
   const handleCreateProject = async () => {
     try {
@@ -65,7 +71,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
       // Navigate to video editor with the new project
       navigate('/video-editor');
     } catch (error) {
-      console.error('Failed to create project:', error);
+      console.error('[Titlebar] Failed to create project', error);
       // Could add toast notification here if needed
     }
   };
@@ -80,7 +86,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
       await importProject(file);
       toast.success('Project imported successfully!');
     } catch (error) {
-      console.error('Failed to import project:', error);
+      console.error('[Titlebar] Failed to import project', error);
       toast.error('Failed to import project');
     }
 
@@ -193,7 +199,6 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
                 alt="Dividr Logo"
               />
             </Link>
-            {!isInVideoEditor && <VersionBadge />}
 
             {isInVideoEditor && <AutosaveIndicator />}
           </div>
@@ -248,7 +253,6 @@ const TitleBar: React.FC<TitleBarProps> = ({ className }) => {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {isInVideoEditor && <VersionBadge />}
               <ModeToggle />
             </div>
 

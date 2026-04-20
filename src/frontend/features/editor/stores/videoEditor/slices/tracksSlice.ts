@@ -18,12 +18,70 @@ import {
 import { VideoTrack } from '../types';
 import { detectAspectRatio } from '../utils/aspectRatioHelpers';
 import { SUBTITLE_EXTENSIONS } from '../utils/constants';
+import { canSplitClip } from '../utils/splitUtils';
 import { processSubtitleFile } from '../utils/subtitleParser';
 import {
   findLastEndFrameForType,
   findNearestAvailablePosition,
   getTrackColor,
 } from '../utils/trackHelpers';
+
+type TrackTransform = NonNullable<VideoTrack['textTransform']>;
+
+const DEFAULT_TRACK_TRANSFORM: TrackTransform = {
+  x: 0,
+  y: 0,
+  scale: 1,
+  rotation: 0,
+  width: 0,
+  height: 0,
+};
+
+const sanitizeTransformUpdates = (
+  updates: Partial<TrackTransform>,
+): Partial<TrackTransform> => {
+  const sanitized: Partial<TrackTransform> = {};
+
+  if (updates.x !== undefined && Number.isFinite(updates.x)) {
+    sanitized.x = updates.x;
+  }
+  if (updates.y !== undefined && Number.isFinite(updates.y)) {
+    sanitized.y = updates.y;
+  }
+  if (updates.scale !== undefined) {
+    sanitized.scale =
+      Number.isFinite(updates.scale) && updates.scale > 0 ? updates.scale : 1;
+  }
+  if (updates.rotation !== undefined && Number.isFinite(updates.rotation)) {
+    sanitized.rotation = updates.rotation;
+  }
+  if (updates.width !== undefined) {
+    sanitized.width =
+      Number.isFinite(updates.width) && updates.width >= 0 ? updates.width : 0;
+  }
+  if (updates.height !== undefined) {
+    sanitized.height =
+      Number.isFinite(updates.height) && updates.height >= 0
+        ? updates.height
+        : 0;
+  }
+
+  return sanitized;
+};
+
+const cloneNestedTrackMetadata = (track: VideoTrack): VideoTrack => ({
+  ...track,
+  textTransform: track.textTransform
+    ? { ...track.textTransform }
+    : track.textTransform,
+  subtitleTransform: track.subtitleTransform
+    ? { ...track.subtitleTransform }
+    : track.subtitleTransform,
+  textStyle: track.textStyle ? { ...track.textStyle } : track.textStyle,
+  subtitleStyle: track.subtitleStyle
+    ? { ...track.subtitleStyle }
+    : track.subtitleStyle,
+});
 
 const resolveSubtitleRowIndex = (
   tracks: VideoTrack[],
@@ -268,13 +326,24 @@ export interface TracksSlice {
   removeTrack: (trackId: string) => void;
   removeSelectedTracks: () => void;
   updateTrack: (trackId: string, updates: Partial<VideoTrack>) => void;
+  updateTrackTransform: (
+    trackId: string,
+    updates: Partial<TrackTransform>,
+    options?: { skipRecord?: boolean },
+  ) => void;
   moveTrack: (trackId: string, newStartFrame: number) => void;
   moveSelectedTracks: (draggedTrackId: string, newStartFrame: number) => void;
   moveTrackToRow: (
     trackId: string,
     targetRowIndex: number,
     newStartFrame?: number,
+    options?: {
+      skipNormalize?: boolean;
+      excludeTrackIds?: string[];
+      skipLinkedMove?: boolean;
+    },
   ) => void;
+  normalizeTrackRowsAfterDrop: () => void;
   resizeTrack: (
     trackId: string,
     newStartFrame?: number,
@@ -459,12 +528,18 @@ export const createTracksSlice: StateCreator<
 
       set((state: any) => ({
         tracks: [...state.tracks, videoTrack, audioTrack],
+        timeline: {
+          ...state.timeline,
+          selectedTrackIds: [id, audioId],
+          selectedMarkerId: null,
+        },
       }));
 
       // Refresh state reference after set
       state = get() as any;
       state.markUnsavedChanges?.();
       state.updateProjectThumbnailFromTimeline?.();
+      state.triggerTrackInsertionFeedback?.([id, audioId], id);
 
       // Auto-update canvas size if this is the first video track
       if (
@@ -580,6 +655,11 @@ export const createTracksSlice: StateCreator<
 
       set((state: any) => ({
         tracks: [...state.tracks, track],
+        timeline: {
+          ...state.timeline,
+          selectedTrackIds: [id],
+          selectedMarkerId: null,
+        },
       }));
 
       // Auto-create track row for subtitle and image types
@@ -599,6 +679,7 @@ export const createTracksSlice: StateCreator<
       // Refresh state reference after set
       state = get() as any;
       state.markUnsavedChanges?.();
+      state.triggerTrackInsertionFeedback?.([id], id);
       return id;
     }
   },
@@ -606,6 +687,7 @@ export const createTracksSlice: StateCreator<
   addTracks: async (tracksData) => {
     const state = get() as any;
     const trackIds: string[] = [];
+    let lastInsertedSelection: string[] = [];
 
     // Begin grouped transaction for batch track addition
     state.beginGroup?.('Add Multiple Tracks');
@@ -716,6 +798,7 @@ export const createTracksSlice: StateCreator<
           newTracks.push(videoTrack);
           newTracks.push(audioTrack);
           trackIds.push(id, audioId);
+          lastInsertedSelection = [id, audioId];
         } else {
           // For non-video tracks - calculate row index for TOP placement
           const allTracksForRow = [
@@ -741,6 +824,7 @@ export const createTracksSlice: StateCreator<
 
           newTracks.push(newTrack);
           trackIds.push(id);
+          lastInsertedSelection = [id];
 
           // Track which types need their track rows to be visible
           if (trackData.type === 'subtitle' || trackData.type === 'image') {
@@ -750,13 +834,24 @@ export const createTracksSlice: StateCreator<
       }
 
       // Single state update for all tracks
-      set((state) => ({
+      set((state: any) => ({
         tracks: [...state.tracks, ...newTracks],
+        timeline: {
+          ...state.timeline,
+          selectedTrackIds: lastInsertedSelection,
+          selectedMarkerId: null,
+        },
       }));
 
       // Refresh state reference
       const currentState = get() as any;
       currentState.markUnsavedChanges?.();
+      if (trackIds.length > 0) {
+        currentState.triggerTrackInsertionFeedback?.(
+          trackIds,
+          lastInsertedSelection[0] || trackIds[0],
+        );
+      }
 
       // Auto-update canvas size if this batch contains the first video track
       const existingVideoTracks = state.tracks.filter(
@@ -811,9 +906,6 @@ export const createTracksSlice: StateCreator<
       mediaItem.transcoding?.status === 'pending' ||
       mediaItem.transcoding?.status === 'processing'
     ) {
-      console.log(
-        `🚫 Blocking timeline addition for transcoding media: ${mediaItem.name}`,
-      );
       // Trigger global blocked modal if available
       if (state.setTranscodingBlockedMedia) {
         state.setTranscodingBlockedMedia(mediaItem);
@@ -858,20 +950,14 @@ export const createTracksSlice: StateCreator<
           );
 
           // Use batch addTracks for better performance
-          console.log(
-            `🚀 Adding ${subtitleTracks.length} subtitle tracks in batch...`,
-          );
-          const addedIds = await get().addTracks(subtitleTracks);
 
-          console.log(
-            `✅ Imported ${subtitleTracks.length} subtitle segments using batch operation`,
-          );
+          const addedIds = await get().addTracks(subtitleTracks);
 
           return addedIds[0] || ''; // Return first track ID for consistency
         }
       } catch (error) {
         console.error(
-          `❌ Error processing subtitle file ${mediaItem.name}:`,
+          `[TracksSlice] Error processing subtitle file${mediaItem.name}:`,
           error,
         );
         // Fall through to single track creation
@@ -896,9 +982,6 @@ export const createTracksSlice: StateCreator<
       // Use pre-calculated values from import
       aspectRatio = mediaItem.metadata.aspectRatio;
       aspectRatioLabel = mediaItem.metadata.aspectRatioLabel || undefined;
-      console.log(
-        `📐 Using stored aspect ratio: ${aspectRatioLabel || 'custom'} (${aspectRatio?.toFixed(2)}) for ${mediaItem.name}`,
-      );
     } else {
       // Fallback: Detect aspect ratio from dimensions
       const aspectRatioData = detectAspectRatio(
@@ -907,9 +990,6 @@ export const createTracksSlice: StateCreator<
       );
       aspectRatio = aspectRatioData?.ratio;
       aspectRatioLabel = aspectRatioData?.label || undefined;
-      console.log(
-        `📐 Detected aspect ratio (fallback): ${aspectRatioLabel || 'custom'} (${aspectRatio?.toFixed(2)}) for ${mediaItem.name}`,
-      );
     }
 
     const track = {
@@ -955,9 +1035,6 @@ export const createTracksSlice: StateCreator<
       track.width &&
       track.height
     ) {
-      console.log(
-        `🎬 Setting canvas size to match first video track: ${track.width}×${track.height}`,
-      );
       (get() as any).setCanvasSize(track.width, track.height);
     }
 
@@ -991,6 +1068,7 @@ export const createTracksSlice: StateCreator<
         selectedTrackIds: state.timeline.selectedTrackIds.filter(
           (id: string) => !tracksToRemove.has(id),
         ),
+        selectedMarkerId: null,
       },
     }));
 
@@ -1042,6 +1120,7 @@ export const createTracksSlice: StateCreator<
       timeline: {
         ...state.timeline,
         selectedTrackIds: [],
+        selectedMarkerId: null,
       },
     }));
 
@@ -1070,7 +1149,7 @@ export const createTracksSlice: StateCreator<
     let safeUpdates = updates;
     if ('sourceFps' in updates) {
       console.warn(
-        `⚠️ Attempted to mutate sourceFps on track ${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
+        `[TracksSlice] Attempted to mutate sourceFps on track${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
       );
       // Remove sourceFps from updates to prevent mutation
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1082,6 +1161,37 @@ export const createTracksSlice: StateCreator<
       tracks: state.tracks.map((track: VideoTrack) =>
         track.id === trackId ? { ...track, ...safeUpdates } : track,
       ),
+    }));
+
+    state.markUnsavedChanges?.();
+  },
+
+  updateTrackTransform: (trackId, updates, options) => {
+    const safeUpdates = sanitizeTransformUpdates(updates);
+    if (Object.keys(safeUpdates).length === 0) {
+      return;
+    }
+
+    const state = get() as any;
+    if (!options?.skipRecord) {
+      state.recordAction?.('Transform Track');
+    }
+
+    set((state: any) => ({
+      tracks: state.tracks.map((track: VideoTrack) => {
+        if (track.id !== trackId) {
+          return track;
+        }
+
+        const currentTransform = track.textTransform || DEFAULT_TRACK_TRANSFORM;
+        return {
+          ...track,
+          textTransform: {
+            ...currentTransform,
+            ...safeUpdates,
+          },
+        };
+      }),
     }));
 
     state.markUnsavedChanges?.();
@@ -1134,6 +1244,7 @@ export const createTracksSlice: StateCreator<
           excludeIds,
           snapThreshold,
           state.timeline?.currentFrame, // Also snap to playhead
+          state.timeline?.markers || [],
         );
 
         if (snapResult) {
@@ -1284,7 +1395,7 @@ export const createTracksSlice: StateCreator<
       // If the dragged track is not in selection, fall back to single track move
       if (!selectedTrackIds.includes(draggedTrackId)) {
         console.warn(
-          '⚠️ Dragged track not in selection, falling back to single move',
+          '[TracksSlice] Dragged track not in selection, falling back to single move',
         );
         return state;
       }
@@ -1340,6 +1451,7 @@ export const createTracksSlice: StateCreator<
           tracksToMoveArray,
           snapThreshold,
           state.timeline?.currentFrame, // Also snap to playhead
+          state.timeline?.markers || [],
         );
 
         if (snapResult) {
@@ -1441,7 +1553,7 @@ export const createTracksSlice: StateCreator<
     state.markUnsavedChanges?.();
   },
 
-  moveTrackToRow: (trackId, targetRowIndex, newStartFrame) => {
+  moveTrackToRow: (trackId, targetRowIndex, newStartFrame, options) => {
     const state = get() as any;
 
     // Record action for undo/redo
@@ -1449,7 +1561,7 @@ export const createTracksSlice: StateCreator<
 
     const trackToMove = state.tracks.find((t: VideoTrack) => t.id === trackId);
     if (!trackToMove) {
-      console.warn(`⚠️ Track ${trackId} not found`);
+      console.warn(`[TracksSlice] Track${trackId} not found`);
       return;
     }
 
@@ -1471,6 +1583,13 @@ export const createTracksSlice: StateCreator<
     if (trackToMove.isLinked && trackToMove.linkedTrackId) {
       excludeIds.push(trackToMove.linkedTrackId);
     }
+    if (options?.excludeTrackIds?.length) {
+      excludeIds.push(...options.excludeTrackIds);
+    }
+    if (state.playback?.dragGhost?.isMultiSelection) {
+      excludeIds.push(...(state.playback.dragGhost.selectedTrackIds || []));
+    }
+    const uniqueExcludeIds = Array.from(new Set(excludeIds));
 
     const isLinkedAudioPrimary =
       trackToMove.type === 'audio' && trackToMove.isLinked;
@@ -1494,7 +1613,7 @@ export const createTracksSlice: StateCreator<
         trackToMove.type,
         normalizedTargetIndex,
         state.tracks,
-        { excludeTrackIds: excludeIds },
+        { excludeTrackIds: uniqueExcludeIds },
       );
 
       if (wouldCollide && !isLinkedAudioPrimary) {
@@ -1505,7 +1624,7 @@ export const createTracksSlice: StateCreator<
           trackToMove.type,
           normalizedTargetIndex,
           state.tracks,
-          excludeIds,
+          uniqueExcludeIds,
           state.timeline?.currentFrame,
         );
       } else {
@@ -1522,7 +1641,7 @@ export const createTracksSlice: StateCreator<
         state.tracks,
         {
           preferredRowIndex: normalizedTargetIndex,
-          excludeTrackIds: excludeIds,
+          excludeTrackIds: uniqueExcludeIds,
         },
       );
     }
@@ -1540,7 +1659,7 @@ export const createTracksSlice: StateCreator<
         state.tracks,
         {
           preferredRowIndex: normalizedTargetIndex,
-          excludeTrackIds: excludeIds,
+          excludeTrackIds: uniqueExcludeIds,
         },
       );
     }
@@ -1561,7 +1680,11 @@ export const createTracksSlice: StateCreator<
         }
 
         // Also move linked track (audio follows video, video follows audio)
-        if (trackToMove.isLinked && trackToMove.linkedTrackId === track.id) {
+        if (
+          !options?.skipLinkedMove &&
+          trackToMove.isLinked &&
+          trackToMove.linkedTrackId === track.id
+        ) {
           const linkedDuration = track.endFrame - track.startFrame;
 
           // Calculate linked track's position based on original relative position
@@ -1584,12 +1707,22 @@ export const createTracksSlice: StateCreator<
         return track;
       });
 
-      // Normalize row indices after drop
-      updatedTracks = normalizeAfterDrop(updatedTracks);
+      // Normalize row indices after drop (can be deferred for grouped moves)
+      if (!options?.skipNormalize) {
+        updatedTracks = normalizeAfterDrop(updatedTracks);
+      }
 
       return { tracks: updatedTracks };
     });
 
+    state.markUnsavedChanges?.();
+  },
+
+  normalizeTrackRowsAfterDrop: () => {
+    const state = get() as any;
+    set((current: any) => ({
+      tracks: normalizeAfterDrop(current.tracks),
+    }));
     state.markUnsavedChanges?.();
   },
 
@@ -1659,7 +1792,9 @@ export const createTracksSlice: StateCreator<
       (t: VideoTrack) => t.id === trackId,
     );
     if (!originalTrack) {
-      console.error(`❌ Cannot duplicate: track ${trackId} not found`);
+      console.error(
+        `[TracksSlice] Cannot duplicate: track${trackId} not found`,
+      );
       if (!skipGrouping) {
         state.endGroup?.(); // End group even on error
       }
@@ -1736,7 +1871,7 @@ export const createTracksSlice: StateCreator<
 
         // Create duplicate with ALL metadata preserved (reference-based)
         const duplicatedTrack: VideoTrack = {
-          ...originalTrack, // Preserve ALL properties including transforms, effects, etc.
+          ...cloneNestedTrackMetadata(originalTrack), // Preserve ALL properties including transforms, effects, etc.
           id: newId,
           name: `${originalTrack.name}`,
           startFrame: finalStartFrame,
@@ -1758,7 +1893,7 @@ export const createTracksSlice: StateCreator<
         };
 
         const duplicatedLinkedTrack: VideoTrack = {
-          ...linkedTrack, // Preserve ALL properties
+          ...cloneNestedTrackMetadata(linkedTrack), // Preserve ALL properties
           id: newLinkedId,
           name: `${linkedTrack.name}`,
           startFrame: linkedFinalStartFrame,
@@ -1808,7 +1943,7 @@ export const createTracksSlice: StateCreator<
     // Create duplicate with ALL metadata preserved (reference-based)
     // If original was linked but we're only duplicating one side, break the link
     const duplicatedTrack: VideoTrack = {
-      ...originalTrack, // Preserve ALL properties including transforms, effects, etc.
+      ...cloneNestedTrackMetadata(originalTrack), // Preserve ALL properties including transforms, effects, etc.
       id: newId,
       name: `${originalTrack.name}`,
       startFrame: finalStartFrame,
@@ -1851,7 +1986,7 @@ export const createTracksSlice: StateCreator<
   splitTrack: (trackId, frame) => {
     const state = get() as any;
     const track = state.tracks.find((t: VideoTrack) => t.id === trackId);
-    if (!track || frame <= track.startFrame || frame >= track.endFrame) return;
+    if (!track || !canSplitClip(track, frame)) return;
 
     const splitTimeInSeconds = (frame - track.startFrame) / state.timeline.fps;
     const originalSourceStartTime = track.sourceStartTime || 0;
@@ -1941,9 +2076,6 @@ export const createTracksSlice: StateCreator<
   splitAtPlayhead: () => {
     const state = get() as any;
 
-    // Record action for undo/redo BEFORE checking tracks
-    state.recordAction?.('Split at Playhead');
-
     const currentFrame = state.timeline.currentFrame;
     const selectedTrackIds = state.timeline.selectedTrackIds;
 
@@ -1953,8 +2085,7 @@ export const createTracksSlice: StateCreator<
       const selectedTracks = state.tracks.filter(
         (track: VideoTrack) =>
           selectedTrackIds.includes(track.id) &&
-          currentFrame > track.startFrame &&
-          currentFrame < track.endFrame,
+          canSplitClip(track, currentFrame),
       );
 
       const processedTrackIds = new Set<string>();
@@ -1967,7 +2098,11 @@ export const createTracksSlice: StateCreator<
             (t: VideoTrack) => t.id === track.linkedTrackId,
           );
 
-          if (linkedTrack && selectedTrackIds.includes(linkedTrack.id)) {
+          if (
+            linkedTrack &&
+            selectedTrackIds.includes(linkedTrack.id) &&
+            canSplitClip(linkedTrack, currentFrame)
+          ) {
             tracksToSplit.push(track, linkedTrack);
             processedTrackIds.add(track.id);
             processedTrackIds.add(linkedTrack.id);
@@ -1981,9 +2116,8 @@ export const createTracksSlice: StateCreator<
         }
       });
     } else {
-      const intersectingTracks = state.tracks.filter(
-        (track: VideoTrack) =>
-          currentFrame > track.startFrame && currentFrame < track.endFrame,
+      const intersectingTracks = state.tracks.filter((track: VideoTrack) =>
+        canSplitClip(track, currentFrame),
       );
 
       const processedTrackIds = new Set<string>();
@@ -1996,11 +2130,7 @@ export const createTracksSlice: StateCreator<
             (t: VideoTrack) => t.id === track.linkedTrackId,
           );
 
-          if (
-            linkedTrack &&
-            currentFrame > linkedTrack.startFrame &&
-            currentFrame < linkedTrack.endFrame
-          ) {
+          if (linkedTrack && canSplitClip(linkedTrack, currentFrame)) {
             tracksToSplit.push(track, linkedTrack);
             processedTrackIds.add(track.id);
             processedTrackIds.add(linkedTrack.id);
@@ -2013,6 +2143,8 @@ export const createTracksSlice: StateCreator<
     }
 
     if (tracksToSplit.length === 0) return false;
+
+    state.recordAction?.('Split at Playhead');
 
     const processedIds = new Set<string>();
 
@@ -2028,39 +2160,27 @@ export const createTracksSlice: StateCreator<
   splitAtPosition: (frame, trackId) => {
     const state = get() as any;
 
-    // Record action for undo/redo BEFORE checking tracks
-    state.recordAction?.('Split at Position');
-
     let tracksToSplit: VideoTrack[] = [];
 
     if (trackId) {
       const targetTrack = state.tracks.find(
         (track: VideoTrack) => track.id === trackId,
       );
-      if (
-        targetTrack &&
-        frame > targetTrack.startFrame &&
-        frame < targetTrack.endFrame
-      ) {
+      if (targetTrack && canSplitClip(targetTrack, frame)) {
         tracksToSplit = [targetTrack];
 
         if (targetTrack.isLinked && targetTrack.linkedTrackId) {
           const linkedTrack = state.tracks.find(
             (t: VideoTrack) => t.id === targetTrack.linkedTrackId,
           );
-          if (
-            linkedTrack &&
-            frame > linkedTrack.startFrame &&
-            frame < linkedTrack.endFrame
-          ) {
+          if (canSplitClip(linkedTrack, frame)) {
             tracksToSplit.push(linkedTrack);
           }
         }
       }
     } else {
-      const intersectingTracks = state.tracks.filter(
-        (track: VideoTrack) =>
-          frame > track.startFrame && frame < track.endFrame,
+      const intersectingTracks = state.tracks.filter((track: VideoTrack) =>
+        canSplitClip(track, frame),
       );
 
       const processedTrackIds = new Set<string>();
@@ -2072,11 +2192,7 @@ export const createTracksSlice: StateCreator<
           const linkedTrack = state.tracks.find(
             (t: VideoTrack) => t.id === track.linkedTrackId,
           );
-          if (
-            linkedTrack &&
-            frame > linkedTrack.startFrame &&
-            frame < linkedTrack.endFrame
-          ) {
+          if (canSplitClip(linkedTrack, frame)) {
             tracksToSplit.push(track, linkedTrack);
             processedTrackIds.add(track.id);
             processedTrackIds.add(linkedTrack.id);
@@ -2092,6 +2208,8 @@ export const createTracksSlice: StateCreator<
     }
 
     if (tracksToSplit.length === 0) return false;
+
+    state.recordAction?.('Split at Position');
 
     const processedIds = new Set<string>();
 
@@ -2113,6 +2231,9 @@ export const createTracksSlice: StateCreator<
 
     const newVisibleState = !targetTrack.visible;
 
+    // Record action for undo/redo BEFORE state change
+    state.recordAction?.('Toggle Track Visibility');
+
     set((state: any) => ({
       tracks: state.tracks.map((track: VideoTrack) => {
         if (track.id === trackId) {
@@ -2133,6 +2254,9 @@ export const createTracksSlice: StateCreator<
     if (targetTrack.type !== 'audio') return;
 
     const newMutedState = !targetTrack.muted;
+
+    // Record action for undo/redo BEFORE state change
+    state.recordAction?.('Toggle Track Mute');
 
     set((state: any) => ({
       tracks: state.tracks.map((track: VideoTrack) => {
@@ -2219,6 +2343,9 @@ export const createTracksSlice: StateCreator<
 
     const newMutedState = !videoTrack.muted;
 
+    // Record action for undo/redo BEFORE state change
+    state.recordAction?.('Toggle Linked Audio Mute');
+
     set((state: any) => ({
       tracks: state.tracks.map((track: VideoTrack) => {
         if (track.id === videoTrackId) {
@@ -2239,7 +2366,7 @@ export const createTracksSlice: StateCreator<
     const selectedTrackIds = state.timeline.selectedTrackIds;
 
     if (selectedTrackIds.length < 2) {
-      // console.log('Cannot link: Need at least 2 tracks selected');
+      // Linking requires at least 2 selected tracks.
       return;
     }
 
@@ -2258,10 +2385,6 @@ export const createTracksSlice: StateCreator<
 
     if (videoTrack && audioTrack) {
       (get() as any).linkTracks(videoTrack.id, audioTrack.id);
-    } else {
-      console.log(
-        'Cannot link: Need to select one video and one audio track that are not already linked',
-      );
     }
   },
 
@@ -2352,7 +2475,7 @@ export const createTracksSlice: StateCreator<
     let safeUpdates = updates;
     if ('sourceFps' in updates) {
       console.warn(
-        `⚠️ Attempted to mutate sourceFps on track ${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
+        `[TracksSlice] Attempted to mutate sourceFps on track${trackId}. sourceFps is immutable and cannot be changed. Ignoring this update.`,
       );
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { sourceFps: _removed, ...rest } = updates as any;

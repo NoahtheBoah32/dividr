@@ -101,7 +101,7 @@ class BackgroundTaskQueue {
       ...concurrencyLimits,
     };
     console.log(
-      '📋 BackgroundTaskQueue initialized with limits:',
+      '[BackgroundTaskQueue] BackgroundTaskQueue initialized with limits',
       this.concurrencyLimits,
     );
   }
@@ -197,7 +197,7 @@ class BackgroundTaskQueue {
     this.runningTasks.set(task.id, task);
 
     console.log(
-      `▶️ Starting task ${task.id} (${task.type}) - Running: ${this.countRunningByType(task.type)}/${this.concurrencyLimits[task.type]}`,
+      `[BackgroundTaskQueue] ▶ Starting task${task.id} (${task.type}) - Running: ${this.countRunningByType(task.type)}/${this.concurrencyLimits[task.type]}`,
     );
 
     try {
@@ -206,7 +206,9 @@ class BackgroundTaskQueue {
       // Check if cancelled during execution (task could be modified externally)
       const currentTask = this.tasks.get(task.id);
       if (currentTask?.status === 'cancelled') {
-        console.log(`⏹️ Task ${task.id} was cancelled during execution`);
+        console.log(
+          `[BackgroundTaskQueue] ⏹ Task${task.id} was cancelled during execution`,
+        );
         return;
       }
 
@@ -216,9 +218,7 @@ class BackgroundTaskQueue {
       this.stats.completed++;
 
       console.log(
-        `✅ Task ${task.id} completed in ${
-          (task.completedAt ?? 0) - (task.startedAt ?? 0)
-        }ms`,
+        `[BackgroundTaskQueue] Task${task.id} completed in ${(task.completedAt ?? 0) - (task.startedAt ?? 0)}ms`,
       );
 
       task.onComplete?.(result);
@@ -232,7 +232,7 @@ class BackgroundTaskQueue {
         task.retries++;
         task.status = 'pending';
         console.warn(
-          `⚠️ Task ${task.id} hit EMFILE, retrying (${task.retries}/${task.maxRetries})`,
+          `[BackgroundTaskQueue] Task${task.id} hit EMFILE, retrying (${task.retries}/${task.maxRetries})`,
         );
 
         // Re-queue with delay
@@ -246,7 +246,10 @@ class BackgroundTaskQueue {
         task.error = err;
         this.stats.failed++;
 
-        console.error(`❌ Task ${task.id} failed:`, err.message);
+        console.error(
+          `[BackgroundTaskQueue] Task${task.id} failed:`,
+          err.message,
+        );
         task.onError?.(err);
       }
     } finally {
@@ -303,7 +306,7 @@ class BackgroundTaskQueue {
     this.pendingTasks.push(task);
 
     console.log(
-      `📋 Task ${task.id} added to queue (${task.type}, priority: ${task.priority}) - Queue size: ${this.pendingTasks.length}`,
+      `[BackgroundTaskQueue] Task${task.id} added to queue (${task.type}, priority: ${task.priority}) - Queue size: ${this.pendingTasks.length}`,
     );
 
     // Trigger queue processing
@@ -323,7 +326,7 @@ class BackgroundTaskQueue {
       task.status = 'cancelled';
       this.pendingTasks = this.pendingTasks.filter((t) => t.id !== taskId);
       this.stats.cancelled++;
-      console.log(`⏹️ Task ${taskId} cancelled`);
+      console.log(`[BackgroundTaskQueue] ⏹ Task${taskId} cancelled`);
       return true;
     }
 
@@ -331,7 +334,7 @@ class BackgroundTaskQueue {
       task.status = 'cancelled';
       this.stats.cancelled++;
       console.log(
-        `⏹️ Task ${taskId} marked for cancellation (currently running)`,
+        `[BackgroundTaskQueue] ⏹ Task${taskId} marked for cancellation (currently running)`,
       );
       return true;
     }
@@ -506,7 +509,9 @@ class BackgroundTaskQueue {
     }
 
     if (cleared > 0) {
-      console.log(`🧹 Cleared ${cleared} completed/failed/cancelled tasks`);
+      console.log(
+        `[BackgroundTaskQueue] Cleared${cleared} completed/failed/cancelled tasks`,
+      );
     }
 
     return cleared;
@@ -517,7 +522,9 @@ class BackgroundTaskQueue {
    */
   setConcurrencyLimit(type: TaskType, limit: number): void {
     this.concurrencyLimits[type] = Math.max(1, limit);
-    console.log(`📋 Updated concurrency limit for ${type}: ${limit}`);
+    console.log(
+      `[BackgroundTaskQueue] Updated concurrency limit for${type}: ${limit}`,
+    );
     // Trigger queue processing in case we can now run more tasks
     setImmediate(() => this.processQueue());
   }

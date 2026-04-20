@@ -116,21 +116,27 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
     }, [rowDef.id, tracks, allTracks]);
 
     const handleToggleVisibility = useCallback(() => {
+      const { beginGroup, endGroup } = useVideoEditorStore.getState();
+      const targetTracks = tracks.filter((track) => track.type !== 'audio');
+      if (targetTracks.length === 0) return;
+
+      // Batch row-level visibility toggle into a single undo entry.
+      beginGroup?.('Toggle Row Visibility');
       // Only handle visibility for non-audio tracks (video, image, subtitle)
-      tracks.forEach((track) => {
-        if (track.type !== 'audio') {
-          toggleTrackVisibility(track.id);
-        }
-      });
+      targetTracks.forEach((track) => toggleTrackVisibility(track.id));
+      endGroup?.();
     }, [tracks, toggleTrackVisibility]);
 
     const handleToggleMute = useCallback(() => {
+      const { beginGroup, endGroup } = useVideoEditorStore.getState();
+      const targetTracks = tracks.filter((track) => track.type === 'audio');
+      if (targetTracks.length === 0) return;
+
+      // Batch row-level mute toggle into a single undo entry.
+      beginGroup?.('Toggle Row Mute');
       // Handle mute for audio tracks only
-      tracks.forEach((track) => {
-        if (track.type === 'audio') {
-          toggleTrackMute(track.id);
-        }
-      });
+      targetTracks.forEach((track) => toggleTrackMute(track.id));
+      endGroup?.();
     }, [tracks, toggleTrackMute]);
 
     const handleDeleteAllTracks = useCallback(() => {
@@ -171,7 +177,9 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
       );
 
       if (videoTracksInRow.length === 0) {
-        console.warn('No video track with linked audio found in this row');
+        console.warn(
+          '[TimelineTrackControllers] No video track with linked audio found in this row',
+        );
         return;
       }
 
@@ -226,23 +234,19 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
           const track = allTracks.find((t) => t.id === trackId);
           if (!track) continue;
 
-          console.log(`🎤 Generating subtitles for: ${track.name}`);
-
           try {
             const result = await generateKaraokeSubtitlesFromTrack(trackId, {
               model: 'base',
               processOnlyThisSegment: true, // Row Controller: process each segment individually
               keepExistingSubtitles:
                 !deleteExisting && allTracks.some((t) => t.type === 'subtitle'),
-              onProgress: (progress) => {
-                console.log('📊 Transcription progress:', progress);
+              onProgress: () => {
+                // Progress reflected in store state.
               },
             });
 
             if (result.success) {
-              console.log(
-                `✅ Generated ${result.trackIds?.length || 0} subtitles for ${track.name}`,
-              );
+              // No-op: success state is reflected in store updates.
             } else if (result.requiresDownload) {
               // Runtime not installed - show download modal and stop processing
               setPendingKaraokeAction({ trackIds, deleteExisting });
@@ -250,13 +254,13 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
               return; // Exit early, will retry after download
             } else {
               console.error(
-                `Failed to generate karaoke subtitles for ${track.name}:`,
+                `[TimelineTrackControllers] Failed to generate karaoke subtitles for${track.name}:`,
                 result.error,
               );
             }
           } catch (error) {
             console.error(
-              `Error generating karaoke subtitles for ${track.name}:`,
+              `[TimelineTrackControllers] Error generating karaoke subtitles for${track.name}:`,
               error,
             );
           }
@@ -488,6 +492,9 @@ export const TimelineTrackControllers: React.FC<TimelineTrackControllersProps> =
       const transcribingSubtitleRowIndex = useVideoEditorStore(
         (state) => state.transcribingSubtitleRowIndex,
       );
+      const transcribingTrackLoaders = useVideoEditorStore(
+        (state) => state.transcribingTrackLoaders || [],
+      );
 
       // Migrate tracks to ensure they have trackRowIndex
       const migratedTracks = useMemo(
@@ -500,8 +507,15 @@ export const TimelineTrackControllers: React.FC<TimelineTrackControllersProps> =
         () =>
           generateDynamicRows(migratedTracks, {
             transcribingSubtitleRowIndex,
+            transcribingSubtitleRowIndices: transcribingTrackLoaders.map(
+              (loader) => loader.subtitleRowIndex,
+            ),
           }),
-        [migratedTracks, transcribingSubtitleRowIndex],
+        [
+          migratedTracks,
+          transcribingSubtitleRowIndex,
+          transcribingTrackLoaders,
+        ],
       );
 
       // Calculate placeholder rows needed - MUST MATCH timelineTracks.tsx

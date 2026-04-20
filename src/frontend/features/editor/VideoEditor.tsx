@@ -7,14 +7,34 @@ import { useVideoEditorStore } from './stores/videoEditor/index';
 import { NavigationBlockerDialog } from '@/frontend/components/custom/NavigationAlertDialog';
 import { useTranscodeListener } from '@/frontend/hooks/useTranscodeListener';
 import { useUnsavedChangesWarning } from '@/frontend/hooks/useUnsavedChangesWarning';
+import { DuplicateMediaDialogHost } from './components/dialogs/DuplicateMediaDialogHost';
 
 interface VideoEditorProps {
   className?: string;
 }
 
 const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
-  const { importMediaFromFiles, timeline, isSaving } = useVideoEditorStore();
-  const { blocker } = useUnsavedChangesWarning();
+  const importMediaFromFiles = useVideoEditorStore(
+    (state) => state.importMediaFromFiles,
+  );
+  const isSaving = useVideoEditorStore((state) => state.isSaving);
+  const hasSelectedTracks = useVideoEditorStore(
+    (state) => state.timeline.selectedTrackIds.length > 0,
+  );
+  const {
+    blocker,
+    isExitDialogOpen,
+    isExitActionRunning,
+    exitErrorMessage,
+    isNavigationActionRunning,
+    navigationErrorMessage,
+    handleCancelNavigation,
+    handleContinueWithoutSaving,
+    handleSaveAndContinue,
+    handleCancelExit,
+    handleExitWithoutSaving,
+    handleSaveAndExit,
+  } = useUnsavedChangesWarning();
 
   // Listen for transcode progress and completion events
   useTranscodeListener();
@@ -42,9 +62,6 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
     e.preventDefault();
   }, []);
 
-  // Check if any tracks are selected
-  const hasSelectedTracks = timeline.selectedTrackIds.length > 0;
-
   return (
     <>
       <div className="flex flex-1">
@@ -66,11 +83,28 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
       </div>
 
       <NavigationBlockerDialog
+        mode="navigation"
         isOpen={blocker.state === 'blocked'}
-        onConfirm={() => blocker.proceed?.()}
-        onCancel={() => blocker.reset?.()}
+        onCancel={handleCancelNavigation}
+        onSaveAndContinue={handleSaveAndContinue}
+        onContinueWithoutSaving={handleContinueWithoutSaving}
         isSaving={isSaving}
+        isSubmitting={isNavigationActionRunning}
+        errorMessage={navigationErrorMessage}
       />
+
+      <NavigationBlockerDialog
+        mode="exit"
+        isOpen={isExitDialogOpen}
+        onCancel={handleCancelExit}
+        onSaveAndExit={handleSaveAndExit}
+        onExitWithoutSaving={handleExitWithoutSaving}
+        isSaving={isSaving}
+        isSubmitting={isExitActionRunning}
+        errorMessage={exitErrorMessage}
+      />
+
+      <DuplicateMediaDialogHost />
     </>
   );
 };

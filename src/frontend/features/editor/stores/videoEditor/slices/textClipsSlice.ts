@@ -118,12 +118,12 @@ export const createTextClipsSlice: StateCreator<
     // addTrack handles undo recording via recordAction('Add Track') for non-video tracks
     if (state.addTrack) {
       const trackId = await state.addTrack(textTrack);
-      console.log(`✅ Added ${textType} text clip with ID: ${trackId}`);
+
       return trackId;
     }
 
     // Fallback: shouldn't happen in normal flow, but return empty string
-    console.error('❌ addTrack function not available in state');
+    console.error('[TextClipsSlice] addTrack function not available in state');
     return '';
   },
 
@@ -133,7 +133,9 @@ export const createTextClipsSlice: StateCreator<
     if (state.updateTrack) {
       state.updateTrack(trackId, { textContent: content });
     } else {
-      console.error('❌ updateTrack function not available in state');
+      console.error(
+        '[TextClipsSlice] updateTrack function not available in state',
+      );
     }
   },
 });

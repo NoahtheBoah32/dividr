@@ -23,6 +23,41 @@ function generateImportKey(files: File[]): string {
     .join('|');
 }
 
+function getImportSuccessMessage(result: any): string {
+  const rejected = result?.rejectedFiles?.length || 0;
+  const summary = result?.summary;
+
+  if (summary) {
+    const importedNew = summary.importedNew || 0;
+    const importedCopies = summary.importedCopies || 0;
+    const reusedExisting = summary.reusedExisting || 0;
+    const totalImported = importedNew + importedCopies;
+
+    if (totalImported === 0 && reusedExisting > 0) {
+      return `Used existing media for ${reusedExisting} duplicate${reusedExisting > 1 ? 's' : ''}${rejected > 0 ? ` (${rejected} rejected)` : ''}`;
+    }
+
+    const detailParts: string[] = [];
+    if (importedNew > 0) {
+      detailParts.push(`${importedNew} new`);
+    }
+    if (importedCopies > 0) {
+      detailParts.push(
+        `${importedCopies} duplicate cop${importedCopies > 1 ? 'ies' : 'y'}`,
+      );
+    }
+    if (reusedExisting > 0) {
+      detailParts.push(`${reusedExisting} used existing`);
+    }
+
+    const detail = detailParts.length > 0 ? ` (${detailParts.join(', ')})` : '';
+    return `Imported ${totalImported} file${totalImported > 1 ? 's' : ''}${detail}${rejected > 0 ? ` (${rejected} rejected)` : ''}`;
+  }
+
+  const imported = result?.importedFiles?.length || 0;
+  return `Imported ${imported} file${imported > 1 ? 's' : ''}${rejected > 0 ? ` (${rejected} rejected)` : ''}`;
+}
+
 export async function importMediaUnified(
   files: File[],
   source: ImportSource,
@@ -37,7 +72,6 @@ export async function importMediaUnified(
 
   // Prevent duplicate imports
   if (ongoingImports.has(importKey)) {
-    console.log('⚠️ Import already in progress');
     const existing = ongoingImports.get(importKey);
     if (!existing) {
       return;
@@ -60,9 +94,7 @@ export async function importMediaUnified(
         if (result.importedFiles?.length === 0) {
           throw new Error(result.error || 'No files imported');
         }
-        const imported = result.importedFiles?.length || 0;
-        const rejected = result.rejectedFiles?.length || 0;
-        return `Imported ${imported} file${imported > 1 ? 's' : ''}${rejected > 0 ? ` (${rejected} rejected)` : ''}`;
+        return getImportSuccessMessage(result);
       },
       error: (err) => err?.error || 'Import failed',
     });
@@ -96,9 +128,7 @@ export async function importMediaFromDialogUnified(
         if (!result?.success || result.importedFiles?.length === 0) {
           throw new Error(result?.error || 'No files imported');
         }
-        const imported = result.importedFiles?.length || 0;
-        const rejected = result.rejectedFiles?.length || 0;
-        return `Imported ${imported} file${imported > 1 ? 's' : ''}${rejected > 0 ? ` (${rejected} rejected)` : ''}`;
+        return getImportSuccessMessage(result);
       },
       error: (err) => err?.error || err?.message || 'Import failed',
     });
@@ -119,7 +149,10 @@ export async function importMediaFromDialogUnified(
           options.startFrame || 0,
         );
       } catch (err) {
-        console.warn(`Failed to add ${file.name} to timeline:`, err);
+        console.warn(
+          `[MediaImportService] Failed to add${file.name} to timeline:`,
+          err,
+        );
       }
     }
   }

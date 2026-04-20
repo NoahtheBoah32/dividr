@@ -113,13 +113,19 @@ export const createPlaybackSlice: StateCreator<
       playback: { ...state.playback, isLooping: !state.playback.isLooping },
     })),
 
-  startDraggingTrack: (initialFrame) =>
-    set((state: any) => {
-      if (state.render?.isRendering) return state;
-      const wasPlaying = state.playback.isPlaying;
+  startDraggingTrack: (initialFrame) => {
+    const state = get() as any;
+    if (state.render?.isRendering || state.playback?.isDraggingTrack) return;
+
+    // Wrap the full drag interaction in one undo transaction.
+    // Intermediate move/resize updates should not create history entries.
+    state.beginGroup?.('Track Drag');
+
+    set((current: any) => {
+      const wasPlaying = current.playback.isPlaying;
       return {
         playback: {
-          ...state.playback,
+          ...current.playback,
           isDraggingTrack: true,
           wasPlayingBeforeDrag: wasPlaying,
           isPlaying: false, // Pause playback during drag
@@ -128,16 +134,15 @@ export const createPlaybackSlice: StateCreator<
           lastAttemptedFrame: null,
         },
       };
-    }),
+    });
+  },
 
   endDraggingTrack: (recordUndo = true) => {
+    const startState = get() as any;
+    const wasDragging = !!startState.playback?.isDraggingTrack;
+
     set((state: any) => {
       const shouldResume = state.playback.wasPlayingBeforeDrag;
-
-      // Record undo action if requested and drag actually occurred
-      if (recordUndo && state.playback.isDraggingTrack && state.recordAction) {
-        state.recordAction('Move Clip');
-      }
 
       return {
         playback: {
@@ -154,8 +159,18 @@ export const createPlaybackSlice: StateCreator<
       };
     });
 
-    // Trigger auto-save now that the drag operation is complete
     const state = get() as any;
+    if (wasDragging) {
+      if (recordUndo) {
+        if (state.isGrouping) {
+          state.endGroup?.();
+        }
+      } else {
+        state.forceEndGroup?.();
+      }
+    }
+
+    // Trigger auto-save now that the drag operation is complete
     state.triggerAutoSaveOnCommit?.();
   },
 

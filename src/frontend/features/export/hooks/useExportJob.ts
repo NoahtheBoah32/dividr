@@ -47,53 +47,12 @@ export const useExportJob = () => {
       const audioTracks = tracks.filter((track) => track.type === 'audio');
       const imageTracks = tracks.filter((track) => track.type === 'image');
 
-      console.log(
-        `📊 Track counts: video=${videoTracks.length}, audio=${audioTracks.length}, image=${imageTracks.length}, subtitle=${subtitleTracks.length}, text=${textTracks.length}`,
-      );
-      console.log(
-        `🎥 Video tracks:`,
-        videoTracks.map((t) => ({
-          id: t.id,
-          name: t.name,
-          startFrame: t.startFrame,
-          endFrame: t.endFrame,
-          isLinked: t.isLinked,
-          linkedTrackId: t.linkedTrackId,
-        })),
-      );
-      console.log(
-        `🎵 Audio tracks:`,
-        audioTracks.map((t) => ({
-          id: t.id,
-          name: t.name,
-          source: t.source,
-          startFrame: t.startFrame,
-          endFrame: t.endFrame,
-          isLinked: t.isLinked,
-          linkedTrackId: t.linkedTrackId,
-        })),
-      );
-      console.log(
-        `🔤 Text tracks:`,
-        textTracks.map((t) => ({
-          id: t.id,
-          type: t.textType,
-          content: t.textContent,
-          startFrame: t.startFrame,
-          endFrame: t.endFrame,
-        })),
-      );
-
       // Get custom canvas dimensions (user-adjusted dimensions from preview)
       // These reflect aspect ratio changes or free transform scaling applied in the preview
       const customDimensions = getCustomDimensions(
         preview.canvasWidth,
         preview.canvasHeight,
         videoTracks,
-      );
-
-      console.log(
-        `📐 Custom canvas dimensions: ${customDimensions.width}x${customDimensions.height}`,
       );
 
       // Process linked tracks
@@ -136,10 +95,6 @@ export const useExportJob = () => {
           ? Math.min(...sortedTracks.map((t) => t.startFrame))
           : 0;
 
-      console.log(
-        `📍 Export timeline starts at frame ${timelineStartFrame} (${(timelineStartFrame / timelineFps).toFixed(3)}s)`,
-      );
-
       // Determine the target aspect ratio
       // Priority 1: Detect from custom canvas dimensions (user-set aspect ratio)
       // Priority 2: Use aspect ratio from first video track (original source aspect ratio)
@@ -153,17 +108,12 @@ export const useExportJob = () => {
 
       if (customAspectRatio?.label) {
         targetAspectRatio = customAspectRatio.label;
-        console.log(
-          `📐 Using aspect ratio from custom canvas dimensions: ${targetAspectRatio} (${customDimensions.width}x${customDimensions.height})`,
-        );
       } else {
         // Fallback to video track aspect ratio
         for (const track of videoTracks) {
           if (track.detectedAspectRatioLabel) {
             targetAspectRatio = track.detectedAspectRatioLabel;
-            console.log(
-              `📐 Using aspect ratio from first video track: ${targetAspectRatio}`,
-            );
+
             break;
           }
         }
@@ -175,21 +125,10 @@ export const useExportJob = () => {
       const sourceVideoDimensions = getSourceVideoDimensions(videoTracks);
 
       // Calculate the intermediate dimensions after aspect ratio crop (at source resolution)
-      const intermediateVideoDimensions = calculateIntermediateDimensions(
-        sourceVideoDimensions,
-        targetAspectRatio,
-      );
+      calculateIntermediateDimensions(sourceVideoDimensions, targetAspectRatio);
 
       // The final output dimensions are the custom dimensions from the canvas
       const finalOutputDimensions = videoDimensions;
-
-      console.log(
-        `📐 Video dimensions: ` +
-          `source=${sourceVideoDimensions.width}x${sourceVideoDimensions.height}, ` +
-          `intermediate (after aspect crop)=${intermediateVideoDimensions.width}x${intermediateVideoDimensions.height}, ` +
-          `final output=${finalOutputDimensions.width}x${finalOutputDimensions.height} ` +
-          `(aspect ratio: ${targetAspectRatio || 'none'})`,
-      );
 
       // Generate subtitle content (ONLY subtitles - text clips handled separately)
       // Use finalOutputDimensions so subtitles are positioned for the final output video
@@ -273,29 +212,25 @@ function getCustomDimensions(
     isFinite(canvasHeight);
 
   if (isValidCustomDimensions) {
-    console.log(
-      `✅ Using custom canvas dimensions: ${canvasWidth}x${canvasHeight}`,
-    );
     return { width: canvasWidth, height: canvasHeight };
   }
 
   // Fallback to original track dimensions
   console.warn(
-    `⚠️ Custom dimensions invalid (${canvasWidth}x${canvasHeight}), falling back to track dimensions`,
+    `[UseExportJob] Custom dimensions invalid (${canvasWidth}x${canvasHeight}), falling back to track dimensions`,
   );
 
   // Find first visible video track with valid dimensions
   for (const track of videoTracks) {
     if (track.visible && track.width && track.height) {
-      console.log(
-        `📐 Fallback: Using track dimensions from "${track.name}": ${track.width}x${track.height}`,
-      );
       return { width: track.width, height: track.height };
     }
   }
 
   // Final fallback to default dimensions
-  console.warn(`⚠️ No valid track dimensions found, using default: 1920x1080`);
+  console.warn(
+    '[UseExportJob] No valid track dimensions found, using default: 1920x1080',
+  );
   return { width: 1920, height: 1080 };
 }
 
@@ -309,16 +244,13 @@ function getSourceVideoDimensions(videoTracks: VideoTrack[]): {
   // Find first visible video track with valid dimensions
   for (const track of videoTracks) {
     if (track.visible && track.width && track.height) {
-      console.log(
-        `📐 Source video dimensions from track "${track.name}": ${track.width}x${track.height}`,
-      );
       return { width: track.width, height: track.height };
     }
   }
 
   // Fallback to default dimensions
   console.warn(
-    `⚠️ No valid video track dimensions found, using default: 1920x1080`,
+    '[UseExportJob] No valid video track dimensions found, using default: 1920x1080',
   );
   return { width: 1920, height: 1080 };
 }
@@ -339,7 +271,9 @@ function calculateIntermediateDimensions(
   // Parse aspect ratio (e.g., "9:16" -> 0.5625)
   const parts = targetAspectRatio.split(':');
   if (parts.length !== 2) {
-    console.warn(`Invalid aspect ratio format: ${targetAspectRatio}`);
+    console.warn(
+      `[UseExportJob] Invalid aspect ratio format${targetAspectRatio}`,
+    );
     return sourceDimensions;
   }
 
@@ -372,9 +306,6 @@ function calculateIntermediateDimensions(
     cropWidth = Math.round(cropHeight * targetRatio);
   }
 
-  console.log(
-    `📐 Calculated intermediate dimensions (after aspect crop): ${cropWidth}x${cropHeight} from ${sourceDimensions.width}x${sourceDimensions.height} (ratio ${sourceRatio.toFixed(3)} → ${targetRatio.toFixed(3)})`,
-  );
   return { width: cropWidth, height: cropHeight };
 }
 
@@ -405,10 +336,6 @@ function processLinkedTracks(
   const videoWidth = customDimensions.width;
   const videoHeight = customDimensions.height;
 
-  console.log(
-    `📐 Using custom dimensions for export: ${videoWidth}x${videoHeight}`,
-  );
-
   // Combine linked video/audio tracks
   for (const videoTrack of videoTracks) {
     if (processedTrackIds.has(videoTrack.id)) continue;
@@ -429,9 +356,6 @@ function processLinkedTracks(
         });
         processedTrackIds.add(videoTrack.id);
         // DON'T mark audio as processed - let it be added independently below
-        console.log(
-          `🔗 Processing linked video track: ${videoTrack.name} (audio will be processed separately)`,
-        );
       } else {
         processedTracks.push(videoTrack);
         processedTrackIds.add(videoTrack.id);
@@ -444,14 +368,7 @@ function processLinkedTracks(
 
   for (const audioTrack of audioTracks) {
     if (!processedTrackIds.has(audioTrack.id)) {
-      console.log(
-        `   🎵 Adding audio track "${audioTrack.name}" (${audioTrack.id})`,
-      );
       processedTracks.push(audioTrack);
-    } else {
-      console.log(
-        `   ⏭️ Skipping already processed audio track "${audioTrack.name}"`,
-      );
     }
   }
 
@@ -497,14 +414,6 @@ function convertTracksToFFmpegInputs(
     const trackDurationSeconds = track.duration / timelineFps;
     const sourceStartTime = track.sourceStartTime || 0;
 
-    const audioInfo =
-      track.type === 'audio' || track.type === 'video'
-        ? `, volume=${track.volumeDb !== undefined ? (track.volumeDb === -Infinity ? '-∞' : `${track.volumeDb.toFixed(1)}dB`) : 'default'}`
-        : '';
-    console.log(
-      `🎥 Adding track "${track.name}": type=${track.type}, timeline=${track.startFrame}-${track.endFrame}, source start ${sourceStartTime}s, duration ${trackDurationSeconds}s, dimensions: ${track.width}x${track.height}, aspect ratio: ${track.detectedAspectRatioLabel || 'custom'}${audioInfo}`,
-    );
-
     // Resolve the audio source path - use noise-reduced version if available
     let resolvedPath = track.source;
     if (track.type === 'audio' && track.noiseReductionEnabled) {
@@ -516,12 +425,9 @@ function convertTracksToFFmpegInputs(
       );
       if (processedPath) {
         resolvedPath = processedPath;
-        console.log(
-          `🔇 Using noise-reduced audio (${engine}) for "${track.name}": ${processedPath}`,
-        );
       } else {
         console.warn(
-          `⚠️ Noise reduction enabled for "${track.name}" but no processed file found - using original`,
+          `[UseExportJob] Noise reduction enabled for "${track.name}" but no processed file found - using original`,
         );
       }
     }
@@ -551,8 +457,6 @@ function convertTracksToFFmpegInputs(
       compositingGroup: track.isLinked ? track.linkedTrackId : undefined,
     };
 
-    console.log('Track Info: ', trackInfo);
-
     // Add image transform for image tracks
     if (track.type === 'image' && track.textTransform) {
       trackInfo.imageTransform = {
@@ -563,9 +467,6 @@ function convertTracksToFFmpegInputs(
         width: track.textTransform.width,
         height: track.textTransform.height,
       };
-      console.log(
-        `🎨 Image transform for "${track.name}": pos=(${track.textTransform.x.toFixed(2)}, ${track.textTransform.y.toFixed(2)}), scale=${track.textTransform.scale.toFixed(2)}, rotation=${track.textTransform.rotation.toFixed(1)}°`,
-      );
     }
 
     // Add video transform for video tracks
@@ -578,9 +479,6 @@ function convertTracksToFFmpegInputs(
         width: track.textTransform.width,
         height: track.textTransform.height,
       };
-      console.log(
-        `🎥 Video transform for "${track.name}": pos=(${track.textTransform.x.toFixed(2)}, ${track.textTransform.y.toFixed(2)}), scale=${track.textTransform.scale.toFixed(2)}, rotation=${track.textTransform.rotation.toFixed(1)}°, size=${track.textTransform.width}x${track.textTransform.height}`,
-      );
     }
 
     // Add text transform for text tracks
@@ -593,9 +491,6 @@ function convertTracksToFFmpegInputs(
         width: track.textTransform.width,
         height: track.textTransform.height,
       };
-      console.log(
-        `🔤 Text transform for "${track.name}": pos=(${track.textTransform.x.toFixed(2)}, ${track.textTransform.y.toFixed(2)}), scale=${track.textTransform.scale.toFixed(2)}, rotation=${track.textTransform.rotation.toFixed(1)}°, size=${track.textTransform.width}x${track.textTransform.height}`,
-      );
     }
 
     // Add subtitle transform for subtitle tracks (no rotation support)
@@ -612,9 +507,6 @@ function convertTracksToFFmpegInputs(
           width: transform.width,
           height: transform.height,
         };
-        console.log(
-          `📝 Subtitle transform for "${track.name}": pos=(${transform.x.toFixed(2)}, ${transform.y.toFixed(2)}), scale=${subtitleScale.toFixed(2)}, size=${transform.width ?? 0}x${transform.height ?? 0}`,
-        );
       }
     }
 

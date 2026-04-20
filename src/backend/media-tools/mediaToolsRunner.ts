@@ -126,7 +126,9 @@ const detectMediaToolsExecutable = (): {
   );
 
   if (fs.existsSync(userDataPath)) {
-    console.log(`✅ Found downloaded dividr-tools at: ${userDataPath}`);
+    console.log(
+      `[MediaToolsRunner] Found downloaded dividr-tools at${userDataPath}`,
+    );
     return {
       executable: userDataPath,
       executableArgs: [],
@@ -143,7 +145,9 @@ const detectMediaToolsExecutable = (): {
 
     for (const exePath of bundledExePaths) {
       if (fs.existsSync(exePath)) {
-        console.log(`✅ Found bundled dividr-tools at: ${exePath}`);
+        console.log(
+          `[MediaToolsRunner] Found bundled dividr-tools at${exePath}`,
+        );
         return {
           executable: exePath,
           executableArgs: [],
@@ -161,22 +165,26 @@ const detectMediaToolsExecutable = (): {
 
     for (const oldPath of oldPaths) {
       if (fs.existsSync(oldPath)) {
-        console.warn('='.repeat(60));
+        console.warn('[MediaToolsRunner] Warning', '='.repeat(60));
         console.warn(
-          '⚠️ DEPRECATION WARNING: Found old transcribe-bin directory',
+          '[MediaToolsRunner] DEPRECATION WARNING: Found old transcribe-bin directory',
         );
-        console.warn(`   Path: ${oldPath}`);
-        console.warn('   Please migrate to dividr-tools-bin structure');
+        console.warn(`[MediaToolsRunner] Path${oldPath}`);
         console.warn(
-          '   The transcribe-bin directory will be removed in a future version',
+          '[MediaToolsRunner] Please migrate to dividr-tools-bin structure',
         );
-        console.warn('='.repeat(60));
+        console.warn(
+          '[MediaToolsRunner] The transcribe-bin directory will be removed in a future version',
+        );
+        console.warn('[MediaToolsRunner] Warning', '='.repeat(60));
         // Don't use the old binary - force Python fallback for consistency
         break;
       }
     }
 
-    console.log('⚠️ dividr-tools not found in userData or bundled resources');
+    console.log(
+      '[MediaToolsRunner] dividr-tools not found in userData or bundled resources',
+    );
   }
 
   // Priority 3: Fall back to system Python (development mode)
@@ -229,7 +237,7 @@ const detectPythonEnvironment = (): {
 
           if (major === 3 && minor >= 9) {
             console.log(
-              `✅ Found local venv Python ${major}.${minor} at: ${venvPython}`,
+              `[MediaToolsRunner] Found local venv Python${major}.${minor} at: ${venvPython}`,
             );
             return {
               executable: venvPython,
@@ -239,7 +247,9 @@ const detectPythonEnvironment = (): {
           }
         }
       } catch {
-        console.warn('⚠️ Local venv Python found but failed version check');
+        console.warn(
+          '[MediaToolsRunner] Local venv Python found but failed version check',
+        );
       }
     }
   }
@@ -274,7 +284,7 @@ const detectPythonEnvironment = (): {
 
         if (major === 3 && minor >= 9) {
           console.log(
-            `✅ Found system Python ${major}.${minor} at: ${cmd} ${cmdArgs.join(' ')}`,
+            `[MediaToolsRunner] Found system Python${major}.${minor} at: ${cmd} ${cmdArgs.join(' ')}`,
           );
           return {
             executable: cmd,
@@ -299,14 +309,16 @@ const detectPythonEnvironment = (): {
  * Initialize media tools environment
  */
 export const initializeMediaTools = async (): Promise<void> => {
-  console.log('🛠️ Initializing media-tools environment...');
-  console.log('📦 Is packaged:', app.isPackaged);
-  console.log('🖥️ Platform:', process.platform);
+  console.log('[MediaToolsRunner] Initializing media-tools environment');
+  console.log('[MediaToolsRunner] Is packaged', app.isPackaged);
+  console.log('[MediaToolsRunner] Platform', process.platform);
 
   const toolsInfo = detectMediaToolsExecutable();
 
   if (!toolsInfo) {
-    console.error('❌ dividr-tools executable or Python 3.9+ not found!');
+    console.error(
+      '[MediaToolsRunner] dividr-tools executable or Python 3.9+ not found!',
+    );
     throw new Error(
       'Media tools unavailable: Python 3.9+ required or bundled executable missing',
     );
@@ -317,7 +329,7 @@ export const initializeMediaTools = async (): Promise<void> => {
     mediaToolsPath = toolsInfo.executable;
     pythonPath = null;
     mainPyScriptPath = null;
-    console.log('✅ Using standalone dividr-tools executable');
+    console.log('[MediaToolsRunner] Using standalone dividr-tools executable');
   } else {
     // Python script mode
     pythonPath = toolsInfo.executable;
@@ -360,16 +372,16 @@ export const initializeMediaTools = async (): Promise<void> => {
     await verifyPythonDependencies();
   }
 
-  console.log('🎯 Media-tools initialization complete');
+  console.log('[MediaToolsRunner] Media-tools initialization complete');
   console.log(
-    '   Mode:',
+    '[MediaToolsRunner] Mode',
     mediaToolsPath ? 'Standalone binary' : 'Python script',
   );
   if (mediaToolsPath) {
-    console.log('   Binary:', mediaToolsPath);
+    console.log('[MediaToolsRunner] Binary', mediaToolsPath);
   } else {
-    console.log('   Python:', pythonPath, pythonArgs.join(' '));
-    console.log('   Script:', mainPyScriptPath);
+    console.log('[MediaToolsRunner] Python', pythonPath, pythonArgs.join(' '));
+    console.log('[MediaToolsRunner] Script', mainPyScriptPath);
   }
 };
 
@@ -389,9 +401,9 @@ const verifyPythonDependencies = async (): Promise<void> => {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      console.log(`✅ ${dep} package found`);
+      console.log(`[MediaToolsRunner] Log${dep} package found`);
     } catch {
-      console.warn(`⚠️ ${dep} package not installed`);
+      console.warn(`[MediaToolsRunner] Warning${dep} package not installed`);
       missing.push(dep);
     }
   }
@@ -449,10 +461,16 @@ const runMediaToolsCommand = async <T>(
     fullArgs = [...pythonArgs, mainPyScriptPath, command, ...args];
   }
 
-  console.log(`🔧 Running media-tools ${command}:`);
-  console.log('   Executable:', executable);
-  console.log('   Mode:', isStandalone ? 'Standalone' : 'Python Script');
-  console.log('   Command:', [executable, ...fullArgs].join(' '));
+  console.log(`[MediaToolsRunner] Running media-tools${command}:`);
+  console.log('[MediaToolsRunner] Executable', executable);
+  console.log(
+    '[MediaToolsRunner] Mode',
+    isStandalone ? 'Standalone' : 'Python Script',
+  );
+  console.log(
+    '[MediaToolsRunner] Command',
+    [executable, ...fullArgs].join(' '),
+  );
 
   return new Promise((resolve, reject) => {
     const proc = spawn(executable, fullArgs, {
@@ -495,10 +513,10 @@ const runMediaToolsCommand = async <T>(
             }
 
             console.log(
-              `[${command}] ${progressData.stage}: ${progressData.progress}% - ${progressData.message || ''}`,
+              `[MediaToolsRunner] [${command}] ${progressData.stage}: ${progressData.progress}% - ${progressData.message || ''}`,
             );
           } catch (err) {
-            console.warn('Failed to parse progress:', line);
+            console.warn('[MediaToolsRunner] Failed to parse progress', line);
           }
         }
         // Parse result: RESULT|{json}
@@ -506,15 +524,15 @@ const runMediaToolsCommand = async <T>(
           try {
             const resultJson = line.substring(7);
             result = JSON.parse(resultJson);
-            console.log(`✅ Received ${command} result`);
+            console.log(`[MediaToolsRunner] Received${command} result`);
           } catch (err) {
-            console.error('Failed to parse result:', err);
+            console.error('[MediaToolsRunner] Failed to parse result', err);
           }
         }
         // Parse result saved notification
         else if (line.startsWith('RESULT_SAVED|')) {
           const filePath = line.substring(13);
-          console.log('📁 Result saved to:', filePath);
+          console.log('[MediaToolsRunner] Result saved to', filePath);
           // For noise reduction, construct a result
           if (command === 'noise-reduce' && !result) {
             result = {
@@ -528,7 +546,10 @@ const runMediaToolsCommand = async <T>(
         else if (line.trim().startsWith('{') && line.includes('"error"')) {
           try {
             const errorData = JSON.parse(line);
-            console.error(`❌ ${command} error:`, errorData);
+            console.error(
+              `[MediaToolsRunner] Error${command} error:`,
+              errorData,
+            );
           } catch {
             // Not JSON, ignore
           }
@@ -539,14 +560,17 @@ const runMediaToolsCommand = async <T>(
     proc.stderr.on('data', (data) => {
       const text = data.toString();
       stderrBuffer += text;
-      console.error(`[${command} stderr]`, text.trim());
+      console.error(`[MediaToolsRunner] [${command} stderr]`, text.trim());
     });
 
     proc.on('close', (code) => {
       currentProcess = null;
 
       if (code !== 0) {
-        console.error(`❌ ${command} exited with code:`, code);
+        console.error(
+          `[MediaToolsRunner] Error${command} exited with code:`,
+          code,
+        );
 
         // Try to parse error from stderr
         if (stderrBuffer.includes('ERROR|')) {
@@ -721,7 +745,7 @@ export const reduceNoise = async (
  */
 export const cancelCurrentOperation = (): boolean => {
   if (currentProcess && !currentProcess.killed) {
-    console.log('🛑 Cancelling media-tools operation...');
+    console.log('[MediaToolsRunner] Cancelling media-tools operation');
 
     // Send SIGTERM for graceful termination
     currentProcess.kill('SIGTERM');
@@ -730,7 +754,7 @@ export const cancelCurrentOperation = (): boolean => {
     const proc = currentProcess;
     setTimeout(() => {
       if (proc && !proc.killed) {
-        console.log('⚠️ Force killing process...');
+        console.log('[MediaToolsRunner] Force killing process');
         proc.kill('SIGKILL');
       }
     }, 2000);

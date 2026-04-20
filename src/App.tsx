@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { RouterProvider } from 'react-router-dom';
-import { toast, Toaster } from 'sonner';
+import { toast } from 'sonner';
 import { RuntimeDownloadModal } from './frontend/components/custom/RuntimeDownloadModal';
 import { RuntimeMissingBanner } from './frontend/components/custom/RuntimeMissingBanner';
 import StartupLoader from './frontend/components/custom/StartupLoader';
+import { Toaster } from './frontend/components/ui/sonner';
 import { useShortcutRegistryInit } from './frontend/features/editor/stores/videoEditor';
 import { useProjectStore } from './frontend/features/projects/store/projectStore';
 import { RuntimeStatusProvider } from './frontend/providers/RuntimeStatusProvider';
@@ -17,61 +18,87 @@ function App() {
   // Initialize shortcut registry globally so it's always available
   useShortcutRegistryInit();
 
-  const [isAppReady, setIsAppReady] = useState(false);
+  const [showGlobalDownloadModal, setShowGlobalDownloadModal] = useState(false);
   const [startupStage, setStartupStage] =
     useState<StartupStage>('renderer-mount');
   const [startupProgress, setStartupProgress] = useState(0);
-  const [showGlobalDownloadModal, setShowGlobalDownloadModal] = useState(false);
+  const [showStartupStatus, setShowStartupStatus] = useState(true);
+  const hasRequestedMediaServer = useRef(false);
+  const startupHideTimer = useRef<number | null>(null);
+  const htmlLoaderRemoved = useRef(false);
 
   // Get project store actions
-  const { importProjectFromPath, openProject, initializeProjects } =
-    useProjectStore();
+  const { openProjectFromPath } = useProjectStore();
 
   useEffect(() => {
-    // Subscribe to startup progress
+    const removeHtmlLoader = () => {
+      if (htmlLoaderRemoved.current) return;
+      const htmlLoader = document.getElementById('startup-loader');
+      if (htmlLoader) {
+        htmlLoader.remove();
+      }
+      htmlLoaderRemoved.current = true;
+    };
+
+    const scheduleStartupDismiss = (delayMs: number) => {
+      if (startupHideTimer.current !== null) {
+        window.clearTimeout(startupHideTimer.current);
+        startupHideTimer.current = null;
+      }
+
+      startupHideTimer.current = window.setTimeout(() => {
+        setShowStartupStatus(false);
+        removeHtmlLoader();
+        startupHideTimer.current = null;
+      }, delayMs);
+    };
+
     const unsubscribe = startupManager.subscribe((stage, progress) => {
       setStartupStage(stage);
       setStartupProgress(progress);
 
-      // Hide loader when app is ready
-      if (stage === 'app-ready') {
-        setTimeout(() => {
-          setIsAppReady(true);
-
-          // Print performance summary
-          startupManager.printSummary();
-
-          // Remove the initial HTML loader if it still exists
-          const htmlLoader = document.getElementById('startup-loader');
-          if (htmlLoader) {
-            htmlLoader.remove();
-          }
-        }, 300); // Small delay for smooth transition
+      if (stage === 'projects-loaded' || stage === 'editor-ready') {
+        scheduleStartupDismiss(250);
+      } else if (stage === 'app-ready' && startupHideTimer.current === null) {
+        // Safety valve: never let the startup screen stick forever.
+        scheduleStartupDismiss(8000);
       }
     });
 
-    return () => unsubscribe();
+    const frame = requestAnimationFrame(() => {
+      startupManager.logStage('app-ready');
+      startupManager.printSummary();
+
+      if (!hasRequestedMediaServer.current) {
+        hasRequestedMediaServer.current = true;
+        if (window.electronAPI?.ensureMediaServer) {
+          void window.electronAPI.ensureMediaServer();
+        }
+      }
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+      if (startupHideTimer.current !== null) {
+        window.clearTimeout(startupHideTimer.current);
+        startupHideTimer.current = null;
+      }
+      unsubscribe();
+    };
   }, []);
 
   // Handle .dividr file opened via double-click or file association
   useEffect(() => {
     const handleOpenProjectFile = async (filePath: string) => {
       try {
-        // Ensure projects are initialized before importing
-        await initializeProjects();
-
-        // Import the project from the file path
-        const projectId = await importProjectFromPath(filePath);
-
-        // Open the imported project
-        await openProject(projectId);
+        await openProjectFromPath(filePath);
 
         // Navigate to the video editor
         router.navigate('/video-editor');
 
         toast.success('Project opened successfully!');
       } catch (error) {
-        console.error('Failed to open project file:', error);
+        console.error('[App] Failed to open project file', error);
         toast.error('Failed to open project file');
       }
     };
@@ -83,56 +110,39 @@ function App() {
       // Cleanup listener on unmount
       window.appControl?.offOpenProjectFile();
     };
-  }, [importProjectFromPath, openProject, initializeProjects]);
-
-  // Map stage to user-friendly message
-  const getStageMessage = (stage: StartupStage): string => {
-    const messages: Record<StartupStage, string> = {
-      'app-start': 'Starting application',
-      'renderer-mount': 'Loading interface',
-      'indexeddb-init': 'Connecting to database',
-      'indexeddb-ready': 'Database ready',
-      'projects-loading': 'Loading your projects',
-      'projects-loaded': 'Projects loaded',
-      'app-ready': 'Almost there',
-    };
-    return messages[stage] || 'Initializing';
-  };
+  }, [openProjectFromPath]);
 
   return (
     <ThemeProvider defaultTheme="soft-dark" storageKey="vite-ui-theme">
       <WindowStateProvider>
         <RuntimeStatusProvider>
-          {/* Show startup loader until app is ready */}
-          {!isAppReady && (
+          {/* Progressive startup status - non-blocking */}
+          {showStartupStatus && (
             <StartupLoader
-              stage={getStageMessage(startupStage)}
+              stage={startupStage}
               progress={startupProgress}
-              isVisible={!isAppReady}
+              isVisible={showStartupStatus}
             />
           )}
 
-          {/* Main app - render immediately but hidden behind loader */}
-          <div style={{ display: isAppReady ? 'block' : 'none' }}>
-            {/* Banner for missing runtime - shown after startup */}
-            <RuntimeMissingBanner
-              onDownloadClick={() => setShowGlobalDownloadModal(true)}
-            />
+          {/* Banner for missing runtime - shown after startup */}
+          <RuntimeMissingBanner
+            onDownloadClick={() => setShowGlobalDownloadModal(true)}
+          />
 
-            <RouterProvider router={router} />
-            <Toaster
-              richColors
-              position="bottom-right"
-              style={{ fontFamily: 'inherit' }}
-            />
+          <RouterProvider router={router} />
+          <Toaster
+            richColors
+            position="bottom-right"
+            style={{ fontFamily: 'inherit' }}
+          />
 
-            {/* Global runtime download modal */}
-            <RuntimeDownloadModal
-              isOpen={showGlobalDownloadModal}
-              onClose={() => setShowGlobalDownloadModal(false)}
-              featureName="AI Features"
-            />
-          </div>
+          {/* Global runtime download modal */}
+          <RuntimeDownloadModal
+            isOpen={showGlobalDownloadModal}
+            onClose={() => setShowGlobalDownloadModal(false)}
+            featureName="AI Features"
+          />
         </RuntimeStatusProvider>
       </WindowStateProvider>
     </ThemeProvider>

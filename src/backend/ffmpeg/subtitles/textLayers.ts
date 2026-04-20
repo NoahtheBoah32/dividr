@@ -125,7 +125,7 @@ export function extractTextSegments(
   }
 
   console.log(
-    `📝 [TextLayers] Extracting ${textTracks.length} text segments from text tracks`,
+    `[TextLayers] Extracting${textTracks.length} text segments from text tracks`,
   );
 
   // Convert tracks to text segments
@@ -135,7 +135,7 @@ export function extractTextSegments(
     const endTime = track.endFrame / timeline.fps;
 
     console.log(
-      `[TextLayers] Text segment ${index + 1}: "${track.textContent?.substring(0, 30)}..." [${startTime.toFixed(3)}s - ${endTime.toFixed(3)}s]`,
+      `[TextLayers] Text segment${index + 1}: "${track.textContent?.substring(0, 30)}..." [${startTime.toFixed(3)}s - ${endTime.toFixed(3)}s]`,
     );
 
     // Extract per-track styling if available
@@ -177,7 +177,7 @@ export function extractTextSegments(
   });
 
   console.log(
-    `✅ [TextLayers] Extracted ${segments.length} text segments, sorted by start time`,
+    `[TextLayers] Extracted${segments.length} text segments, sorted by start time`,
   );
 
   return segments;
@@ -539,19 +539,19 @@ export function generateTextLayerFilters(
   videoDimensions?: { width: number; height: number },
 ): string[] {
   if (segments.length === 0) {
-    console.log('📝 [TextLayers] No text segments to process');
+    console.log('[TextLayers] No text segments to process');
     return [];
   }
 
   console.log(
-    `📝 [TextLayers] Generating drawtext filters for ${segments.length} text segments`,
+    `[TextLayers] Generating drawtext filters for${segments.length} text segments`,
   );
 
   const filters: string[] = [];
 
   segments.forEach((segment, segmentIndex) => {
     console.log(
-      `📝 [TextLayers] Processing segment ${segmentIndex + 1}: "${segment.text.substring(0, 30)}..." [${segment.startTime.toFixed(3)}s-${segment.endTime.toFixed(3)}s]`,
+      `[TextLayers] Processing segment${segmentIndex + 1}: "${segment.text.substring(0, 30)}..." [${segment.startTime.toFixed(3)}s-${segment.endTime.toFixed(3)}s]`,
     );
 
     const mergedStyle = mergeTextStyles(globalStyle, segment.style);
@@ -567,7 +567,7 @@ export function generateTextLayerFilters(
     // Log multi-line detection
     if (lines.length > 1) {
       console.log(
-        `📝 [TextLayers] Multi-line text detected: ${lines.length} lines, splitting into individual filters for center alignment`,
+        `[TextLayers] Multi-line text detected${lines.length} lines, splitting into individual filters for center alignment`,
       );
     }
 
@@ -596,7 +596,7 @@ export function generateTextLayerFilters(
     });
   });
 
-  console.log(`✅ [TextLayers] Generated ${filters.length} drawtext filters`);
+  console.log(`[TextLayers] Generated${filters.length} drawtext filters`);
 
   return filters;
 }

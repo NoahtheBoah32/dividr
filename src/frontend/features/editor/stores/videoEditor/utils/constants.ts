@@ -88,6 +88,20 @@ export const DEFAULT_AUDIO_PROPERTIES = {
   noiseReductionEnabled: false,
 };
 
+export const AUTO_SAVE_INTERVAL_OPTIONS_MS = [
+  30_000, 60_000, 180_000, 300_000, 600_000,
+] as const;
+
+export type AutoSaveIntervalMs = number;
+
+export const AUTO_SAVE_INTERVAL_MIN_MS = 10_000;
+export const AUTO_SAVE_INTERVAL_MAX_MS = 3_600_000;
+
+export const DEFAULT_AUTO_SAVE_PREFERENCES = {
+  enabled: true,
+  intervalMs: 60_000,
+} as const;
+
 // Auto-save configuration
 // Implements a smart debounced auto-save similar to Figma/Premiere Pro
 export const AUTO_SAVE_CONFIG = {

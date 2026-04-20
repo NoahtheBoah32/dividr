@@ -1,14 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ShortcutConfig } from './types';
 
-// Import the store directly to avoid stale closures
-import { useVideoEditorStore } from '../index';
-
 /**
  * Track shortcuts - active when tracks are selected or focused
  * These include split, delete, duplicate, visibility, and mute operations
  */
-export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
+export const createTrackShortcuts = (getStore: () => any): ShortcutConfig[] => [
   {
     id: 'track-slice-playhead',
     keys: ['ctrl+b', 'cmd+b', 'k', 'ctrl+k', 'cmd+k'],
@@ -17,7 +14,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.splitAtPlayhead();
+      getStore().splitAtPlayhead();
     },
     options: {
       preventDefault: true,
@@ -33,27 +30,19 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      // CRITICAL: Always get fresh state directly from the store
-      // This bypasses any stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       const selectedTracks = freshState.timeline?.selectedTrackIds || [];
       const allTracks = freshState.tracks || [];
 
-      console.log('[Duplicate] Fresh state check:', {
-        selectedCount: selectedTracks.length,
-        totalTracks: allTracks.length,
-        selectedIds: selectedTracks,
-      });
-
       // Early exit: no selection = no-op
       if (selectedTracks.length === 0) {
-        console.warn('⚠️ No tracks selected for duplication');
+        console.warn('[TrackShortcuts] No tracks selected for duplication');
         return;
       }
 
       // Early exit: no tracks exist
       if (allTracks.length === 0) {
-        console.error('⚠️ Timeline is empty, cannot duplicate');
+        console.error('[TrackShortcuts] Timeline is empty, cannot duplicate');
         return;
       }
 
@@ -69,7 +58,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       selectedTracks.forEach((trackId: string) => {
         // Skip if already processed (e.g., as part of a linked pair)
         if (processedTrackIds.has(trackId)) {
-          console.log(`[Duplicate] Skipping ${trackId} - already processed`);
           return;
         }
 
@@ -77,18 +65,10 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
         const track = allTracks.find((t: any) => t.id === trackId);
         if (!track) {
           console.error(
-            `❌ Track ${trackId} not found in tracks array, skipping`,
+            `[TrackShortcuts] Track${trackId} not found in tracks array, skipping`,
           );
           return;
         }
-
-        console.log(`[Duplicate] Processing track:`, {
-          id: trackId,
-          name: track.name,
-          type: track.type,
-          isLinked: track.isLinked,
-          linkedTrackId: track.linkedTrackId,
-        });
 
         // Check if this is a linked pair where BOTH tracks are selected
         const bothSidesSelected =
@@ -103,9 +83,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
         // This prevents duplicating the pair twice
         if (bothSidesSelected && track.linkedTrackId) {
           processedTrackIds.add(track.linkedTrackId);
-          console.log(
-            `[Duplicate] Both sides selected, marking ${track.linkedTrackId} as processed`,
-          );
         }
 
         // Duplicate the track - returns single ID or array of IDs [primary, linked]
@@ -115,7 +92,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
           bothSidesSelected,
           true,
         );
-        console.log(`[Duplicate] Result:`, result);
 
         if (result) {
           // Handle both single ID and array of IDs
@@ -133,12 +109,8 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       // Update selection to the newly duplicated tracks
       if (newlyCreatedIds.length > 0) {
         freshState.setSelectedTracks(newlyCreatedIds);
-        console.log(
-          `✅ Duplicated ${processedTrackIds.size} track(s) → created ${newlyCreatedIds.length} new track(s)`,
-        );
-        console.log(`   New IDs:`, newlyCreatedIds);
       } else {
-        console.error('❌ Duplication produced no new tracks');
+        console.error('[TrackShortcuts] Duplication produced no new tracks');
       }
     },
   },
@@ -151,7 +123,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       const selectedTracks = freshState.timeline?.selectedTrackIds || [];
 
       if (selectedTracks.length === 0) {
@@ -160,7 +132,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       }
 
       freshState.copyTracks(selectedTracks);
-      console.log(`[Copy] Copied ${selectedTracks.length} track(s)`);
     },
     options: {
       preventDefault: true,
@@ -176,7 +147,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       const selectedTracks = freshState.timeline?.selectedTrackIds || [];
 
       if (selectedTracks.length === 0) {
@@ -185,7 +156,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       }
 
       freshState.cutTracks(selectedTracks);
-      console.log(`[Cut] Cut ${selectedTracks.length} track(s)`);
     },
     options: {
       preventDefault: true,
@@ -201,7 +171,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
 
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
 
       if (!freshState.hasClipboardData()) {
         console.warn('[Paste] No clipboard data to paste');
@@ -209,7 +179,6 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
       }
 
       freshState.pasteTracks();
-      console.log('[Paste] Pasted tracks from clipboard');
     },
     options: {
       preventDefault: true,
@@ -225,8 +194,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     handler: (e) => {
       e?.preventDefault();
       // Exit split mode to return to selection tool
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       freshState.setSplitMode(false);
     },
   },
@@ -238,8 +206,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      // Use fresh state to avoid stale closure issues
-      const freshState = useVideoEditorStore.getState();
+      const freshState = getStore();
       freshState.toggleSplitMode();
     },
   },
@@ -249,11 +216,17 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     description: 'Toggle Track Mute',
     category: 'Track Properties',
     scope: 'track',
-    handler: () => {
-      const selectedTracks = store.timeline.selectedTrackIds;
+    handler: (e) => {
+      e?.preventDefault();
+      const freshState = getStore();
+      const selectedTracks = freshState.timeline.selectedTrackIds || [];
+      if (selectedTracks.length === 0) return;
+
+      freshState.beginGroup?.('Toggle Selected Track Mute');
       selectedTracks.forEach((trackId: string) =>
-        store.toggleTrackMute(trackId),
+        freshState.toggleTrackMute(trackId),
       );
+      freshState.endGroup?.();
     },
   },
   {
@@ -273,7 +246,16 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
 
       if (!isEditingText) {
         e?.preventDefault();
-        store.removeSelectedTracks();
+        const freshState = getStore();
+        if (freshState.timeline?.selectedMarkerId) {
+          freshState.removeSelectedMarker?.();
+          return;
+        }
+
+        const selectedTracks = freshState.timeline?.selectedTrackIds || [];
+        if (selectedTracks.length > 0) {
+          freshState.removeSelectedTracks();
+        }
       }
     },
     options: {
@@ -288,7 +270,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.setSelectedTracks([]);
+      getStore().setSelectedTracks([]);
     },
   },
   {
@@ -299,7 +281,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.linkSelectedTracks();
+      getStore().linkSelectedTracks();
     },
   },
   {
@@ -310,7 +292,7 @@ export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
     scope: 'track',
     handler: (e) => {
       e?.preventDefault();
-      store.unlinkSelectedTracks();
+      getStore().unlinkSelectedTracks();
     },
   },
 ];

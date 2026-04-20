@@ -22,7 +22,7 @@ export const saveProjectAsAction = async () => {
 
     // toast.success('Project exported successfully');
   } catch (error) {
-    console.error('[Save Project As] Failed:', error);
+    console.error('[SaveProjectAs] Failed', error);
     toast.error('Failed to save project as');
   }
 };

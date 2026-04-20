@@ -19,6 +19,7 @@ import {
   VideoTrack,
 } from '../stores/videoEditor/index';
 import { getDisplayFps } from '../stores/videoEditor/types/timeline.types';
+import { canSplitClip } from '../stores/videoEditor/utils/splitUtils';
 import { DragGhost } from './dragGhost';
 import { DropZoneIndicator } from './dropZoneIndicator';
 import { useAutoScroll } from './hooks/useAutoScroll';
@@ -29,8 +30,9 @@ import { TimelineRuler } from './timelineRuler';
 import { TimelineTrackControllers } from './timelineTrackControllers';
 import { TimelineTracks } from './timelineTracks';
 import {
+  checkSnapPosition,
+  findAllSnapPoints,
   findAvailableRowIndexForRange,
-  findNearestAvailablePositionInRowWithPlayhead,
   hasCollision,
 } from './utils/collisionDetection';
 import {
@@ -58,6 +60,8 @@ interface TimelineProps {
   className?: string;
 }
 
+const PLAYHEAD_HOVER_PX = 4;
+
 export const Timeline: React.FC<TimelineProps> = React.memo(
   ({ className }) => {
     const timelineRef = useRef<HTMLDivElement>(null);
@@ -67,6 +71,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const autoFollowTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const playbackIntervalRef = useRef<number | null>(null);
     const lastFrameUpdateRef = useRef<number>(0);
+    const lastHandledInsertionSequenceRef = useRef<number>(0);
     const isManualScrollingRef = useRef<boolean>(false);
     const marqueeStartRef = useRef<{
       x: number;
@@ -97,6 +102,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const [splitIndicatorPosition, setSplitIndicatorPosition] = useState<
       number | null
     >(null);
+    const [splitIndicatorFrame, setSplitIndicatorFrame] = useState<
+      number | null
+    >(null);
+    const [isSplitHoverNearPlayhead, setIsSplitHoverNearPlayhead] =
+      useState(false);
     const [hoveredTrack, setHoveredTrack] = useState<VideoTrack | null>(null);
     const [hoveredTrackRowId, setHoveredTrackRowId] = useState<string | null>(
       null,
@@ -130,7 +140,20 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const transcribingSubtitleRowIndex = useVideoEditorStore(
       (state) => state.transcribingSubtitleRowIndex,
     );
-
+    const transcribingTrackLoaders = useVideoEditorStore(
+      (state) => state.transcribingTrackLoaders || [],
+    );
+    const lastInsertedTrackId = useVideoEditorStore(
+      (state) => state.lastInsertedTrackId,
+    );
+    const trackInsertionSequence = useVideoEditorStore(
+      (state) => state.trackInsertionSequence,
+    );
+    const currentProjectId = useVideoEditorStore(
+      (state) => state.currentProjectId,
+    );
+    // Calculate frame width based on zoom - memoized
+    const frameWidth = useMemo(() => 2 * timeline.zoom, [timeline.zoom]);
     // Generate dynamic rows for vertical drag detection
     const migratedTracks = useMemo(
       () => migrateTracksWithRowIndex(tracks),
@@ -140,8 +163,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       () =>
         generateDynamicRows(migratedTracks, {
           transcribingSubtitleRowIndex,
+          transcribingSubtitleRowIndices: transcribingTrackLoaders.map(
+            (loader) => loader.subtitleRowIndex,
+          ),
         }),
-      [migratedTracks, transcribingSubtitleRowIndex],
+      [migratedTracks, transcribingSubtitleRowIndex, transcribingTrackLoaders],
     );
     const setCurrentFrame = useVideoEditorStore(
       (state) => state.setCurrentFrame,
@@ -155,6 +181,14 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const removeSelectedTracks = useVideoEditorStore(
       (state) => state.removeSelectedTracks,
     );
+    const setSelectedMarker = useVideoEditorStore(
+      (state) => state.setSelectedMarker,
+    );
+    const removeMarker = useVideoEditorStore((state) => state.removeMarker);
+    const removeSelectedMarker = useVideoEditorStore(
+      (state) => state.removeSelectedMarker,
+    );
+    const clearMarkers = useVideoEditorStore((state) => state.clearMarkers);
     const isSplitModeActive = useVideoEditorStore(
       (state) => state.timeline.isSplitModeActive,
     );
@@ -189,6 +223,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const magneticSnapFrame = useVideoEditorStore(
       (state) => state.playback.magneticSnapFrame,
     );
+    const setMagneticSnapFrame = useVideoEditorStore(
+      (state) => state.setMagneticSnapFrame,
+    );
     const previewInteractionMode = useVideoEditorStore(
       (state) => state.preview.interactionMode,
     );
@@ -211,6 +248,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       const bufferFrames = Math.max(baseBufferFrames, percentageBuffer);
       return Math.max(timeline.totalFrames, effectiveEndFrame + bufferFrames);
     }, [effectiveEndFrame, timeline.totalFrames]);
+    const playbackDisplayFps = useMemo(() => getDisplayFps(tracks), [tracks]);
 
     const parseMediaDropPayload = useCallback((dataTransfer: DataTransfer) => {
       const jsonPayload = dataTransfer.getData('application/json');
@@ -227,8 +265,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               waveform?: string;
             };
           }
-        } catch (error) {
-          console.warn('Failed to parse drag payload', error);
+        } catch {
+          // Ignore malformed drag payloads.
         }
       }
 
@@ -315,6 +353,208 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       [interactionRowBounds],
     );
 
+    // Reset insertion handling cursor when switching projects.
+    useEffect(() => {
+      lastHandledInsertionSequenceRef.current = 0;
+    }, [currentProjectId]);
+
+    // Keep newly inserted tracks visible in the viewport.
+    useEffect(() => {
+      if (
+        !tracksRef.current ||
+        !lastInsertedTrackId ||
+        trackInsertionSequence < 1 ||
+        trackInsertionSequence <= lastHandledInsertionSequenceRef.current
+      ) {
+        return;
+      }
+
+      const insertedTrack = tracks.find(
+        (track) => track.id === lastInsertedTrackId,
+      );
+      if (!insertedTrack) return;
+
+      const linkedTrack = insertedTrack.linkedTrackId
+        ? tracks.find((track) => track.id === insertedTrack.linkedTrackId)
+        : null;
+      const verticalFocusTrack =
+        insertedTrack.type === 'video'
+          ? insertedTrack
+          : linkedTrack?.type === 'video'
+            ? linkedTrack
+            : insertedTrack;
+      const horizontalFocusTrack = insertedTrack;
+
+      const container = tracksRef.current;
+      const insertedRowId = getTrackRowId(verticalFocusTrack);
+
+      const scrollRowIntoView = (): boolean => {
+        const rowElement = Array.from(
+          container.querySelectorAll<HTMLElement>('[data-timeline-row-id]'),
+        ).find((element) => element.dataset.timelineRowId === insertedRowId);
+        const insertedTrackElement = container.querySelector<HTMLElement>(
+          `[data-track-id="${horizontalFocusTrack.id}"]`,
+        );
+
+        // Fall back to computed row bounds if the row element is not mounted yet.
+        const rowTopFromBounds = getRowBoundsById(insertedRowId)?.top;
+        const rowBottomFromBounds = getRowBoundsById(insertedRowId)?.bottom;
+
+        const rowTop =
+          rowElement?.offsetTop ??
+          (typeof rowTopFromBounds === 'number' ? rowTopFromBounds : null);
+        const rowBottom =
+          rowElement != null
+            ? rowElement.offsetTop + rowElement.offsetHeight
+            : typeof rowBottomFromBounds === 'number'
+              ? rowBottomFromBounds
+              : null;
+
+        const currentScrollTop = container.scrollTop;
+        const currentScrollLeft = container.scrollLeft;
+        const viewportBottom = currentScrollTop + container.clientHeight;
+        const viewportRight = currentScrollLeft + container.clientWidth;
+
+        let targetScrollTop = currentScrollTop;
+        const hasVerticalTarget = rowTop != null && rowBottom != null;
+
+        if (rowTop != null && rowBottom != null) {
+          const isFullyVisible =
+            rowTop >= currentScrollTop && rowBottom <= viewportBottom;
+
+          if (!isFullyVisible) {
+            targetScrollTop =
+              rowTop < currentScrollTop
+                ? rowTop
+                : rowBottom - container.clientHeight;
+          }
+        }
+
+        const horizontalPadding = 24;
+        const containerRect = container.getBoundingClientRect();
+        const clipLeftFromFrames = horizontalFocusTrack.startFrame * frameWidth;
+        const clipRightFromFrames = horizontalFocusTrack.endFrame * frameWidth;
+        const clipLeft =
+          insertedTrackElement != null
+            ? insertedTrackElement.getBoundingClientRect().left -
+              containerRect.left +
+              currentScrollLeft
+            : clipLeftFromFrames;
+        const clipRight =
+          insertedTrackElement != null
+            ? insertedTrackElement.getBoundingClientRect().right -
+              containerRect.left +
+              currentScrollLeft
+            : clipRightFromFrames;
+        const clipWidth = clipRight - clipLeft;
+        let targetScrollLeft = currentScrollLeft;
+
+        if (clipLeft < currentScrollLeft + horizontalPadding) {
+          targetScrollLeft = Math.max(0, clipLeft - horizontalPadding);
+        } else if (clipRight > viewportRight - horizontalPadding) {
+          targetScrollLeft =
+            clipWidth + horizontalPadding * 2 <= container.clientWidth
+              ? clipRight - container.clientWidth + horizontalPadding
+              : Math.max(0, clipLeft - horizontalPadding);
+        }
+
+        const clampedScrollTop = Math.max(
+          0,
+          Math.min(
+            targetScrollTop,
+            container.scrollHeight - container.clientHeight,
+          ),
+        );
+        const clampedScrollLeft = Math.max(
+          0,
+          Math.min(
+            targetScrollLeft,
+            container.scrollWidth - container.clientWidth,
+          ),
+        );
+
+        const shouldScrollVertically =
+          Math.abs(clampedScrollTop - currentScrollTop) > 1;
+        const shouldScrollHorizontally =
+          Math.abs(clampedScrollLeft - currentScrollLeft) > 1;
+
+        if (!shouldScrollVertically && !shouldScrollHorizontally) {
+          if (!hasVerticalTarget) {
+            return false;
+          }
+
+          const finalViewportLeft = currentScrollLeft;
+          const finalViewportRight = finalViewportLeft + container.clientWidth;
+          const horizontalVisible =
+            clipWidth + horizontalPadding * 2 <= container.clientWidth
+              ? clipLeft >= finalViewportLeft + horizontalPadding &&
+                clipRight <= finalViewportRight - horizontalPadding
+              : clipLeft >= finalViewportLeft + horizontalPadding &&
+                clipLeft <= finalViewportRight - horizontalPadding;
+
+          return horizontalVisible;
+        }
+
+        container.scrollTo({
+          top: clampedScrollTop,
+          left: clampedScrollLeft,
+          behavior: 'smooth',
+        });
+        setVerticalScrollY(clampedScrollTop);
+
+        if (!hasVerticalTarget) {
+          return false;
+        }
+
+        const finalViewportLeft = clampedScrollLeft;
+        const finalViewportRight = finalViewportLeft + container.clientWidth;
+        const horizontalVisible =
+          clipWidth + horizontalPadding * 2 <= container.clientWidth
+            ? clipLeft >= finalViewportLeft + horizontalPadding &&
+              clipRight <= finalViewportRight - horizontalPadding
+            : clipLeft >= finalViewportLeft + horizontalPadding &&
+              clipLeft <= finalViewportRight - horizontalPadding;
+
+        return horizontalVisible;
+      };
+
+      let frameId: number | null = null;
+      let attempts = 0;
+      const maxAttempts = 120;
+
+      const runInsertionScrollAttempt = () => {
+        attempts += 1;
+        const insertionTargetSettled = scrollRowIntoView();
+        if (insertionTargetSettled) {
+          lastHandledInsertionSequenceRef.current = trackInsertionSequence;
+          return;
+        }
+
+        if (attempts >= maxAttempts) {
+          return;
+        }
+
+        frameId = requestAnimationFrame(runInsertionScrollAttempt);
+      };
+
+      frameId = requestAnimationFrame(() => {
+        frameId = requestAnimationFrame(runInsertionScrollAttempt);
+      });
+
+      return () => {
+        if (frameId !== null) {
+          cancelAnimationFrame(frameId);
+        }
+      };
+    }, [
+      tracks,
+      lastInsertedTrackId,
+      trackInsertionSequence,
+      getRowBoundsById,
+      setVerticalScrollY,
+      frameWidth,
+    ]);
+
     // Animation loop for playback
     useEffect(() => {
       if (!playback.isPlaying) {
@@ -327,14 +567,19 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
       const startTime = performance.now();
       const startFrame = lastFrameUpdateRef.current;
+      const commitFrame = (frame: number) => {
+        if (frame === lastFrameUpdateRef.current) return;
+        lastFrameUpdateRef.current = frame;
+        setCurrentFrame(frame);
+      };
 
       // Use RAF for smooth playback that matches video timing
       const animate = () => {
         if (!playback.isPlaying) return;
 
-        const displayFps = getDisplayFps(tracks);
         const elapsed = (performance.now() - startTime) / 1000; // elapsed seconds
-        const frameAdvance = elapsed * displayFps * playback.playbackRate;
+        const frameAdvance =
+          elapsed * playbackDisplayFps * playback.playbackRate;
         const targetFrame = Math.floor(startFrame + frameAdvance);
 
         // Linear playback - respect gaps like Premiere Pro
@@ -344,8 +589,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           const finalFrame = playback.isLooping
             ? 0
             : Math.max(0, displayedTotalFrames - 1);
-          lastFrameUpdateRef.current = finalFrame;
-          setCurrentFrame(finalFrame);
+          commitFrame(finalFrame);
 
           if (playback.isLooping) {
             // Restart the animation from frame 0
@@ -354,10 +598,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               const newAnimate = () => {
                 if (!playback.isPlaying) return;
 
-                const displayFps = getDisplayFps(tracks);
                 const newElapsed = (performance.now() - newStartTime) / 1000;
                 const newFrameAdvance =
-                  newElapsed * displayFps * playback.playbackRate;
+                  newElapsed * playbackDisplayFps * playback.playbackRate;
                 const newTargetFrame = Math.floor(newFrameAdvance);
 
                 if (newTargetFrame < displayedTotalFrames) {
@@ -365,8 +608,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                     0,
                     Math.min(newTargetFrame, displayedTotalFrames - 1),
                   );
-                  lastFrameUpdateRef.current = clampedFrame;
-                  setCurrentFrame(clampedFrame);
+                  commitFrame(clampedFrame);
                   playbackIntervalRef.current =
                     requestAnimationFrame(newAnimate);
                 }
@@ -382,8 +624,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
             0,
             Math.min(targetFrame, displayedTotalFrames - 1),
           );
-          lastFrameUpdateRef.current = clampedFrame;
-          setCurrentFrame(clampedFrame);
+          commitFrame(clampedFrame);
           playbackIntervalRef.current = requestAnimationFrame(animate);
         }
       };
@@ -401,8 +642,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       playback.isLooping,
       playback.playbackRate,
       displayedTotalFrames,
+      playbackDisplayFps,
       setCurrentFrame,
-      tracks,
     ]);
 
     // Sync lastFrameUpdateRef with actual currentFrame changes
@@ -425,7 +666,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       mouseX: autoScrollMousePos?.x || 0,
       mouseY: autoScrollMousePos?.y || 0,
       scrollElement: tracksRef.current,
-      threshold: 80,
+      threshold: 120,
       verticalThreshold: 100,
       speed: 1.2,
       enableHorizontal: true,
@@ -457,6 +698,10 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     // This ensures delete works even when react-hotkeys-hook might not catch it
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.defaultPrevented) {
+          return;
+        }
+
         // Check if user is editing text in an input, textarea, or contenteditable element
         const target = e.target as HTMLElement;
         const isEditingText =
@@ -467,14 +712,23 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
         // Only trigger delete if not editing text
         if (!isEditingText && (e.key === 'Delete' || e.key === 'Backspace')) {
-          e.preventDefault();
-          removeSelectedTracks();
+          const state = useVideoEditorStore.getState();
+          if (state.timeline.selectedMarkerId) {
+            e.preventDefault();
+            removeSelectedMarker();
+            return;
+          }
+
+          if (state.timeline.selectedTrackIds.length > 0) {
+            e.preventDefault();
+            removeSelectedTracks();
+          }
         }
       };
 
       document.addEventListener('keydown', handleKeyDown);
       return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [timeline.selectedTrackIds, removeSelectedTracks]);
+    }, [removeSelectedTracks, removeSelectedMarker]);
 
     // Cleanup timeouts and intervals on unmount
     useEffect(() => {
@@ -499,6 +753,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     useEffect(() => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const handleGlobalMouseUp = (e: MouseEvent) => {
+        // Ignore non-primary button releases.
+        if (e.button !== 0) {
+          return;
+        }
+
         setTimeout(() => {
           const {
             playback,
@@ -506,6 +765,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
             clearDragGhost,
             tracks,
             moveTrackToRow,
+            normalizeTrackRowsAfterDrop,
           } = useVideoEditorStore.getState();
 
           if (playback.isDraggingTrack || playback.dragGhost?.isActive) {
@@ -518,48 +778,59 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               dragGhost.targetFrame !== null
             ) {
               const targetRowParsed = parseRowId(dragGhost.targetRow);
-              const primaryTrack = tracks.find(
+              const draggedTrackIds =
+                dragGhost.selectedTrackIds?.length > 0
+                  ? dragGhost.selectedTrackIds
+                  : dragGhost.trackId
+                    ? [dragGhost.trackId]
+                    : [];
+              const draggedTracks = tracks.filter((t: VideoTrack) =>
+                draggedTrackIds.includes(t.id),
+              );
+              const primaryTrack = draggedTracks.find(
                 (t: VideoTrack) => t.id === dragGhost.trackId,
               );
 
-              if (primaryTrack && targetRowParsed) {
-                const duration =
-                  primaryTrack.endFrame - primaryTrack.startFrame;
-                const excludeIds = dragGhost.selectedTrackIds || [
-                  dragGhost.trackId,
-                ];
+              if (
+                primaryTrack &&
+                targetRowParsed &&
+                targetRowParsed.type === primaryTrack.type
+              ) {
+                const primaryRowIndex = primaryTrack.trackRowIndex ?? 0;
+                const primaryStartFrame = primaryTrack.startFrame;
+                const rowDelta =
+                  Math.round(targetRowParsed.rowIndex) - primaryRowIndex;
+                const targetFrame = dragGhost.targetFrame;
+                const orderedTracks = [...draggedTracks].sort((a, b) => {
+                  const rowDiff =
+                    (a.trackRowIndex ?? 0) - (b.trackRowIndex ?? 0);
+                  if (rowDiff !== 0) return rowDiff;
+                  return a.startFrame - b.startFrame;
+                });
+                const excludeTrackIds = orderedTracks.map((t) => t.id);
 
-                // Check for collision at drop position
-                const wouldCollide = hasCollision(
-                  dragGhost.targetFrame,
-                  dragGhost.targetFrame + duration,
-                  primaryTrack.type,
-                  targetRowParsed.rowIndex,
-                  tracks,
-                  { excludeTrackIds: excludeIds },
-                );
+                orderedTracks.forEach((draggedTrack) => {
+                  const frameOffset =
+                    draggedTrack.startFrame - primaryStartFrame;
+                  const targetStartFrame = targetFrame + frameOffset;
+                  const targetRowIndex = Math.max(
+                    0,
+                    Math.round((draggedTrack.trackRowIndex ?? 0) + rowDelta),
+                  );
 
-                let finalStartFrame = dragGhost.targetFrame;
+                  moveTrackToRow(
+                    draggedTrack.id,
+                    targetRowIndex,
+                    targetStartFrame,
+                    {
+                      skipNormalize: true,
+                      excludeTrackIds,
+                      skipLinkedMove: true,
+                    },
+                  );
+                });
 
-                if (wouldCollide) {
-                  // Find nearest available position
-                  finalStartFrame =
-                    findNearestAvailablePositionInRowWithPlayhead(
-                      dragGhost.targetFrame,
-                      duration,
-                      primaryTrack.type,
-                      targetRowParsed.rowIndex,
-                      tracks,
-                      excludeIds,
-                    );
-                }
-
-                // Apply the move
-                moveTrackToRow(
-                  dragGhost.trackId,
-                  targetRowParsed.rowIndex,
-                  finalStartFrame,
-                );
+                normalizeTrackRowsAfterDrop();
               }
             }
 
@@ -572,28 +843,14 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         }, 0);
       };
 
-      const handleGlobalMouseLeave = (e: MouseEvent) => {
-        // Only trigger if we're actually leaving the window
-        if (
-          e.clientY <= 0 ||
-          e.clientX <= 0 ||
-          e.clientX >= window.innerWidth ||
-          e.clientY >= window.innerHeight
-        ) {
-          handleGlobalMouseUp(e);
-        }
-      };
-
       // Listen on document AND window for maximum coverage
       // Use bubble phase (false) to run AFTER child handlers
       document.addEventListener('mouseup', handleGlobalMouseUp, false);
       window.addEventListener('mouseup', handleGlobalMouseUp, false);
-      document.addEventListener('mouseleave', handleGlobalMouseLeave);
 
       return () => {
         document.removeEventListener('mouseup', handleGlobalMouseUp, false);
         window.removeEventListener('mouseup', handleGlobalMouseUp, false);
-        document.removeEventListener('mouseleave', handleGlobalMouseLeave);
       };
     }, []);
 
@@ -654,9 +911,6 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         tracksElement.removeEventListener('scroll', handleTracksScroll);
       };
     }, []);
-
-    // Calculate frame width based on zoom - memoized
-    const frameWidth = useMemo(() => 2 * timeline.zoom, [timeline.zoom]);
 
     const [subtitleImportConfirmation, setSubtitleImportConfirmation] =
       useState<{
@@ -757,7 +1011,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
             payload.mediaId,
             targetFrame,
             targetRowIndex ?? 0,
-          ).catch(console.error);
+          ).catch(() => {
+            // Drop handler stays silent in dev for expected import failures.
+          });
           return;
         }
 
@@ -1259,73 +1515,118 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       (e: React.MouseEvent) => {
         if (!isSplitModeActive || !tracksRef.current) {
           setSplitIndicatorPosition(null);
+          setSplitIndicatorFrame(null);
           setHoveredTrack(null);
           setHoveredTrackRowId(null);
           setLinkedTrackIndicators([]);
+          setIsSplitHoverNearPlayhead(false);
           return;
         }
 
-        const hoveredTrackAtPosition = findTrackAtPosition(
-          e.clientX,
-          e.clientY,
-          tracksRef.current,
-          frameWidth,
-          tracks,
-          visibleTrackRows,
-          dynamicRowsWithPlaceholders,
+        const rect = tracksRef.current.getBoundingClientRect();
+        const contentX = e.clientX - rect.left + tracksRef.current.scrollLeft;
+        const contentY = e.clientY - rect.top + tracksRef.current.scrollTop;
+        const playheadX = timeline.currentFrame * frameWidth;
+        const isNearPlayhead =
+          Math.abs(contentX - playheadX) <= PLAYHEAD_HOVER_PX;
+        setIsSplitHoverNearPlayhead(isNearPlayhead);
+
+        const hoveredRow = interactionRowBounds.find(
+          (row) => contentY >= row.top && contentY < row.bottom,
         );
 
-        if (hoveredTrackAtPosition) {
-          const rect = tracksRef.current.getBoundingClientRect();
-          const x = e.clientX - rect.left + tracksRef.current.scrollLeft;
-          const frame = Math.floor(x / frameWidth);
-          const indicatorPosition =
-            frame * frameWidth - tracksRef.current.scrollLeft;
-
-          setHoveredTrack(hoveredTrackAtPosition);
-          setHoveredTrackRowId(getTrackRowId(hoveredTrackAtPosition));
-          setSplitIndicatorPosition(indicatorPosition);
-
-          // Handle linked track indicators
-          const indicators: Array<{ rowId: string; position: number }> = [];
-
-          if (
-            hoveredTrackAtPosition.isLinked &&
-            hoveredTrackAtPosition.linkedTrackId
-          ) {
-            const linkedTrack = tracks.find(
-              (t) => t.id === hoveredTrackAtPosition.linkedTrackId,
-            );
-            if (
-              linkedTrack &&
-              frame > linkedTrack.startFrame &&
-              frame < linkedTrack.endFrame
-            ) {
-              // Add indicator for the linked track
-              indicators.push({
-                rowId: getTrackRowId(linkedTrack),
-                position: indicatorPosition,
-              });
-            }
-          }
-
-          setLinkedTrackIndicators(indicators);
-        } else {
+        if (!hoveredRow) {
           setHoveredTrack(null);
           setHoveredTrackRowId(null);
           setSplitIndicatorPosition(null);
+          setSplitIndicatorFrame(null);
           setLinkedTrackIndicators([]);
+          setIsSplitHoverNearPlayhead(false);
+          return;
         }
+
+        const targetFrame = isNearPlayhead
+          ? timeline.currentFrame
+          : Math.floor(contentX / frameWidth);
+        const trackAtFrame = tracks.find(
+          (track) =>
+            track.type === hoveredRow.type &&
+            (track.trackRowIndex ?? 0) === hoveredRow.rowIndex &&
+            canSplitClip(track, targetFrame),
+        );
+
+        if (!trackAtFrame) {
+          setHoveredTrack(null);
+          setHoveredTrackRowId(null);
+          setSplitIndicatorPosition(null);
+          setSplitIndicatorFrame(null);
+          setLinkedTrackIndicators([]);
+          setIsSplitHoverNearPlayhead(false);
+          return;
+        }
+
+        const indicatorPosition = targetFrame * frameWidth - timeline.scrollX;
+
+        setHoveredTrack(trackAtFrame);
+        setHoveredTrackRowId(hoveredRow.rowId);
+        setSplitIndicatorPosition(indicatorPosition);
+        setSplitIndicatorFrame(targetFrame);
+
+        // Handle linked track indicators
+        const indicators: Array<{ rowId: string; position: number }> = [];
+
+        if (trackAtFrame.isLinked && trackAtFrame.linkedTrackId) {
+          const linkedTrack = tracks.find(
+            (t) => t.id === trackAtFrame.linkedTrackId,
+          );
+          if (linkedTrack && canSplitClip(linkedTrack, targetFrame)) {
+            // Add indicator for the linked track
+            indicators.push({
+              rowId: getTrackRowId(linkedTrack),
+              position: indicatorPosition,
+            });
+          }
+        }
+
+        setLinkedTrackIndicators(indicators);
       },
-      [dynamicRowsWithPlaceholders, frameWidth, isSplitModeActive, tracks],
+      [
+        frameWidth,
+        interactionRowBounds,
+        isSplitModeActive,
+        timeline.currentFrame,
+        timeline.scrollX,
+        tracks,
+      ],
     );
 
     const handleSplitMouseLeave = useCallback(() => {
       setSplitIndicatorPosition(null);
+      setSplitIndicatorFrame(null);
       setHoveredTrack(null);
       setHoveredTrackRowId(null);
       setLinkedTrackIndicators([]);
+      setIsSplitHoverNearPlayhead(false);
     }, []);
+
+    // Keep split indicator aligned when frame/scroll changes
+    useEffect(() => {
+      if (
+        !isSplitModeActive ||
+        !hoveredTrackRowId ||
+        splitIndicatorFrame === null
+      )
+        return;
+      setSplitIndicatorPosition(
+        splitIndicatorFrame * frameWidth - timeline.scrollX,
+      );
+    }, [
+      frameWidth,
+      hoveredTrackRowId,
+      isSplitModeActive,
+      timeline.scrollX,
+      splitIndicatorFrame,
+    ]);
 
     // Marquee selection handlers
     // MIGRATED: Now accounts for vertical scroll offset and includes auto-scroll
@@ -1504,6 +1805,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     // Playhead drag handler
     const handlePlayheadDragStart = useCallback(() => {
       if (!tracksRef.current) return;
+      const SNAP_THRESHOLD_FRAMES = 5;
 
       // Start playhead drag mode
       startDraggingPlayhead();
@@ -1514,10 +1816,36 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         const rect = tracksRef.current.getBoundingClientRect();
         const x = moveEvent.clientX - rect.left + tracksRef.current.scrollLeft;
         const frame = Math.floor(x / frameWidth);
-        const clampedFrame = Math.max(
+        let clampedFrame = Math.max(
           0,
           Math.min(frame, displayedTotalFrames - 1),
         );
+
+        const state = useVideoEditorStore.getState();
+        const snapEnabled = state.timeline?.snapEnabled ?? false;
+
+        if (snapEnabled) {
+          const snapPoints = findAllSnapPoints(
+            state.tracks || [],
+            [],
+            undefined,
+            state.timeline?.markers || [],
+          );
+          const snapResult = checkSnapPosition(
+            clampedFrame,
+            snapPoints,
+            SNAP_THRESHOLD_FRAMES,
+          );
+
+          if (snapResult !== null) {
+            clampedFrame = snapResult;
+            setMagneticSnapFrame(snapResult);
+          } else {
+            setMagneticSnapFrame(null);
+          }
+        } else {
+          setMagneticSnapFrame(null);
+        }
 
         // Update frame in real-time during drag
         lastFrameUpdateRef.current = clampedFrame;
@@ -1527,6 +1855,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       const handleMouseUp = () => {
         // End playhead drag mode
         endDraggingPlayhead();
+        setMagneticSnapFrame(null);
 
         // Clean up listeners
         document.removeEventListener('mousemove', handleMouseMove);
@@ -1538,10 +1867,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       document.addEventListener('mouseup', handleMouseUp);
     }, [
       frameWidth,
-      effectiveEndFrame,
+      displayedTotalFrames,
       setCurrentFrame,
       startDraggingPlayhead,
       endDraggingPlayhead,
+      setMagneticSnapFrame,
     ]);
 
     // Centralized interaction handlers
@@ -1699,6 +2029,47 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           return;
         }
 
+        // Clear marker selection when interacting with non-marker timeline areas.
+        if (e.button === 0 && timeline.selectedMarkerId) {
+          setSelectedMarker(null);
+        }
+
+        // Split mode: cut at playhead time when near playhead, otherwise cut at mouse frame
+        if (isSplitModeActive) {
+          if (e.button !== 0) return;
+
+          const rect = tracksRef.current.getBoundingClientRect();
+          const contentX = e.clientX - rect.left + tracksRef.current.scrollLeft;
+          const contentY = e.clientY - rect.top + tracksRef.current.scrollTop;
+          const playheadX = timeline.currentFrame * frameWidth;
+          const isNearPlayhead =
+            Math.abs(contentX - playheadX) <= PLAYHEAD_HOVER_PX;
+
+          const hoveredRow = interactionRowBounds.find(
+            (row) => contentY >= row.top && contentY < row.bottom,
+          );
+
+          if (hoveredRow) {
+            const frame = isNearPlayhead
+              ? timeline.currentFrame
+              : Math.floor(contentX / frameWidth);
+            const trackToSplit = tracks.find(
+              (track) =>
+                track.type === hoveredRow.type &&
+                (track.trackRowIndex ?? 0) === hoveredRow.rowIndex &&
+                canSplitClip(track, frame),
+            );
+
+            if (trackToSplit) {
+              splitAtPosition(frame, trackToSplit.id);
+            }
+          }
+
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+
         const rect = tracksRef.current.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const clickY = e.clientY - rect.top;
@@ -1766,11 +2137,93 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         displayedTotalFrames,
         isSplitModeActive,
         interactionHandlers,
+        interactionRowBounds,
+        splitAtPosition,
+        timeline.currentFrame,
+        timeline.selectedMarkerId,
         visibleTrackRows,
         dynamicRowsWithPlaceholders,
         previewInteractionMode,
         setPreviewInteractionMode,
+        setSelectedMarker,
       ],
+    );
+
+    const cutMarkers = (() => {
+      if (
+        !isSplitModeActive ||
+        !isSplitHoverNearPlayhead ||
+        !hoveredTrackRowId ||
+        !tracksRef.current
+      ) {
+        return null;
+      }
+
+      const currentScrollY = tracksRef.current.scrollTop;
+      const viewportHeight = tracksRef.current.clientHeight;
+
+      const rowIds = [
+        hoveredTrackRowId,
+        ...linkedTrackIndicators.map((indicator) => indicator.rowId),
+      ];
+      const uniqueRowIds = Array.from(new Set(rowIds));
+
+      const markers = uniqueRowIds
+        .map((rowId) => {
+          const rowBounds = getRowBoundsById(rowId);
+          if (!rowBounds) return null;
+
+          const indicatorTop = rowBounds.top - currentScrollY;
+          const indicatorHeight = rowBounds.bottom - rowBounds.top;
+
+          if (
+            indicatorTop + indicatorHeight < 0 ||
+            indicatorTop > viewportHeight
+          ) {
+            return null;
+          }
+
+          const clippedTop = Math.max(0, indicatorTop);
+          const clippedBottom = Math.min(
+            viewportHeight,
+            indicatorTop + indicatorHeight,
+          );
+          const clippedHeight = Math.max(0, clippedBottom - clippedTop);
+
+          if (clippedHeight === 0) return null;
+
+          return { key: rowId, top: clippedTop, height: clippedHeight };
+        })
+        .filter(Boolean) as Array<{ key: string; top: number; height: number }>;
+
+      return markers.length > 0 ? markers : null;
+    })();
+
+    const handleCutMarkerMouseDown = useCallback(
+      (rowId: string, e: React.MouseEvent<HTMLDivElement>) => {
+        // Marker clicks should execute split directly and never seek/drag.
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!isSplitModeActive) return;
+        if (e.button !== 0) return;
+
+        const parsed = parseRowId(rowId);
+        if (!parsed) return;
+
+        const frame = timeline.currentFrame;
+        const trackToSplit = tracks.find(
+          (track) =>
+            track.type === parsed.type &&
+            (track.trackRowIndex ?? 0) === parsed.rowIndex &&
+            canSplitClip(track, frame),
+        );
+
+        if (!trackToSplit) return;
+
+        splitAtPosition(frame, trackToSplit.id);
+      },
+      [isSplitModeActive, timeline.currentFrame, tracks, splitAtPosition],
     );
 
     return (
@@ -1826,7 +2279,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   !playback.isDraggingTrack && 'cursor-pointer',
                 )}
                 onMouseDown={handleMouseDown}
-                title={playback.isDraggingTrack ? '' : 'Click to seek'}
+                title={
+                  playback.isDraggingTrack || isSplitModeActive
+                    ? ''
+                    : 'Click to seek'
+                }
               >
                 <TimelineRuler
                   frameWidth={frameWidth}
@@ -1836,6 +2293,12 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   tracks={tracks}
                   inPoint={timeline.inPoint}
                   outPoint={timeline.outPoint}
+                  markers={timeline.markers}
+                  selectedMarkerId={timeline.selectedMarkerId}
+                  magneticSnapFrame={magneticSnapFrame}
+                  onMarkerSelect={setSelectedMarker}
+                  onMarkerDelete={removeMarker}
+                  onDeleteAllMarkers={clearMarkers}
                   onClick={undefined}
                   timelineScrollElement={tracksRef.current}
                 />
@@ -1858,7 +2321,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                             ? 'cursor-pointer'
                             : '',
                   )}
-                  title={playback.isDraggingTrack ? '' : 'Click to seek'}
+                  title={
+                    playback.isDraggingTrack || isSplitModeActive
+                      ? ''
+                      : 'Click to seek'
+                  }
                   style={{
                     scrollBehavior:
                       autoFollowEnabled && playback.isPlaying
@@ -1941,11 +2408,15 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   visible={timeline.playheadVisible}
                   timelineScrollElement={tracksRef.current}
                   onStartDrag={handlePlayheadDragStart}
+                  onCutMarkerMouseDown={handleCutMarkerMouseDown}
                   magneticSnapFrame={magneticSnapFrame}
+                  isInteractive={!isSplitModeActive}
+                  cutMarkers={cutMarkers ?? undefined}
                 />
 
                 {/* Split Indicator Line - confined to hovered track row */}
                 {isSplitModeActive &&
+                  !isSplitHoverNearPlayhead &&
                   splitIndicatorPosition !== null &&
                   hoveredTrackRowId &&
                   tracksRef.current &&
@@ -1979,6 +2450,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
                 {/* Linked Track Indicators */}
                 {isSplitModeActive &&
+                  !isSplitHoverNearPlayhead &&
                   tracksRef.current &&
                   linkedTrackIndicators.map((indicator, index) => {
                     if (!tracksRef.current) return null;

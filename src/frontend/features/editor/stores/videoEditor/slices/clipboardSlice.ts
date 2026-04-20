@@ -61,7 +61,7 @@ export const createClipboardSlice: StateCreator<
 
       const track = state.tracks.find((t: VideoTrack) => t.id === trackId);
       if (!track) {
-        console.error(`[Clipboard] Track ${trackId} not found, skipping`);
+        console.error(`[Clipboard] Track${trackId} not found, skipping`);
         return;
       }
 
@@ -101,10 +101,6 @@ export const createClipboardSlice: StateCreator<
         timestamp: Date.now(),
       },
     });
-
-    console.log(
-      `[Clipboard] Copied ${clonedTracks.length} track(s) to clipboard`,
-    );
   },
 
   cutTracks: (trackIds: string[]) => {
@@ -127,7 +123,7 @@ export const createClipboardSlice: StateCreator<
 
       const track = state.tracks.find((t: VideoTrack) => t.id === trackId);
       if (!track) {
-        console.error(`[Clipboard] Track ${trackId} not found, skipping`);
+        console.error(`[Clipboard] Track${trackId} not found, skipping`);
         return;
       }
 
@@ -171,8 +167,6 @@ export const createClipboardSlice: StateCreator<
       },
     });
 
-    console.log(`[Clipboard] Cut ${clonedTracks.length} track(s) to clipboard`);
-
     // Use batch deletion by setting selection and calling removeSelectedTracks
     // This is much faster than calling removeTrack in a loop
     state.setSelectedTracks(tracksToRemove);
@@ -197,8 +191,6 @@ export const createClipboardSlice: StateCreator<
     // Get playhead position for paste at playhead behavior
     const playheadFrame = state.timeline?.currentFrame ?? 0;
     const existingTracks: VideoTrack[] = state.tracks || [];
-
-    console.log(`[Clipboard] Pasting at playhead frame: ${playheadFrame}`);
 
     // Begin grouped transaction for atomic undo of all pasted tracks
     const trackCount = clipboardData.tracks.length;
@@ -346,9 +338,6 @@ export const createClipboardSlice: StateCreator<
       // Rule A: Check if playhead intersects clips on the SAME row as the copied clip
       const clipsOnSameRow = findClipsAtPlayhead(trackType, originalRowIndex);
       if (clipsOnSameRow.length > 0) {
-        console.log(
-          `[Clipboard] Playhead intersects clip on same row (${originalRowIndex}), finding slot above`,
-        );
         // Find available slot above the original row
         return findAvailableRowAbove(
           proposedStartFrame,
@@ -369,9 +358,6 @@ export const createClipboardSlice: StateCreator<
       if (allIntersectingClips.length > 0) {
         // Use the row of the intersected clip
         const intersectedRow = allIntersectingClips[0].trackRowIndex ?? 0;
-        console.log(
-          `[Clipboard] Playhead intersects clip on row ${intersectedRow}, checking for collision`,
-        );
 
         // Check if we can place on that row without collision
         const wouldCollide = hasCollisionAtPosition(
@@ -406,16 +392,11 @@ export const createClipboardSlice: StateCreator<
       );
 
       if (!wouldCollide) {
-        console.log(
-          `[Clipboard] No playhead intersection, using original row ${originalRowIndex}`,
-        );
         return originalRowIndex;
       }
 
       // Collision at original row - find available slot above
-      console.log(
-        `[Clipboard] Collision at original row ${originalRowIndex}, finding slot above`,
-      );
+
       return findAvailableRowAbove(
         proposedStartFrame,
         proposedEndFrame,
@@ -436,7 +417,7 @@ export const createClipboardSlice: StateCreator<
 
       const newId = linkedPairs.get(track.id);
       if (!newId) {
-        console.error(`[Clipboard] Failed to get new ID for track ${track.id}`);
+        console.error(`[Clipboard] Failed to get new ID for track${track.id}`);
         return;
       }
 
@@ -468,7 +449,7 @@ export const createClipboardSlice: StateCreator<
           const newLinkedId = linkedPairs.get(linkedTrack.id);
           if (!newLinkedId) {
             console.error(
-              `[Clipboard] Failed to get new ID for linked track ${linkedTrack.id}`,
+              `[Clipboard] Failed to get new ID for linked track${linkedTrack.id}`,
             );
             return;
           }
@@ -520,10 +501,6 @@ export const createClipboardSlice: StateCreator<
 
           newTracks.push(pastedTrack, pastedLinkedTrack);
           newTrackIds.push(newId, newLinkedId);
-
-          console.log(
-            `[Clipboard] Pasted linked pair: ${track.type}-${targetRowIndex} at frame ${finalStartFrame}, ${linkedTrack.type}-${linkedTargetRowIndex} at frame ${linkedFinalStartFrame}`,
-          );
         }
       } else {
         // Handle single/unlinked track
@@ -552,10 +529,6 @@ export const createClipboardSlice: StateCreator<
 
         newTracks.push(pastedTrack);
         newTrackIds.push(newId);
-
-        console.log(
-          `[Clipboard] Pasted ${track.type} to row ${targetRowIndex} at frame ${proposedStartFrame}`,
-        );
       }
     });
 
@@ -580,15 +553,10 @@ export const createClipboardSlice: StateCreator<
 
     // End grouped transaction for all pasted tracks
     state.endGroup?.();
-
-    console.log(
-      `[Clipboard] Pasted ${newTrackIds.length} track(s) at playhead (frame ${playheadFrame}) with smart row placement`,
-    );
   },
 
   clearClipboard: () => {
     set({ clipboard: null });
-    console.log('[Clipboard] Clipboard cleared');
   },
 
   hasClipboardData: () => {

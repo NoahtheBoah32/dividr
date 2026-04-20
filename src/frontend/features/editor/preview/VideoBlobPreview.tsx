@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { importMediaFromDialogUnified } from '../services/mediaImportService';
 import { usePreviewShortcuts } from '../stores/videoEditor/hooks/usePreviewShortcuts';
 import { useVideoEditorStore } from '../stores/videoEditor/index';
@@ -28,10 +29,7 @@ import {
 } from './hooks';
 import { CanvasOverlay, UnifiedOverlayRenderer } from './overlays';
 import { TransformBoundaryLayer } from './overlays/TransformBoundaryLayer';
-import {
-  calculateContentScale,
-  calculateFitDimensions,
-} from './utils/scalingUtils';
+import { calculateContentScale } from './utils/scalingUtils';
 
 interface VideoBlobPreviewProps {
   className?: string;
@@ -72,7 +70,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     setPreviewScale,
     setPreviewInteractionMode,
     updateTrack,
-    updateTrackProperty,
+    updateTrackTransform,
     setSelectedTracks,
     currentTranscribingTrackId,
     transcriptionProgress,
@@ -80,9 +78,47 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     removeTrack,
     beginGroup,
     endGroup,
-  } = useVideoEditorStore();
+    pause,
+  } = useVideoEditorStore(
+    useShallow((state) => ({
+      tracks: state.tracks,
+      timeline: state.timeline,
+      playback: state.playback,
+      preview: state.preview,
+      textStyle: state.textStyle,
+      getTextStyleForSubtitle: state.getTextStyleForSubtitle,
+      setGlobalSubtitlePosition: state.setGlobalSubtitlePosition,
+      importMediaFromDialog: state.importMediaFromDialog,
+      importMediaFromDrop: state.importMediaFromDrop,
+      importMediaToTimeline: state.importMediaToTimeline,
+      addTrackFromMediaLibrary: state.addTrackFromMediaLibrary,
+      setCurrentFrame: state.setCurrentFrame,
+      setPreviewPan: state.setPreviewPan,
+      setPreviewScale: state.setPreviewScale,
+      setPreviewInteractionMode: state.setPreviewInteractionMode,
+      updateTrack: state.updateTrack,
+      updateTrackTransform: state.updateTrackTransform,
+      setSelectedTracks: state.setSelectedTracks,
+      currentTranscribingTrackId: state.currentTranscribingTrackId,
+      transcriptionProgress: state.transcriptionProgress,
+      addTextClip: state.addTextClip,
+      removeTrack: state.removeTrack,
+      beginGroup: state.beginGroup,
+      endGroup: state.endGroup,
+      pause: state.pause,
+    })),
+  );
 
   const hasTracks = tracks.length > 0;
+  const lastVisibleTrackEndFrame = useMemo(() => {
+    let maxEndFrame = -1;
+    for (const track of tracks) {
+      if (track.visible && track.endFrame > maxEndFrame) {
+        maxEndFrame = track.endFrame;
+      }
+    }
+    return maxEndFrame;
+  }, [tracks]);
 
   const {
     activeVideoTrack,
@@ -145,20 +181,19 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
 
   // Pause playback at end of all tracks
   useEffect(() => {
-    if (!playback.isPlaying) return;
-
-    const visibleTracks = tracks
-      .filter((track) => track.visible)
-      .sort((a, b) => a.endFrame - b.endFrame);
-    const lastTrack = visibleTracks[visibleTracks.length - 1];
-
-    if (lastTrack && timeline.currentFrame >= lastTrack.endFrame) {
-      playback.isPlaying = false;
+    if (!playback.isPlaying || lastVisibleTrackEndFrame < 0) return;
+    if (timeline.currentFrame >= lastVisibleTrackEndFrame) {
+      pause();
       if (videoRef.current && !videoRef.current.paused) {
         videoRef.current.pause();
       }
     }
-  }, [timeline.currentFrame, tracks, playback, videoRef]);
+  }, [
+    timeline.currentFrame,
+    playback.isPlaying,
+    lastVisibleTrackEndFrame,
+    pause,
+  ]);
 
   // Resize observer
   useEffect(() => {
@@ -260,50 +295,24 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
   // Third parameter `options` allows skipping undo recording for auto-size updates
   const handleTextTransformUpdate = useCallback(
     (trackId: string, transform: any, options?: { skipRecord?: boolean }) => {
-      const track = tracks.find((t) => t.id === trackId);
+      const track = useVideoEditorStore
+        .getState()
+        .tracks.find((t) => t.id === trackId);
       if (!track || track.type !== 'text') return;
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: 0,
-        height: 0,
-      };
-
-      const newTransform = { ...currentTransform, ...transform };
-
-      // For auto-size updates (width/height only), skip undo recording
-      // These are system-generated updates from ResizeObserver, not user actions
-      if (options?.skipRecord) {
-        updateTrackProperty(trackId, { textTransform: newTransform });
-      } else {
-        updateTrack(trackId, { textTransform: newTransform });
-      }
+      updateTrackTransform(trackId, transform, options);
     },
-    [tracks, updateTrack, updateTrackProperty],
+    [updateTrackTransform],
   );
 
   const handleImageTransformUpdate = useCallback(
     (trackId: string, transform: any) => {
-      const track = tracks.find((t) => t.id === trackId);
+      const track = useVideoEditorStore
+        .getState()
+        .tracks.find((t) => t.id === trackId);
       if (!track || track.type !== 'image') return;
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: 0,
-        height: 0,
-      };
-
-      updateTrack(trackId, {
-        textTransform: { ...currentTransform, ...transform },
-      });
+      updateTrackTransform(trackId, transform);
     },
-    [tracks, updateTrack],
+    [updateTrackTransform],
   );
 
   const handleTextSelect = useCallback(
@@ -324,23 +333,13 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
 
   const handleVideoTransformUpdate = useCallback(
     (trackId: string, transform: any) => {
-      const track = tracks.find((t) => t.id === trackId);
+      const track = useVideoEditorStore
+        .getState()
+        .tracks.find((t) => t.id === trackId);
       if (!track || track.type !== 'video') return;
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: track.width || baseVideoWidth,
-        height: track.height || baseVideoHeight,
-      };
-
-      updateTrack(trackId, {
-        textTransform: { ...currentTransform, ...transform },
-      });
+      updateTrackTransform(trackId, transform);
     },
-    [tracks, updateTrack, baseVideoWidth, baseVideoHeight],
+    [updateTrackTransform],
   );
 
   const handleVideoSelect = useCallback(
@@ -350,103 +349,6 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     },
     [setSelectedTracks, preview.interactionMode],
   );
-
-  // Auto-fit video tracks when canvas aspect ratio changes
-  const prevCanvasDimensionsRef = useRef<{
-    width: number;
-    height: number;
-    aspectRatio: number;
-  } | null>(null);
-
-  useEffect(() => {
-    if (
-      !preview.canvasWidth ||
-      !preview.canvasHeight ||
-      preview.canvasWidth <= 0 ||
-      preview.canvasHeight <= 0
-    ) {
-      return;
-    }
-
-    const currentAspectRatio = preview.canvasWidth / preview.canvasHeight;
-    const prevDimensions = prevCanvasDimensionsRef.current;
-
-    const hasDimensionChange =
-      !prevDimensions ||
-      prevDimensions.width !== preview.canvasWidth ||
-      prevDimensions.height !== preview.canvasHeight;
-
-    const hasAspectRatioChange =
-      !prevDimensions ||
-      Math.abs(prevDimensions.aspectRatio - currentAspectRatio) > 0.001;
-
-    if (!hasDimensionChange && !hasAspectRatioChange) return;
-
-    prevCanvasDimensionsRef.current = {
-      width: preview.canvasWidth,
-      height: preview.canvasHeight,
-      aspectRatio: currentAspectRatio,
-    };
-
-    if (!prevDimensions) return;
-
-    const videoTracks = tracks.filter(
-      (track) => track.type === 'video' && track.visible,
-    );
-    if (videoTracks.length === 0) return;
-
-    videoTracks.forEach((track) => {
-      let originalWidth: number;
-      let originalHeight: number;
-
-      if (track.width && track.height) {
-        originalWidth = track.width;
-        originalHeight = track.height;
-      } else if (videoRef.current && videoRef.current.videoWidth > 0) {
-        originalWidth = videoRef.current.videoWidth;
-        originalHeight = videoRef.current.videoHeight;
-      } else {
-        return;
-      }
-
-      const fittedDimensions = calculateFitDimensions(
-        originalWidth,
-        originalHeight,
-        preview.canvasWidth,
-        preview.canvasHeight,
-      );
-
-      const currentTransform = track.textTransform || {
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-        width: originalWidth,
-        height: originalHeight,
-      };
-
-      const needsUpdate =
-        Math.abs(currentTransform.width - fittedDimensions.width) > 0.5 ||
-        Math.abs(currentTransform.height - fittedDimensions.height) > 0.5;
-
-      if (needsUpdate) {
-        handleVideoTransformUpdate(track.id, {
-          width: fittedDimensions.width,
-          height: fittedDimensions.height,
-          x: currentTransform.x,
-          y: currentTransform.y,
-          scale: currentTransform.scale,
-          rotation: currentTransform.rotation,
-        });
-      }
-    });
-  }, [
-    preview.canvasWidth,
-    preview.canvasHeight,
-    tracks,
-    videoRef,
-    handleVideoTransformUpdate,
-  ]);
 
   const handleTextUpdate = useCallback(
     (trackId: string, newText: string) => {
@@ -589,13 +491,11 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
         setSelectedTracks([trackId]);
       }
 
-      // For text tracks, enter text edit mode by setting pending edit
-      if (track.type === 'text') {
+      // For text/subtitle tracks, enter text edit mode by setting pending edit
+      if (track.type === 'text' || track.type === 'subtitle') {
         setPreviewInteractionMode('text-edit');
         setPendingEditTextId(trackId);
       }
-      // For subtitle tracks, trigger subtitle edit mode
-      // (subtitles use a different editing mechanism)
     },
     [
       tracks,
@@ -982,6 +882,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
             onTextTransformUpdate={handleTextTransformUpdate}
             onTextSelect={handleTextSelect}
             onTextUpdate={handleTextUpdate}
+            onRequestTextEdit={handleHitTestDoubleClick}
             pendingEditTextId={pendingEditTextId}
             onEditStarted={handleEditStarted}
             onRotationStateChange={setIsRotating}

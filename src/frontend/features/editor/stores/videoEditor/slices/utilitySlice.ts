@@ -16,8 +16,12 @@ export const createUtilitySlice: StateCreator<
   [],
   [],
   UtilitySlice
-> = (set) => ({
-  reset: () =>
+> = (set, get) => ({
+  reset: () => {
+    const state = get() as any;
+    state.cancelPendingAutoSave?.();
+    state.setCurrentProjectId?.(null);
+
     set({
       tracks: [],
       mediaLibrary: [],
@@ -27,6 +31,8 @@ export const createUtilitySlice: StateCreator<
         currentFrame: 0,
         ...DEFAULT_TIMELINE_CONFIG,
         selectedTrackIds: [],
+        markers: [],
+        selectedMarkerId: null,
         playheadVisible: true,
         snapEnabled: true,
         isSplitModeActive: false,
@@ -51,12 +57,14 @@ export const createUtilitySlice: StateCreator<
         progress: 0,
         status: 'ready',
         currentTime: undefined,
+        metrics: undefined,
         currentJob: undefined,
       },
       textStyle: getDefaultTextStyleState(), // Reset text styles to defaults
       currentProjectId: null,
-      isAutoSaveEnabled: true,
+      autoSavePreferences: state.autoSavePreferences,
       lastSavedAt: null,
       hasUnsavedChanges: false,
-    } as any),
+    } as any);
+  },
 });

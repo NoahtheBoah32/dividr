@@ -3,7 +3,6 @@ name: Release macOS
 on:
   push:
     tags:
-      - 'v*-macos'
       - 'v*-mac'
   workflow_dispatch:
     inputs:
@@ -147,16 +146,15 @@ jobs:
         id: tag
         run: |
           if [ "${{ github.event_name }}" == "push" ]; then
-            # Remove -macos or -mac suffix for release name
+            # Remove -mac suffix for release name
             TAG="${GITHUB_REF#refs/tags/}"
-            BASE_TAG="${TAG%-macos}"
-            BASE_TAG="${BASE_TAG%-mac}"
+            BASE_TAG="${TAG%-mac}"
             echo "tag=$TAG" >> $GITHUB_OUTPUT
             echo "base_tag=$BASE_TAG" >> $GITHUB_OUTPUT
           else
             # For manual runs, use timestamp
-            echo "tag=macos-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
-            echo "base_tag=macos-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+            echo "tag=mac-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+            echo "base_tag=mac-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release

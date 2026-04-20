@@ -4,6 +4,7 @@ import { TRACK_COLORS } from './constants';
 export * from './constants';
 export * from './imageUtils';
 export * from './snapUtils';
+export * from './splitUtils';
 export * from './subtitleParser';
 export * from './trackPositioning';
 

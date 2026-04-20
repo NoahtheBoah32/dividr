@@ -115,7 +115,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         setOutputPath('');
       }
     } catch (error) {
-      console.error('Failed to get downloads directory:', error);
+      console.error('[ExportModal] Failed to get downloads directory', error);
       setOutputPath('');
     } finally {
       setIsLoadingDefaultPath(false);
@@ -154,7 +154,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         }
       }
     } catch (error) {
-      console.error('Failed to open save dialog:', error);
+      console.error('[ExportModal] Failed to open save dialog', error);
       alert('Failed to open folder selection dialog');
     }
   };
@@ -177,12 +177,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     );
     const finalFilename =
       sanitizedBaseName + (selectedFormat?.extension || '.mp4');
-
-    console.log('🧹 Filename sanitization:', {
-      original: filename.trim(),
-      sanitized: sanitizedBaseName,
-      final: finalFilename,
-    });
 
     onExport({
       filename: finalFilename,

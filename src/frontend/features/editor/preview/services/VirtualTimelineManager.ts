@@ -50,9 +50,9 @@ export interface UpcomingSegment {
 const DEBUG_VIRTUAL_TIMELINE = false;
 
 function logVT(message: string, data?: unknown) {
-  if (DEBUG_VIRTUAL_TIMELINE) {
-    console.log(`[VirtualTimeline] ${message}`, data || '');
-  }
+  if (!DEBUG_VIRTUAL_TIMELINE) return;
+  void message;
+  void data;
 }
 
 // =============================================================================

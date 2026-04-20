@@ -118,14 +118,14 @@ export const baselineShortcuts: BaselineShortcut[] = [
     action: 'Jump to Next Edit Point',
     category: 'Navigation',
     scope: 'global',
-    keys: ['down'],
+    keys: ['down', 'shift+down'],
   },
   {
     id: 'navigate-prev-edit-point',
     action: 'Jump to Previous Edit Point',
     category: 'Navigation',
     scope: 'global',
-    keys: ['up'],
+    keys: ['up', 'shift+up'],
   },
 
   // Preview (global)
@@ -187,7 +187,7 @@ export const baselineShortcuts: BaselineShortcut[] = [
     action: 'Split at Playhead',
     category: 'Timeline Tools',
     scope: 'timeline',
-    keys: ['k'],
+    keys: ['k', 'ctrl+k', 'cmd+k'],
   },
   {
     id: 'timeline-exit-split-mode',
@@ -195,6 +195,13 @@ export const baselineShortcuts: BaselineShortcut[] = [
     category: 'Timeline Tools',
     scope: 'timeline',
     keys: ['escape'],
+  },
+  {
+    id: 'timeline-add-marker',
+    action: 'Add Marker at Playhead',
+    category: 'Timeline Tools',
+    scope: 'timeline',
+    keys: ['shift+m'],
   },
 
   // Timeline Selection

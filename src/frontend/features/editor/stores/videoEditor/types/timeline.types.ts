@@ -22,6 +22,11 @@ export const useDisplayFps = () => {
   return React.useMemo(() => getDisplayFps(tracks), [tracks]);
 };
 
+export interface TimelineMarker {
+  id: string;
+  frame: number;
+}
+
 export interface TimelineState {
   currentFrame: number;
   totalFrames: number;
@@ -31,6 +36,8 @@ export interface TimelineState {
   inPoint?: number;
   outPoint?: number;
   selectedTrackIds: string[];
+  markers: TimelineMarker[];
+  selectedMarkerId: string | null;
   playheadVisible: boolean;
   snapEnabled: boolean;
   isSplitModeActive: boolean;
@@ -39,6 +46,12 @@ export interface TimelineState {
 
 export interface SnapPoint {
   frame: number;
-  type: 'playhead' | 'track-start' | 'track-end' | 'in-point' | 'out-point';
+  type:
+    | 'playhead'
+    | 'track-start'
+    | 'track-end'
+    | 'in-point'
+    | 'out-point'
+    | 'marker';
   trackId?: string;
 }

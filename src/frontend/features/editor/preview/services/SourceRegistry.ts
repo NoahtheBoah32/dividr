@@ -62,9 +62,9 @@ const DECODE_TIMEOUT_MS = 500;
 const DEBUG_SOURCE_REGISTRY = false;
 
 function logRegistry(message: string, data?: unknown) {
-  if (DEBUG_SOURCE_REGISTRY) {
-    console.log(`[SourceRegistry] ${message}`, data || '');
-  }
+  if (!DEBUG_SOURCE_REGISTRY) return;
+  void message;
+  void data;
 }
 
 // =============================================================================

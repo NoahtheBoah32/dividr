@@ -72,7 +72,7 @@ export function buildScaleFilter(
   if (supportsCUDAFilters(hwAccel)) {
     // GPU scaling - assumes input is already on GPU
     console.log(
-      `🎮 Using CUDA hardware scaling: ${width}x${height} (NVENC with CUDA filters)`,
+      `[HardwareFilters] Using CUDA hardware scaling${width}x${height} (NVENC with CUDA filters)`,
     );
 
     let filter = `${inputRef}scale_cuda=${width}:${height}${forceAspect}`;
@@ -89,7 +89,7 @@ export function buildScaleFilter(
     // CPU scaling with fast_bilinear
     const hwType = hwAccel?.type || 'none';
     console.log(
-      `💻 Using CPU scaling (fast_bilinear): ${width}x${height} (hardware: ${hwType})`,
+      `[HardwareFilters] Using CPU scaling (fast_bilinear)${width}x${height} (hardware: ${hwType})`,
     );
 
     let filter = `${inputRef}scale=${width}:${height}${forceAspect}:flags=fast_bilinear`;
@@ -146,12 +146,14 @@ export function buildOverlayFilter(
   if (supportsCUDAFilters(hwAccel)) {
     // GPU overlay - assumes both inputs are already on GPU
     // Note: overlay_cuda might not support shortest/eof_action parameters, use CPU fallback if needed
-    console.log(`🎮 Using CUDA hardware overlay (NVENC with CUDA filters)`);
+    console.log(
+      '[HardwareFilters] Using CUDA hardware overlay (NVENC with CUDA filters)',
+    );
     return `${baseRef}${overlayRef}overlay_cuda=${x}:${y}${enableParam}${shortestParam}${eofActionParam}${outputRef}`;
   } else {
     // CPU overlay
     const hwType = hwAccel?.type || 'none';
-    console.log(`💻 Using CPU overlay (hardware: ${hwType})`);
+    console.log(`[HardwareFilters] Using CPU overlay (hardware${hwType})`);
     return `${baseRef}${overlayRef}overlay=${x}:${y}${enableParam}${shortestParam}${eofActionParam}${outputRef}`;
   }
 }
@@ -233,7 +235,7 @@ export function buildCropAndScaleFilter(
   // Always use CPU for crop + scale
   // GPU upload/download overhead negates any scaling benefit
   console.log(
-    `💻 Using crop + scale (CPU, fast_bilinear): crop ${cropWidth}x${cropHeight} → scale ${scaleWidth}x${scaleHeight}`,
+    `[HardwareFilters] Using crop + scale (CPU, fast_bilinear): crop${cropWidth}x${cropHeight} → scale ${scaleWidth}x${scaleHeight}`,
   );
   return `${inputRef}crop=${cropWidth}:${cropHeight}:${cropX}:${cropY},scale=${scaleWidth}:${scaleHeight}:flags=fast_bilinear,setsar=1${outputRef}`;
 }

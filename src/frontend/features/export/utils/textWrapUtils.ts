@@ -360,7 +360,7 @@ function wrapTextToWidthWithDOM(
 
     return computeWrappedTextFromTextNode(elements.textNode, text);
   } catch (error) {
-    console.warn('📐 [TextWrap] DOM measurement failed, falling back', error);
+    console.warn('[TextWrap] DOM measurement failed, falling back', error);
     return null;
   }
 }
@@ -404,16 +404,13 @@ export function wrapTextToWidth(
   const fontString = buildFontString(options);
   ctx.font = fontString;
   const testWidth = ctx.measureText('MMMMMMMMMM').width; // 10 Ms as a sanity check
-  console.log(
-    `📐 [TextWrap] Font: "${fontString}", 10 M's width: ${testWidth.toFixed(1)}px, maxWidth: ${maxWidth.toFixed(1)}px`,
-  );
 
   // If font measurement seems broken (10 M's should be roughly fontSize * 8-10)
   // Just return the text with normalized line breaks
   const expectedMinWidth = options.fontSize * 5; // Very conservative minimum
   if (testWidth < expectedMinWidth) {
     console.warn(
-      `📐 [TextWrap] Font measurement seems unreliable (${testWidth.toFixed(1)}px < ${expectedMinWidth}px). Skipping auto-wrap.`,
+      `[TextWrap] Font measurement seems unreliable (${testWidth.toFixed(1)}px < ${expectedMinWidth}px). Skipping auto-wrap.`,
     );
     return {
       wrappedText: normalizedText,
@@ -605,13 +602,6 @@ export function applyTextWrapping(
   const effectivePaddingX = (wrapOptions?.paddingX || 0) * effectiveScale;
   const effectivePaddingY = (wrapOptions?.paddingY || 0) * effectiveScale;
 
-  // Debug: show raw input text with visible line breaks
-  const debugText = text.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-  console.log(`📐 [TextWrap] Input text (raw): "${debugText}"`);
-  console.log(
-    `📐 [TextWrap] Wrapping at width: ${trackWidth}px, Font: ${effectiveFontSize.toFixed(1)}px "${fontFamily}"`,
-  );
-
   // Perform wrapping
   const result = wrapTextToWidth(normalizedText, {
     fontFamily,
@@ -630,10 +620,6 @@ export function applyTextWrapping(
     overflowWrap: wrapOptions?.overflowWrap,
     whiteSpace: wrapOptions?.whiteSpace,
   });
-
-  console.log(
-    `📐 [TextWrap] Result: "${normalizedText.substring(0, 30)}${normalizedText.length > 30 ? '...' : ''}" → ${result.lines.length} lines (wasWrapped: ${result.wasWrapped})`,
-  );
 
   return result.wrappedText;
 }

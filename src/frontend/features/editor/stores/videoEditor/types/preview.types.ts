@@ -7,6 +7,7 @@ export interface PreviewState {
   panX: number;
   panY: number;
   interactionMode: 'select' | 'pan' | 'text-edit';
+  activeInteractionArea: 'preview' | 'timeline' | 'other';
   showGrid: boolean;
   showSafeZones: boolean;
   backgroundColor: string;

@@ -179,3 +179,20 @@ select:focus {
   position: relative;
   z-index: 50 !important;
 }
+
+@keyframes mediaInsertPulse {
+  0% {
+    outline: 2px solid rgba(59, 130, 246, 0.9);
+    outline-offset: 0px;
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.35);
+  }
+  100% {
+    outline: 2px solid rgba(59, 130, 246, 0);
+    outline-offset: 6px;
+    box-shadow: 0 0 0 12px rgba(59, 130, 246, 0);
+  }
+}
+
+.media-item-insert-feedback {
+  animation: mediaInsertPulse 2.4s cubic-bezier(0.2, 0.65, 0.25, 1);
+}

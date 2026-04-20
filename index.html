@@ -20,14 +20,6 @@
         width: 100%;
         height: 100%;
       }
-      @keyframes spin {
-        from {
-          transform: rotate(0deg);
-        }
-        to {
-          transform: rotate(360deg);
-        }
-      }
       #startup-loader {
         position: fixed;
         inset: 0;
@@ -39,6 +31,107 @@
         font-family:
           -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       }
+      #startup-progress-panel {
+        width: 360px;
+        min-width: 360px;
+        max-width: 360px;
+      }
+      #startup-status {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #startup-phase-text {
+        color: #e4e4e7;
+        font-size: 0.9rem;
+        font-weight: 500;
+        line-height: 1.35;
+      }
+      #startup-phase-detail {
+        color: #a1a1aa;
+        font-size: 0.78rem;
+        line-height: 1.35;
+        min-height: 1.05rem;
+      }
+      #startup-progress-track {
+        width: 100%;
+        height: 5px;
+        border-radius: 999px;
+        background: #27272a;
+        overflow: hidden;
+      }
+      #startup-progress-fill {
+        width: 4%;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #fafafa 0%, #d4d4d8 100%);
+        transition: width 220ms ease;
+      }
+      #startup-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .startup-step {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        color: #71717a;
+        font-size: 0.82rem;
+        line-height: 1.25;
+      }
+      .startup-step-main {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .startup-step-label {
+        color: inherit;
+      }
+      .startup-step-note {
+        color: #71717a;
+        font-size: 0.74rem;
+        line-height: 1.3;
+      }
+      .startup-step-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        border: 1px solid #52525b;
+        background: transparent;
+        margin-top: 4px;
+        transition:
+          background-color 180ms ease,
+          border-color 180ms ease;
+      }
+      .startup-step.active {
+        color: #e4e4e7;
+      }
+      .startup-step.active .startup-step-dot {
+        background: #fafafa;
+        border-color: #fafafa;
+      }
+      .startup-step.active .startup-step-note {
+        color: #d4d4d8;
+      }
+      .startup-step.done {
+        color: #a1a1aa;
+      }
+      .startup-step.done .startup-step-dot {
+        background: #a1a1aa;
+        border-color: #a1a1aa;
+      }
+      .startup-step.done .startup-step-note {
+        color: #a1a1aa;
+      }
+      @media (max-width: 460px) {
+        #startup-progress-panel {
+          width: calc(100vw - 48px);
+          min-width: 0;
+          max-width: 360px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -49,7 +142,7 @@
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 2rem;
+          gap: 1.5rem;
           max-width: 28rem;
           padding: 2rem;
         "
@@ -158,8 +251,9 @@
           />
         </svg>
 
-        <!-- Loading spinner -->
+        <!-- Progressive startup status -->
         <div
+          id="startup-progress-panel"
           style="
             display: flex;
             flex-direction: column;
@@ -168,32 +262,6 @@
             width: 100%;
           "
         >
-          <svg
-            style="
-              width: 2rem;
-              height: 2rem;
-              animation: spin 1s linear infinite;
-              color: #a1a1aa;
-            "
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              style="opacity: 0.25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              style="opacity: 0.75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-
           <div style="text-align: center">
             <p
               style="
@@ -203,24 +271,40 @@
                 margin: 0;
               "
             >
-              Initializing DiviDr<span id="loading-dots"></span>
-            </p>
-            <p style="font-size: 0.875rem; color: #a1a1aa; margin-top: 0.5rem">
-              Preparing your workspace
+              Initializing DiviDr.<span id="loading-dots"></span>
             </p>
           </div>
-        </div>
-
-        <!-- Helpful tip -->
-        <div
-          style="
-            font-size: 0.75rem;
-            color: #71717a;
-            text-align: center;
-            max-width: 24rem;
-          "
-        >
-          <p style="margin: 0">Loading your projects and workspace data</p>
+          <div id="startup-status">
+            <div id="startup-phase-text">Preparing your workspace</div>
+            <div id="startup-phase-detail">
+              Loading application settings and user preferences
+            </div>
+            <div id="startup-progress-track">
+              <div id="startup-progress-fill"></div>
+            </div>
+            <div id="startup-steps">
+              <div class="startup-step active" data-step="0">
+                <span class="startup-step-dot"></span>
+                <div class="startup-step-main">
+                  <span class="startup-step-label"
+                    >Preparing your workspace</span
+                  >
+                  <span class="startup-step-note">
+                    Loading application settings
+                  </span>
+                </div>
+              </div>
+              <div class="startup-step" data-step="1">
+                <span class="startup-step-dot"></span>
+                <div class="startup-step-main">
+                  <span class="startup-step-label">
+                    Loading your projects and workspace data
+                  </span>
+                  <span class="startup-step-note">Queued to start</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -228,16 +312,241 @@
     <!-- Root container for React -->
     <div id="root"></div>
 
-    <!-- Animate loading dots immediately -->
+    <!-- Animate loading dots and progressive startup status -->
     <script>
       (function () {
         let dotCount = 0;
         const dotsElement = document.getElementById('loading-dots');
+        const phaseTextElement = document.getElementById('startup-phase-text');
+        const phaseDetailElement = document.getElementById(
+          'startup-phase-detail',
+        );
+        const progressFillElement = document.getElementById(
+          'startup-progress-fill',
+        );
+        const stepElements = Array.from(
+          document.querySelectorAll('#startup-steps .startup-step'),
+        );
+        const stepNotes = stepElements.map(function (stepElement) {
+          return stepElement.querySelector('.startup-step-note');
+        });
+        const defaultStepNotes = stepNotes.map(function (stepNoteElement) {
+          return stepNoteElement ? stepNoteElement.textContent || '' : '';
+        });
+        let currentProgress = 4;
+        let lastPhaseUpdate = Date.now();
+
+        const clampProgress = function (value) {
+          if (!Number.isFinite(value)) return currentProgress;
+          return Math.max(4, Math.min(100, value));
+        };
+
+        const setProgress = function (value) {
+          currentProgress = clampProgress(value);
+          if (progressFillElement) {
+            progressFillElement.style.width = currentProgress + '%';
+          }
+        };
+
+        const setStep = function (index, activeNote) {
+          const completeAll = index >= stepElements.length;
+
+          stepElements.forEach(function (stepElement, currentIndex) {
+            stepElement.classList.remove('active', 'done');
+            if (completeAll || currentIndex < index) {
+              stepElement.classList.add('done');
+              if (stepNotes[currentIndex]) {
+                stepNotes[currentIndex].textContent = 'Complete';
+              }
+            } else if (currentIndex === index) {
+              stepElement.classList.add('active');
+              if (stepNotes[currentIndex]) {
+                stepNotes[currentIndex].textContent =
+                  activeNote || defaultStepNotes[currentIndex];
+              }
+            } else if (stepNotes[currentIndex]) {
+              stepNotes[currentIndex].textContent =
+                defaultStepNotes[currentIndex];
+            }
+          });
+        };
+
+        const phaseMap = {
+          'app-bootstrap': {
+            progress: 8,
+            step: 0,
+            text: 'Preparing your workspace',
+            detail: 'Loading application settings and user preferences',
+            stepNote: 'Loading application settings',
+          },
+          'window-created': {
+            progress: 14,
+            step: 0,
+            text: 'Preparing your workspace',
+            detail: 'Creating startup window and loading shell',
+            stepNote: 'Creating startup window',
+          },
+          'renderer-start-loading': {
+            progress: 26,
+            step: 0,
+            text: 'Preparing your workspace',
+            detail: 'Loading editor shell modules',
+            stepNote: 'Loading editor shell modules',
+          },
+          'renderer-dom-ready': {
+            progress: 42,
+            step: 0,
+            text: 'Preparing your workspace',
+            detail: 'Rendering interface and mounting UI',
+            stepNote: 'Rendering interface and mounting UI',
+          },
+          'renderer-did-finish-load': {
+            progress: 56,
+            step: 1,
+            text: 'Loading your projects and workspace data',
+            detail: 'Opening local project database',
+            stepNote: 'Opening local project database',
+          },
+          'app-ready': {
+            progress: 72,
+            step: 1,
+            text: 'Loading your projects and workspace data',
+            detail: 'Checking workspace state and recent projects',
+            stepNote: 'Checking workspace state and recent projects',
+          },
+          'indexeddb-init': {
+            progress: 78,
+            step: 1,
+            text: 'Loading your projects and workspace data',
+            detail: 'Initializing local project database',
+            stepNote: 'Initializing local project database',
+          },
+          'indexeddb-ready': {
+            progress: 84,
+            step: 1,
+            text: 'Loading your projects and workspace data',
+            detail: 'Project database ready, reading metadata',
+            stepNote: 'Reading project metadata',
+          },
+          'projects-loading': {
+            progress: 86,
+            step: 1,
+            text: 'Loading your projects and workspace data',
+            detail: 'Reading projects and preparing recent workspace',
+            stepNote: 'Reading projects and preparing recent workspace',
+          },
+          'projects-loaded': {
+            progress: 100,
+            step: 2,
+            text: 'Workspace ready',
+            detail: 'Startup complete. Opening the editor',
+            stepNote: 'Startup complete',
+          },
+          'editor-init': {
+            progress: 92,
+            step: 1,
+            text: 'Loading your projects and workspace data',
+            detail: 'Preparing editor timeline and preview engine',
+            stepNote: 'Preparing editor timeline and preview engine',
+          },
+          'editor-ready': {
+            progress: 100,
+            step: 2,
+            text: 'Workspace ready',
+            detail: 'Startup complete. Opening the editor',
+            stepNote: 'Startup complete',
+          },
+        };
+
+        const applyPhase = function (phase, explicitProgress) {
+          const details = phaseMap[phase];
+          if (!details) return;
+
+          lastPhaseUpdate = Date.now();
+
+          setProgress(
+            explicitProgress !== undefined
+              ? Math.max(currentProgress, explicitProgress)
+              : Math.max(currentProgress, details.progress),
+          );
+          setStep(details.step, details.stepNote);
+          if (phaseTextElement) {
+            phaseTextElement.textContent = details.text;
+          }
+          if (phaseDetailElement) {
+            phaseDetailElement.textContent = details.detail;
+          }
+        };
+
+        setStep(0, 'Loading application settings');
+        setProgress(4);
+
         if (dotsElement) {
           setInterval(function () {
             dotCount = (dotCount + 1) % 4;
             dotsElement.textContent = '.'.repeat(dotCount);
           }, 500);
+        }
+
+        // Fallback animation in case startup IPC events are unavailable.
+        setInterval(function () {
+          const elapsedSincePhase = Date.now() - lastPhaseUpdate;
+          if (elapsedSincePhase < 650) return;
+          if (currentProgress >= 92) return;
+
+          if (currentProgress < 78) {
+            setProgress(currentProgress + 1.1);
+          } else {
+            setProgress(currentProgress + 0.25);
+          }
+
+          if (currentProgress < 56) {
+            setStep(0, 'Loading application settings');
+            if (phaseTextElement) {
+              phaseTextElement.textContent = 'Preparing your workspace';
+            }
+            if (phaseDetailElement) {
+              phaseDetailElement.textContent =
+                'Loading editor shell modules and interface components';
+            }
+          } else {
+            setStep(1, 'Opening local project database');
+            if (phaseTextElement) {
+              phaseTextElement.textContent =
+                'Loading your projects and workspace data';
+            }
+            if (phaseDetailElement) {
+              phaseDetailElement.textContent =
+                'Reading project metadata and restoring workspace state';
+            }
+          }
+        }, 450);
+
+        if (window.electronAPI && window.electronAPI.onStartupPhase) {
+          const offStartupPhase = window.electronAPI.onStartupPhase(
+            function (payload) {
+              if (!payload || typeof payload.phase !== 'string') return;
+              applyPhase(payload.phase);
+            },
+          );
+
+          if (window.electronAPI.startupGetState) {
+            window.electronAPI
+              .startupGetState()
+              .then(function (state) {
+                if (!state || !state.success) return;
+                if (state.latestPhase) {
+                  applyPhase(state.latestPhase);
+                }
+              })
+              .catch(function () {});
+          }
+
+          window.addEventListener('beforeunload', function () {
+            if (typeof offStartupPhase === 'function') {
+              offStartupPhase();
+            }
+          });
         }
       })();
     </script>

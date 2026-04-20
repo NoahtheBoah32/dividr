@@ -218,11 +218,13 @@ export async function detectHardwareCapabilities(
 ): Promise<HardwareCapabilities> {
   // Return cached result if available and ffmpegPath matches
   if (cachedCapabilities && cachedFfmpegPath === ffmpegPath) {
-    console.log('🔧 Using cached hardware capabilities');
+    console.log(
+      '[HardwareCapabilitiesService] Using cached hardware capabilities',
+    );
     return cachedCapabilities;
   }
 
-  console.log('🔍 Detecting hardware capabilities...');
+  console.log('[HardwareCapabilitiesService] Detecting hardware capabilities');
   const startTime = Date.now();
 
   // Detect GPU encoders using existing framework
@@ -255,15 +257,19 @@ export async function detectHardwareCapabilities(
   cachedFfmpegPath = ffmpegPath;
 
   const detectionTime = Date.now() - startTime;
-  console.log(`✅ Hardware capabilities detected in ${detectionTime}ms:`);
-  console.log(`   - CPU cores: ${cpuCores}`);
   console.log(
-    `   - RAM: ${Math.round(totalRamBytes / (1024 * 1024 * 1024))}GB total, ${Math.round(freeRamBytes / (1024 * 1024 * 1024))}GB free`,
+    `[HardwareCapabilitiesService] Hardware capabilities detected in${detectionTime}ms:`,
+  );
+  console.log(`[HardwareCapabilitiesService] CPU cores${cpuCores}`);
+  console.log(
+    `[HardwareCapabilitiesService] RAM${Math.round(totalRamBytes / (1024 * 1024 * 1024))}GB total, ${Math.round(freeRamBytes / (1024 * 1024 * 1024))}GB free`,
   );
   console.log(
-    `   - Hardware encoder: ${hasHardwareEncoder ? encoder.primary?.type.toUpperCase() : 'None'}`,
+    `[HardwareCapabilitiesService] Hardware encoder${hasHardwareEncoder ? encoder.primary?.type.toUpperCase() : 'None'}`,
   );
-  console.log(`   - Low hardware mode: ${isLowHardware}`);
+  console.log(
+    `[HardwareCapabilitiesService] Low hardware mode${isLowHardware}`,
+  );
 
   return capabilities;
 }
@@ -293,14 +299,16 @@ export async function getProxyEncoderConfig(
 
     if (PROXY_ENCODER_CONFIGS[encoderType]) {
       console.log(
-        `🎮 Selected proxy encoder: ${PROXY_ENCODER_CONFIGS[encoderType].description}`,
+        `[HardwareCapabilitiesService] Selected proxy encoder${PROXY_ENCODER_CONFIGS[encoderType].description}`,
       );
       return PROXY_ENCODER_CONFIGS[encoderType];
     }
   }
 
   // Fallback to software encoding
-  console.log(`💻 Using software proxy encoder (no hardware acceleration)`);
+  console.log(
+    '[HardwareCapabilitiesService] Using software proxy encoder (no hardware acceleration)',
+  );
   return PROXY_ENCODER_CONFIGS.software;
 }
 
@@ -329,7 +337,9 @@ export function clearCapabilitiesCache(): void {
   cachedCapabilities = null;
   cachedFfmpegPath = null;
   clearHardwareAccelerationCache();
-  console.log('🔄 Hardware capabilities cache cleared');
+  console.log(
+    '[HardwareCapabilitiesService] Hardware capabilities cache cleared',
+  );
 }
 
 /**

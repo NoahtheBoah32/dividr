@@ -236,7 +236,10 @@ const SpriteScrubbingPanel: React.FC<SpriteScrubbingPanelProps> = React.memo(
         const thumbnailData = canvas.toDataURL('image/jpeg', 0.92);
         onThumbnailCapture(thumbnailData);
       } catch (error) {
-        console.error('Failed to capture thumbnail:', error);
+        console.error(
+          '[ThumbnailChangerDialog] Failed to capture thumbnail',
+          error,
+        );
       } finally {
         setIsCapturing(false);
       }

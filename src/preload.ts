@@ -1,59 +1,88 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { contextBridge, ipcRenderer } from 'electron';
-import { FfmpegProgress } from './backend/ffmpeg/export/ffmpegRunner';
 import { VideoEditJob } from './backend/ffmpeg/schema/ffmpegConfig';
-
-// Progress event handlers type
-export interface FfmpegEventHandlers {
-  onProgress?: (progress: FfmpegProgress) => void;
-  onStatus?: (status: string) => void;
-  onLog?: (log: { log: string; type: 'stdout' | 'stderr' }) => void;
-  onComplete?: (result: {
-    success: boolean;
-    result?: any;
-    error?: string;
-  }) => void;
-}
+import { IPC_CHANNELS } from './shared/ipc/channels';
+import type {
+  AppExitDecisionRequest,
+  AppExitRequestedEvent,
+  FfmpegEventHandlers,
+  ProxyProgressEvent,
+} from './shared/ipc/contracts';
 
 // Expose FFmpeg API to renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
-  // General IPC methods
-  invoke: (channel: string, ...args: any[]) =>
-    ipcRenderer.invoke(channel, ...args),
-  on: (channel: string, listener: (...args: any[]) => void) =>
-    ipcRenderer.on(channel, listener),
-  removeListener: (channel: string, listener: (...args: any[]) => void) =>
-    ipcRenderer.removeListener(channel, listener),
+  appExitDecision: (payload: AppExitDecisionRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.APP_EXIT_DECISION, payload),
+  onAppExitRequested: (callback: (payload: AppExitRequestedEvent) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.EVENT_APP_EXIT_REQUESTED, (_event, payload) =>
+      callback(payload),
+    );
+  },
+  offAppExitRequested: () => {
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_APP_EXIT_REQUESTED);
+  },
+  onProxyProgress: (callback: (payload: ProxyProgressEvent) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.EVENT_PROXY_PROGRESS, (_event, payload) =>
+      callback(payload),
+    );
+  },
+  offProxyProgress: () => {
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_PROXY_PROGRESS);
+  },
+  onStartupPhase: (
+    callback: (payload: {
+      phase: string;
+      sinceStart: number;
+      sinceLast: number;
+      meta?: Record<string, unknown> | null;
+    }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: {
+        phase: string;
+        sinceStart: number;
+        sinceLast: number;
+        meta?: Record<string, unknown> | null;
+      },
+    ) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.EVENT_STARTUP_PHASE, listener);
+    return () =>
+      ipcRenderer.removeListener(IPC_CHANNELS.EVENT_STARTUP_PHASE, listener);
+  },
+  startupGetState: () => ipcRenderer.invoke(IPC_CHANNELS.STARTUP_GET_STATE),
 
   // File dialog methods
   openFileDialog: (options?: {
     title?: string;
     filters?: Array<{ name: string; extensions: string[] }>;
     properties?: Array<'openFile' | 'openDirectory' | 'multiSelections'>;
-  }) => ipcRenderer.invoke('open-file-dialog', options),
+  }) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_FILE_DIALOG, options),
 
   showSaveDialog: (options?: {
     title?: string;
     defaultPath?: string;
     buttonLabel?: string;
     filters?: Array<{ name: string; extensions: string[] }>;
-  }) => ipcRenderer.invoke('show-save-dialog', options),
+  }) => ipcRenderer.invoke(IPC_CHANNELS.SHOW_SAVE_DIALOG, options),
 
-  getDownloadsDirectory: () => ipcRenderer.invoke('get-downloads-directory'),
+  getDownloadsDirectory: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_DOWNLOADS_DIRECTORY),
 
   showItemInFolder: (filePath: string) =>
-    ipcRenderer.invoke('show-item-in-folder', filePath),
+    ipcRenderer.invoke(IPC_CHANNELS.SHOW_ITEM_IN_FOLDER, filePath),
 
   // File preview methods
   createPreviewUrl: (filePath: string) =>
-    ipcRenderer.invoke('create-preview-url', filePath),
+    ipcRenderer.invoke(IPC_CHANNELS.CREATE_PREVIEW_URL, filePath),
   getFileStream: (filePath: string, start?: number, end?: number) =>
-    ipcRenderer.invoke('get-file-stream', filePath, start, end),
+    ipcRenderer.invoke(IPC_CHANNELS.GET_FILE_STREAM, filePath, start, end),
+  ensureMediaServer: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_ENSURE_SERVER),
 
   // Media cache helpers
-  getMediaCacheDir: () => ipcRenderer.invoke('get-media-cache-dir'),
+  getMediaCacheDir: () => ipcRenderer.invoke(IPC_CHANNELS.GET_MEDIA_CACHE_DIR),
   mediaPathExists: (pathOrUrl: string) =>
-    ipcRenderer.invoke('media-path-exists', pathOrUrl),
+    ipcRenderer.invoke(IPC_CHANNELS.MEDIA_PATH_EXISTS, pathOrUrl),
 
   // File processing methods
   processDroppedFiles: (
@@ -63,36 +92,61 @@ contextBridge.exposeInMainWorld('electronAPI', {
       size: number;
       buffer: ArrayBuffer;
     }>,
-  ) => ipcRenderer.invoke('process-dropped-files', fileBuffers),
+  ) => ipcRenderer.invoke(IPC_CHANNELS.PROCESS_DROPPED_FILES, fileBuffers),
   cleanupTempFiles: (filePaths: string[]) =>
-    ipcRenderer.invoke('cleanup-temp-files', filePaths),
-  readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
+    ipcRenderer.invoke(IPC_CHANNELS.CLEANUP_TEMP_FILES, filePaths),
+  readFile: (filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, filePath),
   readFileAsBuffer: (filePath: string) =>
-    ipcRenderer.invoke('read-file-as-buffer', filePath),
+    ipcRenderer.invoke(IPC_CHANNELS.READ_FILE_AS_BUFFER, filePath),
+  writeFile: (filePath: string, content: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITE_FILE, filePath, content),
 
   // File I/O and background task queue status
-  getIOStatus: () => ipcRenderer.invoke('get-io-status'),
+  getIOStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GET_IO_STATUS),
   cancelMediaTasks: (mediaId: string) =>
-    ipcRenderer.invoke('cancel-media-tasks', mediaId),
+    ipcRenderer.invoke(IPC_CHANNELS.CANCEL_MEDIA_TASKS, mediaId),
 
   // FFmpeg API
-  ffmpegRun: (job: VideoEditJob) => ipcRenderer.invoke('ffmpegRun', job),
-  runFfmpeg: (job: VideoEditJob) => ipcRenderer.invoke('run-ffmpeg', job),
+  ffmpegRun: (job: VideoEditJob) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_RUN, job),
+  runFfmpeg: (job: VideoEditJob) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RUN_FFMPEG, job),
+  detectVideoFrameRate: (videoPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_DETECT_FRAME_RATE, videoPath),
   getDuration: (filePath: string) =>
-    ipcRenderer.invoke('ffmpeg:get-duration', filePath),
+    ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_GET_DURATION, filePath),
   runCustomFFmpeg: (args: string[], outputDir: string) =>
-    ipcRenderer.invoke('run-custom-ffmpeg', args, outputDir),
+    ipcRenderer.invoke(IPC_CHANNELS.RUN_CUSTOM_FFMPEG, args, outputDir),
+  onFfmpegRunProgress: (
+    callback: (payload: { type: 'stdout' | 'stderr'; data: string }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { type: 'stdout' | 'stderr'; data: string },
+    ) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.EVENT_FFMPEG_RUN_PROGRESS, listener);
+    return () =>
+      ipcRenderer.removeListener(
+        IPC_CHANNELS.EVENT_FFMPEG_RUN_PROGRESS,
+        listener,
+      );
+  },
 
   // Get Dimensions
   getVideoDimensions: (filePath: string) =>
-    ipcRenderer.invoke('getVideoDimensions', filePath),
+    ipcRenderer.invoke(IPC_CHANNELS.GET_VIDEO_DIMENSIONS, filePath),
   // Audio extraction method
   extractAudioFromVideo: (videoPath: string, outputDir?: string) =>
-    ipcRenderer.invoke('extract-audio-from-video', videoPath, outputDir),
+    ipcRenderer.invoke(
+      IPC_CHANNELS.EXTRACT_AUDIO_FROM_VIDEO,
+      videoPath,
+      outputDir,
+    ),
 
   // Cleanup extracted audio files
   cleanupExtractedAudio: (audioPaths: string[]) =>
-    ipcRenderer.invoke('cleanup-extracted-audio', audioPaths),
+    ipcRenderer.invoke(IPC_CHANNELS.CLEANUP_EXTRACTED_AUDIO, audioPaths),
 
   // Background sprite sheet generation methods
   generateSpriteSheetBackground: (options: {
@@ -100,13 +154,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     videoPath: string;
     outputDir: string;
     commands: string[][];
-  }) => ipcRenderer.invoke('generate-sprite-sheet-background', options),
+  }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GENERATE_SPRITE_SHEET_BACKGROUND, options),
 
   getSpriteSheetProgress: (jobId: string) =>
-    ipcRenderer.invoke('get-sprite-sheet-progress', jobId),
+    ipcRenderer.invoke(IPC_CHANNELS.GET_SPRITE_SHEET_PROGRESS, jobId),
 
   cancelSpriteSheetJob: (jobId: string) =>
-    ipcRenderer.invoke('cancel-sprite-sheet-job', jobId),
+    ipcRenderer.invoke(IPC_CHANNELS.CANCEL_SPRITE_SHEET_JOB, jobId),
 
   // Sprite sheet event listeners
   onSpriteSheetJobCompleted: (
@@ -115,15 +170,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
       outputFiles: string[];
       outputDir: string;
     }) => void,
-  ) =>
-    ipcRenderer.on('sprite-sheet-job-completed', (event, data) =>
-      callback(data),
-    ),
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        jobId: string;
+        outputFiles: string[];
+        outputDir: string;
+      },
+    ) => callback(data);
+    ipcRenderer.on(IPC_CHANNELS.EVENT_SPRITE_SHEET_JOB_COMPLETED, listener);
+    return () =>
+      ipcRenderer.removeListener(
+        IPC_CHANNELS.EVENT_SPRITE_SHEET_JOB_COMPLETED,
+        listener,
+      );
+  },
 
   onSpriteSheetJobError: (
     callback: (data: { jobId: string; error: string }) => void,
-  ) =>
-    ipcRenderer.on('sprite-sheet-job-error', (event, data) => callback(data)),
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      data: { jobId: string; error: string },
+    ) => callback(data);
+    ipcRenderer.on(IPC_CHANNELS.EVENT_SPRITE_SHEET_JOB_ERROR, listener);
+    return () =>
+      ipcRenderer.removeListener(
+        IPC_CHANNELS.EVENT_SPRITE_SHEET_JOB_ERROR,
+        listener,
+      );
+  },
 
   // Progressive loading: Per-sheet ready event
   onSpriteSheetSheetReady: (
@@ -133,21 +210,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
       totalSheets: number;
       sheetPath: string;
     }) => void,
-  ) =>
-    ipcRenderer.on('sprite-sheet-sheet-ready', (event, data) => callback(data)),
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        jobId: string;
+        sheetIndex: number;
+        totalSheets: number;
+        sheetPath: string;
+      },
+    ) => callback(data);
+    ipcRenderer.on(IPC_CHANNELS.EVENT_SPRITE_SHEET_SHEET_READY, listener);
+    return () =>
+      ipcRenderer.removeListener(
+        IPC_CHANNELS.EVENT_SPRITE_SHEET_SHEET_READY,
+        listener,
+      );
+  },
 
   removeSpriteSheetListeners: () => {
-    ipcRenderer.removeAllListeners('sprite-sheet-job-completed');
-    ipcRenderer.removeAllListeners('sprite-sheet-job-error');
-    ipcRenderer.removeAllListeners('sprite-sheet-sheet-ready');
+    ipcRenderer.removeAllListeners(
+      IPC_CHANNELS.EVENT_SPRITE_SHEET_JOB_COMPLETED,
+    );
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_SPRITE_SHEET_JOB_ERROR);
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_SPRITE_SHEET_SHEET_READY);
   },
 
   // FFmpeg diagnostics
-  getFFmpegStatus: () => ipcRenderer.invoke('ffmpeg:status'),
+  getFFmpegStatus: () => ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_STATUS),
 
   // Proxy generation (with hybrid encoder support)
   generateProxy: (inputPath: string) =>
-    ipcRenderer.invoke('generate-proxy', inputPath) as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.GENERATE_PROXY, inputPath) as Promise<{
       success: boolean;
       proxyPath?: string;
       cached?: boolean;
@@ -167,7 +261,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Hardware capabilities detection
   getHardwareCapabilities: () =>
-    ipcRenderer.invoke('get-hardware-capabilities') as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.GET_HARDWARE_CAPABILITIES) as Promise<{
       success: boolean;
       capabilities?: {
         hasHardwareEncoder: boolean;
@@ -186,57 +280,147 @@ contextBridge.exposeInMainWorld('electronAPI', {
     job: VideoEditJob,
     handlers?: FfmpegEventHandlers,
   ) => {
-    // Set up event listeners if handlers provided
-    if (handlers) {
-      const removeListeners = () => {
-        ipcRenderer.removeAllListeners('ffmpeg-progress');
-        ipcRenderer.removeAllListeners('ffmpeg-status');
-        ipcRenderer.removeAllListeners('ffmpeg-log');
-        ipcRenderer.removeAllListeners('ffmpeg-complete');
-      };
+    const progressState: {
+      frame?: number;
+      fps?: number;
+      bitrate?: string;
+      totalSize?: string;
+      outTime?: string;
+      speed?: string;
+      progress?: string;
+    } = {};
 
-      // Clean up any existing listeners
-      removeListeners();
+    const toTime = (seconds: number) => {
+      const total = Math.max(0, seconds);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      const secsText = secs < 10 ? `0${secs.toFixed(2)}` : secs.toFixed(2);
+      return `${hours.toString().padStart(2, '0')}:${minutes
+        .toString()
+        .padStart(2, '0')}:${secsText}`;
+    };
 
-      // Set up new listeners
-      if (handlers.onProgress) {
-        ipcRenderer.on('ffmpeg-progress', (_, progress) =>
-          handlers.onProgress?.(progress),
-        );
+    const runProgressListener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { type: 'stdout' | 'stderr'; data: string },
+    ) => {
+      handlers?.onLog?.({ log: payload.data, type: payload.type });
+      if (payload.type !== 'stdout') return;
+
+      const lines = payload.data
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      for (const line of lines) {
+        const separatorIndex = line.indexOf('=');
+        if (separatorIndex <= 0) continue;
+        const key = line.slice(0, separatorIndex);
+        const value = line.slice(separatorIndex + 1);
+
+        switch (key) {
+          case 'frame':
+            progressState.frame = Number(value) || progressState.frame || 0;
+            break;
+          case 'fps':
+            progressState.fps = Number(value) || progressState.fps || 0;
+            break;
+          case 'bitrate':
+            progressState.bitrate = value;
+            break;
+          case 'total_size':
+            progressState.totalSize = value;
+            break;
+          case 'out_time':
+            progressState.outTime = value;
+            break;
+          case 'out_time_ms': {
+            const millis = Number(value) / 1000;
+            if (Number.isFinite(millis)) {
+              progressState.outTime = toTime(millis / 1000);
+            }
+            break;
+          }
+          case 'speed':
+            progressState.speed = value;
+            break;
+          case 'progress':
+            progressState.progress = value;
+            handlers?.onStatus?.(
+              value === 'end' ? 'Processing complete' : `Rendering... ${value}`,
+            );
+            break;
+        }
       }
 
-      if (handlers.onStatus) {
-        ipcRenderer.on('ffmpeg-status', (_, status) =>
-          handlers.onStatus?.(status),
-        );
-      }
+      handlers?.onProgress?.({
+        frame: progressState.frame || 0,
+        fps: progressState.fps || 0,
+        bitrate: progressState.bitrate || '',
+        totalSize: progressState.totalSize || '',
+        outTime: progressState.outTime || '',
+        speed: progressState.speed || '',
+        progress: progressState.progress || '',
+      });
+    };
 
-      if (handlers.onLog) {
-        ipcRenderer.on('ffmpeg-log', (_, logData) => handlers.onLog?.(logData));
-      }
+    ipcRenderer.on(IPC_CHANNELS.EVENT_FFMPEG_RUN_PROGRESS, runProgressListener);
 
-      if (handlers.onComplete) {
-        ipcRenderer.on('ffmpeg-complete', (_, result) => {
-          handlers.onComplete?.(result);
-          removeListeners(); // Clean up after completion
-        });
-      }
-    }
+    const cleanup = () => {
+      ipcRenderer.removeListener(
+        IPC_CHANNELS.EVENT_FFMPEG_RUN_PROGRESS,
+        runProgressListener,
+      );
+    };
 
-    return ipcRenderer.invoke('run-ffmpeg-with-progress', job);
+    return ipcRenderer
+      .invoke(IPC_CHANNELS.FFMPEG_RUN, job)
+      .then((rawResult) => {
+        const response = rawResult?.success
+          ? {
+              success: true as const,
+              result: {
+                command: 'ffmpeg-via-ipc',
+                logs: rawResult.logs || '',
+                cancelled: rawResult.cancelled,
+                message: rawResult.message,
+              },
+            }
+          : {
+              success: false as const,
+              error: rawResult?.error || 'FFmpeg execution failed',
+            };
+        handlers?.onComplete?.(response);
+        return response;
+      })
+      .catch((error: unknown) => {
+        const response = {
+          success: false as const,
+          error:
+            error instanceof Error ? error.message : 'FFmpeg execution failed',
+        };
+        handlers?.onComplete?.(response);
+        return response;
+      })
+      .finally(() => {
+        cleanup();
+      });
   },
 
   // Cancel FFmpeg operation
-  cancelFfmpeg: () => ipcRenderer.invoke('cancel-ffmpeg'),
+  cancelFfmpegExport: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.FFMPEG_CANCEL_EXPORT),
 
   // Subtitle file operations
   writeSubtitleFile: (options: {
     content: string;
     filename: string;
     outputPath: string;
-  }) => ipcRenderer.invoke('write-subtitle-file', options),
+  }) => ipcRenderer.invoke(IPC_CHANNELS.WRITE_SUBTITLE_FILE, options),
 
-  deleteFile: (filePath: string) => ipcRenderer.invoke('delete-file', filePath),
+  deleteFile: (filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DELETE_FILE, filePath),
 
   // ============================================================================
 
@@ -262,13 +446,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       beamSize?: number;
       vad?: boolean;
     },
-  ) => ipcRenderer.invoke('whisper:transcribe', audioPath, options),
+  ) => ipcRenderer.invoke(IPC_CHANNELS.WHISPER_TRANSCRIBE, audioPath, options),
 
   // Cancel active transcription
-  whisperCancel: () => ipcRenderer.invoke('whisper:cancel'),
+  whisperCancel: () => ipcRenderer.invoke(IPC_CHANNELS.WHISPER_CANCEL),
 
   // Get Whisper status and available models
-  whisperStatus: () => ipcRenderer.invoke('whisper:status'),
+  whisperStatus: () => ipcRenderer.invoke(IPC_CHANNELS.WHISPER_STATUS),
 
   // Listen for transcription progress updates
   onWhisperProgress: (
@@ -277,11 +461,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       progress: number;
       message?: string;
     }) => void,
-  ) => ipcRenderer.on('whisper:progress', (_, progress) => callback(progress)),
+  ) =>
+    ipcRenderer.on(IPC_CHANNELS.EVENT_WHISPER_PROGRESS, (_, progress) =>
+      callback(progress),
+    ),
 
   // Remove progress listener
   removeWhisperProgressListener: () =>
-    ipcRenderer.removeAllListeners('whisper:progress'),
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_WHISPER_PROGRESS),
 
   // =========================================================================
   // Media Tools APIs (Noise Reduction)
@@ -299,17 +486,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   ) =>
     ipcRenderer.invoke(
-      'media-tools:noise-reduce',
+      IPC_CHANNELS.MEDIA_TOOLS_NOISE_REDUCE,
       inputPath,
       outputPath,
       options,
     ),
 
   // Cancel active media-tools operation
-  mediaToolsCancel: () => ipcRenderer.invoke('media-tools:cancel'),
+  mediaToolsCancel: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_TOOLS_CANCEL),
 
   // Get media-tools status
-  mediaToolsStatus: () => ipcRenderer.invoke('media-tools:status'),
+  mediaToolsStatus: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_TOOLS_STATUS),
 
   // Listen for media-tools progress updates
   onMediaToolsProgress: (
@@ -319,15 +506,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       message?: string;
     }) => void,
   ) =>
-    ipcRenderer.on('media-tools:progress', (_, progress) => callback(progress)),
+    ipcRenderer.on(IPC_CHANNELS.EVENT_MEDIA_TOOLS_PROGRESS, (_, progress) =>
+      callback(progress),
+    ),
 
   // Remove media-tools progress listener
   removeMediaToolsProgressListener: () =>
-    ipcRenderer.removeAllListeners('media-tools:progress'),
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_MEDIA_TOOLS_PROGRESS),
 
   // Check if media file has audio
   mediaHasAudio: (filePath: string) =>
-    ipcRenderer.invoke('media:has-audio', filePath),
+    ipcRenderer.invoke(IPC_CHANNELS.MEDIA_HAS_AUDIO, filePath),
 
   // =========================================================================
   // Noise Reduction Cache APIs
@@ -336,7 +525,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Get a unique output path for noise reduction
   noiseReductionGetOutputPath: (inputPath: string, engine?: string) =>
     ipcRenderer.invoke(
-      'noise-reduction:get-output-path',
+      IPC_CHANNELS.NOISE_REDUCTION_GET_OUTPUT_PATH,
       inputPath,
       engine,
     ) as Promise<{
@@ -347,7 +536,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Cleanup noise reduction temp files
   noiseReductionCleanupFiles: (filePaths: string[]) =>
-    ipcRenderer.invoke('noise-reduction:cleanup-files', filePaths) as Promise<{
+    ipcRenderer.invoke(
+      IPC_CHANNELS.NOISE_REDUCTION_CLEANUP_FILES,
+      filePaths,
+    ) as Promise<{
       success: boolean;
       cleanedCount?: number;
       error?: string;
@@ -356,7 +548,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Create preview URL data from processed file
   noiseReductionCreatePreviewUrl: (filePath: string) =>
     ipcRenderer.invoke(
-      'noise-reduction:create-preview-url',
+      IPC_CHANNELS.NOISE_REDUCTION_CREATE_PREVIEW_URL,
       filePath,
     ) as Promise<{
       success: boolean;
@@ -371,7 +563,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Check runtime installation status
   runtimeStatus: () =>
-    ipcRenderer.invoke('runtime:status') as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_STATUS) as Promise<{
       installed: boolean;
       version: string | null;
       path: string | null;
@@ -381,28 +573,72 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Start runtime download
   runtimeDownload: () =>
-    ipcRenderer.invoke('runtime:download') as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_DOWNLOAD) as Promise<{
       success: boolean;
       error?: string;
     }>,
 
   // Cancel runtime download
   runtimeCancelDownload: () =>
-    ipcRenderer.invoke('runtime:cancel-download') as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_CANCEL_DOWNLOAD) as Promise<{
       success: boolean;
     }>,
 
   // Verify runtime installation
   runtimeVerify: () =>
-    ipcRenderer.invoke('runtime:verify') as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_VERIFY) as Promise<{
       valid: boolean;
     }>,
 
   // Remove runtime
   runtimeRemove: () =>
-    ipcRenderer.invoke('runtime:remove') as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_REMOVE) as Promise<{
       success: boolean;
       error?: string;
+    }>,
+
+  // =========================================================================
+  // Release Update APIs
+  // =========================================================================
+
+  releaseCheckForUpdates: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.RELEASE_CHECK_UPDATES) as Promise<{
+      success: boolean;
+      updateAvailable: boolean;
+      installedVersion: string;
+      installedTag: string;
+      latest?: {
+        latestVersion: string;
+        latestTag: string;
+        latestTitle: string;
+        checkedAt: string;
+      };
+      error?: string;
+      errorCode?: 'rate_limited' | 'network' | 'api_error';
+      rateLimitResetAt?: string | null;
+    }>,
+
+  releaseGetUpdateCache: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.RELEASE_GET_UPDATE_CACHE) as Promise<{
+      latestVersion: string;
+      latestTag: string;
+      latestTitle: string;
+      checkedAt: string;
+    } | null>,
+
+  releaseGetInstalledRelease: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.RELEASE_GET_INSTALLED_RELEASE) as Promise<{
+      success: boolean;
+      release?: {
+        tag: string;
+        title: string;
+        notes: string;
+        publishedAt: string | null;
+        commit: string | null;
+      };
+      error?: string;
+      errorCode?: 'rate_limited' | 'network' | 'api_error';
+      rateLimitResetAt?: string | null;
     }>,
 
   // Listen for runtime download progress
@@ -423,13 +659,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       error?: string;
     }) => void,
   ) =>
-    ipcRenderer.on('runtime:download-progress', (_, progress) =>
-      callback(progress),
+    ipcRenderer.on(
+      IPC_CHANNELS.EVENT_RUNTIME_DOWNLOAD_PROGRESS,
+      (_, progress) => callback(progress),
     ),
 
   // Remove runtime download progress listener
   removeRuntimeDownloadProgressListener: () =>
-    ipcRenderer.removeAllListeners('runtime:download-progress'),
+    ipcRenderer.removeAllListeners(
+      IPC_CHANNELS.EVENT_RUNTIME_DOWNLOAD_PROGRESS,
+    ),
 
   // =========================================================================
   // Transcode APIs (AVI to MP4 conversion)
@@ -437,7 +676,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Check if a file requires transcoding
   transcodeRequiresTranscoding: (filePath: string) =>
-    ipcRenderer.invoke('transcode:requires-transcoding', filePath) as Promise<{
+    ipcRenderer.invoke(
+      IPC_CHANNELS.TRANSCODE_REQUIRES_TRANSCODING,
+      filePath,
+    ) as Promise<{
       requiresTranscoding: boolean;
       reason: string;
     }>,
@@ -450,7 +692,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     audioBitrate?: string;
     crf?: number;
   }) =>
-    ipcRenderer.invoke('transcode:start', options) as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSCODE_START, options) as Promise<{
       success: boolean;
       jobId?: string;
       outputPath?: string;
@@ -459,7 +701,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Get transcode job status
   transcodeStatus: (jobId: string) =>
-    ipcRenderer.invoke('transcode:status', jobId) as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSCODE_STATUS, jobId) as Promise<{
       success: boolean;
       job?: {
         id: string;
@@ -475,21 +717,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Cancel a transcode job
   transcodeCancel: (jobId: string) =>
-    ipcRenderer.invoke('transcode:cancel', jobId) as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSCODE_CANCEL, jobId) as Promise<{
       success: boolean;
       error?: string;
     }>,
 
   // Cancel all transcode jobs for a media ID
   transcodeCancelForMedia: (mediaId: string) =>
-    ipcRenderer.invoke('transcode:cancel-for-media', mediaId) as Promise<{
+    ipcRenderer.invoke(
+      IPC_CHANNELS.TRANSCODE_CANCEL_FOR_MEDIA,
+      mediaId,
+    ) as Promise<{
       success: boolean;
       cancelled: number;
     }>,
 
   // Get all active transcode jobs
   transcodeGetActiveJobs: () =>
-    ipcRenderer.invoke('transcode:get-active-jobs') as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSCODE_GET_ACTIVE_JOBS) as Promise<{
       success: boolean;
       jobs: Array<{
         id: string;
@@ -503,7 +748,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Cleanup old transcode files
   transcodeCleanup: (maxAgeMs?: number) =>
-    ipcRenderer.invoke('transcode:cleanup', maxAgeMs) as Promise<{
+    ipcRenderer.invoke(IPC_CHANNELS.TRANSCODE_CLEANUP, maxAgeMs) as Promise<{
       success: boolean;
       cleaned?: number;
       error?: string;
@@ -520,7 +765,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       duration: number;
     }) => void,
   ) =>
-    ipcRenderer.on('transcode:progress', (_, progress) => callback(progress)),
+    ipcRenderer.on(IPC_CHANNELS.EVENT_TRANSCODE_PROGRESS, (_, progress) =>
+      callback(progress),
+    ),
 
   // Listen for transcode completion
   onTranscodeCompleted: (
@@ -532,68 +779,77 @@ contextBridge.exposeInMainWorld('electronAPI', {
       previewUrl?: string;
       error?: string;
     }) => void,
-  ) => ipcRenderer.on('transcode:completed', (_, result) => callback(result)),
+  ) =>
+    ipcRenderer.on(IPC_CHANNELS.EVENT_TRANSCODE_COMPLETED, (_, result) =>
+      callback(result),
+    ),
 
   // Remove transcode listeners
   removeTranscodeListeners: () => {
-    ipcRenderer.removeAllListeners('transcode:progress');
-    ipcRenderer.removeAllListeners('transcode:completed');
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_TRANSCODE_PROGRESS);
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_TRANSCODE_COMPLETED);
   },
 });
 
 contextBridge.exposeInMainWorld('appControl', {
-  showWindow: () => ipcRenderer.invoke('show-window'),
-  hideWindow: () => ipcRenderer.invoke('hide-window'),
+  showWindow: () => ipcRenderer.invoke(IPC_CHANNELS.SHOW_WINDOW),
+  hideWindow: () => ipcRenderer.invoke(IPC_CHANNELS.HIDE_WINDOW),
   setAutoLaunch: (enabled: boolean) =>
-    ipcRenderer.invoke('set-auto-launch', enabled),
-  quitApp: () => ipcRenderer.send('close-btn'),
-  minimizeApp: () => ipcRenderer.send('minimize-btn'),
-  maximizeApp: () => ipcRenderer.send('maximize-btn'),
-  getAutoLaunch: () => ipcRenderer.invoke('get-auto-launch'),
-  getMaximizeState: () => ipcRenderer.invoke('get-maximize-state'),
+    ipcRenderer.invoke(IPC_CHANNELS.SET_AUTO_LAUNCH, enabled),
+  quitApp: () => ipcRenderer.send(IPC_CHANNELS.CLOSE_BTN),
+  minimizeApp: () => ipcRenderer.send(IPC_CHANNELS.MINIMIZE_BTN),
+  maximizeApp: () => ipcRenderer.send(IPC_CHANNELS.MAXIMIZE_BTN),
+  getAutoLaunch: () => ipcRenderer.invoke(IPC_CHANNELS.GET_AUTO_LAUNCH),
+  getMaximizeState: () => ipcRenderer.invoke(IPC_CHANNELS.GET_MAXIMIZE_STATE),
   setTitlebarOverlay: (options: {
     color?: string;
     symbolColor?: string;
     height?: number;
-  }) => ipcRenderer.invoke('set-titlebar-overlay', options),
+  }) => ipcRenderer.invoke(IPC_CHANNELS.SET_TITLEBAR_OVERLAY, options),
   setWindowFullscreen: (isFullscreen: boolean) =>
-    ipcRenderer.invoke('set-window-fullscreen', isFullscreen),
+    ipcRenderer.invoke(IPC_CHANNELS.SET_WINDOW_FULLSCREEN, isFullscreen),
+  startupMark: (phase: string, meta?: Record<string, unknown>) =>
+    ipcRenderer.invoke(IPC_CHANNELS.STARTUP_MARK, phase, meta),
   onMaximizeChanged: (callback: (isMaximized: boolean) => void) => {
-    ipcRenderer.on('window-maximize-changed', (_event, isMaximized: boolean) =>
-      callback(isMaximized),
+    ipcRenderer.on(
+      IPC_CHANNELS.EVENT_WINDOW_MAXIMIZE_CHANGED,
+      (_event, isMaximized: boolean) => callback(isMaximized),
     );
   },
   offMaximizeChanged: () => {
-    ipcRenderer.removeAllListeners('window-maximize-changed');
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_WINDOW_MAXIMIZE_CHANGED);
   },
 
   // Clipboard monitoring
-  getClipboardText: () => ipcRenderer.invoke('get-clipboard-text'),
+  getClipboardText: () => ipcRenderer.invoke(IPC_CHANNELS.GET_CLIPBOARD_TEXT),
   onClipboardChange: (callback: (text: string) => void) => {
-    ipcRenderer.on('clipboard-changed', (_event, text: string) =>
-      callback(text),
+    ipcRenderer.on(
+      IPC_CHANNELS.EVENT_CLIPBOARD_CHANGED,
+      (_event, text: string) => callback(text),
     );
   },
   offClipboardChange: () => {
-    ipcRenderer.removeAllListeners('clipboard-changed');
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_CLIPBOARD_CHANGED);
   },
   startClipboardMonitoring: () =>
-    ipcRenderer.invoke('start-clipboard-monitoring'),
+    ipcRenderer.invoke(IPC_CHANNELS.START_CLIPBOARD_MONITORING),
   stopClipboardMonitoring: () =>
-    ipcRenderer.invoke('stop-clipboard-monitoring'),
+    ipcRenderer.invoke(IPC_CHANNELS.STOP_CLIPBOARD_MONITORING),
   isClipboardMonitoringActive: () =>
-    ipcRenderer.invoke('is-clipboard-monitoring-active'),
-  isWindowFocused: () => ipcRenderer.invoke('is-window-focused'),
-  clearLastClipboardText: () => ipcRenderer.invoke('clear-last-clipboard-text'),
-  clearClipboard: () => ipcRenderer.invoke('clear-clipboard'),
+    ipcRenderer.invoke(IPC_CHANNELS.IS_CLIPBOARD_MONITORING_ACTIVE),
+  isWindowFocused: () => ipcRenderer.invoke(IPC_CHANNELS.IS_WINDOW_FOCUSED),
+  clearLastClipboardText: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.CLEAR_LAST_CLIPBOARD_TEXT),
+  clearClipboard: () => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_CLIPBOARD),
 
   // File association: Handle .dividr files opened via double-click
   onOpenProjectFile: (callback: (filePath: string) => void) => {
-    ipcRenderer.on('open-project-file', (_event, filePath: string) =>
-      callback(filePath),
+    ipcRenderer.on(
+      IPC_CHANNELS.EVENT_OPEN_PROJECT_FILE,
+      (_event, filePath: string) => callback(filePath),
     );
   },
   offOpenProjectFile: () => {
-    ipcRenderer.removeAllListeners('open-project-file');
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.EVENT_OPEN_PROJECT_FILE);
   },
 });

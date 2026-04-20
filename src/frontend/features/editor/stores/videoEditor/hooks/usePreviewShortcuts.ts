@@ -15,7 +15,6 @@ import { createPreviewShortcuts } from '../shortcuts/previewShortcuts';
  * @param enabled - Whether the shortcuts should be active (preview is focused)
  */
 export const usePreviewShortcuts = (enabled = true) => {
-  const preview = useVideoEditorStore((state) => state.preview);
   const isCapturing = useShortcutCaptureState();
 
   // Create preview shortcuts with a getter function to always access fresh state
@@ -81,7 +80,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.interactionMode, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -93,7 +92,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.interactionMode, preview.previewScale, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -105,7 +104,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.interactionMode, enabled, isCapturing],
+    [isEnabled],
   );
 
   // Preview Zoom Shortcuts
@@ -118,7 +117,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -130,7 +129,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -142,7 +141,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, preview.panX, preview.panY, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -154,7 +153,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -166,7 +165,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -178,7 +177,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -190,7 +189,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, enabled, isCapturing],
+    [isEnabled],
   );
 
   useHotkeys(
@@ -202,7 +201,7 @@ export const usePreviewShortcuts = (enabled = true) => {
       enableOnFormTags: false,
       preventDefault: true,
     },
-    [preview.previewScale, preview.panX, preview.panY, enabled, isCapturing],
+    [isEnabled],
   );
 
   return {

@@ -24,6 +24,8 @@ import {
   CopyPlus,
   Link,
   Magnet,
+  MapPin,
+  MapPinMinus,
   Maximize,
   Minimize,
   MousePointer2,
@@ -228,6 +230,56 @@ const DeleteButton: React.FC = React.memo(() => {
   );
 });
 
+// Marker control (single dynamic add/remove action at playhead)
+const MarkerControls: React.FC = React.memo(() => {
+  const addMarkerAtPlayhead = useVideoEditorStore(
+    (state) => state.addMarkerAtPlayhead,
+  );
+  const removeMarker = useVideoEditorStore((state) => state.removeMarker);
+  const currentFrame = useVideoEditorStore(
+    (state) => state.timeline.currentFrame,
+  );
+  const markers = useVideoEditorStore((state) => state.timeline.markers);
+  const markerAtPlayhead = useMemo(
+    () => markers.find((marker) => marker.frame === currentFrame) ?? null,
+    [markers, currentFrame],
+  );
+  const addMarkerKeys = useShortcutKeys('timeline-add-marker', ['shift+m']);
+  const addMarkerShortcutText = formatShortcutCombos(addMarkerKeys);
+  const isOnMarker = !!markerAtPlayhead;
+
+  const handleMarkerAction = useCallback(() => {
+    if (markerAtPlayhead) {
+      removeMarker(markerAtPlayhead.id);
+      return;
+    }
+    addMarkerAtPlayhead();
+  }, [addMarkerAtPlayhead, markerAtPlayhead, removeMarker]);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="native"
+          onClick={handleMarkerAction}
+          className={isOnMarker ? 'text-primary' : ''}
+          aria-label={isOnMarker ? 'Remove Marker' : 'Add Marker'}
+        >
+          {isOnMarker ? (
+            <MapPinMinus className="size-4" />
+          ) : (
+            <MapPin className="size-4" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {isOnMarker ? 'Remove Marker' : 'Add Marker'}
+        {addMarkerShortcutText ? ` (${addMarkerShortcutText})` : ''}
+      </TooltipContent>
+    </Tooltip>
+  );
+});
+
 // Separate component for duplicate button that reacts to track selection
 const DuplicateButton: React.FC = React.memo(() => {
   const selectedTrackIds = useVideoEditorStore(
@@ -247,11 +299,6 @@ const DuplicateButton: React.FC = React.memo(() => {
   const handleDuplicate = useCallback(() => {
     if (selectedTrackIds.length === 0) return;
 
-    console.log('[DuplicateButton] Duplicating selected tracks:', {
-      selectedCount: selectedTrackIds.length,
-      selectedIds: selectedTrackIds,
-    });
-
     // Begin grouped transaction for batch duplicate
     beginGroup?.(
       `Duplicate ${selectedTrackIds.length} Track${selectedTrackIds.length > 1 ? 's' : ''}`,
@@ -262,16 +309,13 @@ const DuplicateButton: React.FC = React.memo(() => {
 
     selectedTrackIds.forEach((trackId: string) => {
       if (processedTrackIds.has(trackId)) {
-        console.log(
-          `[DuplicateButton] Skipping ${trackId} - already processed`,
-        );
         return;
       }
 
       const track = tracks.find((t) => t.id === trackId);
       if (!track) {
         console.error(
-          `❌ Track ${trackId} not found in tracks array, skipping`,
+          `[TimelineControls] Track${trackId} not found in tracks array, skipping`,
         );
         return;
       }
@@ -305,7 +349,7 @@ const DuplicateButton: React.FC = React.memo(() => {
     if (newlyCreatedIds.length > 0) {
       setSelectedTracks(newlyCreatedIds);
     } else {
-      console.error('❌ Duplication produced no new tracks');
+      console.error('[TimelineControls] Duplication produced no new tracks');
     }
   }, [
     selectedTrackIds,
@@ -599,9 +643,7 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
         const existingSubtitles = tracks.filter(
           (track) => track.type === 'subtitle',
         );
-        console.log(
-          `🗑️ Deleting ${existingSubtitles.length} existing subtitle tracks...`,
-        );
+
         for (const track of existingSubtitles) {
           removeTrack(track.id);
         }
@@ -626,10 +668,6 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
 
         if (!track) continue;
 
-        console.log(
-          `🎤 Generating subtitles for track ${i + 1}/${trackIds.length}: ${track.name}`,
-        );
-
         try {
           const result = await generateKaraokeSubtitlesFromTrack(trackId, {
             model: 'base',
@@ -641,9 +679,6 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
           if (result.success) {
             totalSubtitlesGenerated += result.trackIds?.length || 0;
             successCount++;
-            console.log(
-              `✅ Generated ${result.trackIds?.length || 0} subtitles for ${track.name}`,
-            );
           } else if (result.requiresDownload) {
             // Runtime not installed - show download modal and stop processing
             setPendingKaraokeAction({ trackIds, deleteExisting });
@@ -652,14 +687,14 @@ const GenerateKaraokeButton: React.FC = React.memo(() => {
           } else {
             failCount++;
             console.error(
-              `❌ Failed to generate subtitles for ${track.name}:`,
+              `[TimelineControls] Failed to generate subtitles for${track.name}:`,
               result.error,
             );
           }
         } catch (error) {
           failCount++;
           console.error(
-            `❌ Error generating subtitles for ${track.name}:`,
+            `[TimelineControls] Error generating subtitles for${track.name}:`,
             error,
           );
         }
@@ -1016,6 +1051,7 @@ export const TimelineControls: React.FC = React.memo(
                   : 'Split at Playhead'}
               </TooltipContent>
             </Tooltip>
+            <MarkerControls />
             <DuplicateButton />
             <DeleteButton />
             <Tooltip>
@@ -1113,5 +1149,6 @@ export const TimelineControls: React.FC = React.memo(
 );
 
 ModeSelector.displayName = 'ModeSelector';
+MarkerControls.displayName = 'MarkerControls';
 ZoomSlider.displayName = 'ZoomSlider';
 FullscreenButton.displayName = 'FullscreenButton';
