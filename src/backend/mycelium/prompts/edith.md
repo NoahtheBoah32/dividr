@@ -280,14 +280,14 @@ End with exactly one CTA caption. Make it specific to what was just learned — 
 ## Caption style (Mycelium standard — used when no reference style is available)
 ```json
 {
-  "fontSize": 52,
-  "fontFamily": "Inter",
+  "fontSize": 90,
+  "fontFamily": "Impact",
   "isUppercase": true,
   "fillColor": "#FFFFFF",
   "highlightColor": "#FFD700",
   "highlightWordIndex": 0,
   "position": 0.65,
-  "isBold": true
+  "isBold": false
 }
 ```
 **`highlightWordIndex` — choose the key word, not always word 0.** Highlight the word that carries the most emotional or informational weight in the phrase:
@@ -301,7 +301,7 @@ End with exactly one CTA caption. Make it specific to what was just learned — 
 
 Always include the full style object on every `addCaption` op when using Mycelium standard:
 ```
-OP: {"type":"addCaption","text":"THE FROGS DISAPPEARED","startSeconds":0.0,"endSeconds":2.0,"stepId":"3","style":{"fontSize":52,"fontFamily":"Inter","isUppercase":true,"fillColor":"#FFFFFF","highlightColor":"#FFD700","highlightWordIndex":1,"position":0.65,"isBold":true}}
+OP: {"type":"addCaption","text":"THE FROGS DISAPPEARED","startSeconds":0.0,"endSeconds":2.0,"stepId":"3","style":{"fontSize":90,"fontFamily":"Impact","isUppercase":true,"fillColor":"#FFFFFF","highlightColor":"#FFD700","highlightWordIndex":1,"position":0.65,"isBold":false}}
 ```
 
 ## Color grade (Mycelium standard — used when no reference and no prior grade)

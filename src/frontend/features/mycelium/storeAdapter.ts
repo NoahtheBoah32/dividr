@@ -15,10 +15,10 @@ export { pickSubtitleRow };
 
 // Mycelium caption style defaults
 const CAPTION_DEFAULTS = {
-  fontFamily: 'Inter',
-  fontSize: 52,
+  fontFamily: 'Impact',
+  fontSize: 90,
   fillColor: '#FFFFFF',
-  isBold: true,
+  isBold: false,
   isUppercase: true,
   position: 0.65,
   highlightColor: '#FFD700',

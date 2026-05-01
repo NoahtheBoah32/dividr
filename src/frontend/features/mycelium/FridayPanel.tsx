@@ -801,6 +801,7 @@ export function FridayPanel({ className }: { className?: string }) {
     interruptedRef.current = false;
     submittingRef.current = true;
     const attachedPaths = attachments.map((a) => a.path);
+    const imagePreviews = attachments.filter((a) => a.preview).map((a) => a.preview!);
     const fullText = attachedPaths.length > 0
       ? `${text}\n\n[Attached: ${attachedPaths.join(', ')}]`
       : text;
@@ -811,7 +812,13 @@ export function FridayPanel({ className }: { className?: string }) {
     activePlanIdRef.current = null;
     setMessages((prev) => [
       ...prev,
-      { id: Math.random().toString(36).slice(2), role: 'user', text: text || `[${attachments.length} attachment${attachments.length > 1 ? 's' : ''}]`, timestamp: Date.now() },
+      {
+        id: Math.random().toString(36).slice(2),
+        role: 'user',
+        text: text || `[${attachments.length} attachment${attachments.length > 1 ? 's' : ''}]`,
+        timestamp: Date.now(),
+        ...(imagePreviews.length > 0 && { imagePreviews }),
+      },
     ]);
     setAgentStatus('running');
     await window.electronAPI.invoke('mycelium:sendMessage', {
@@ -1044,9 +1051,16 @@ export function FridayPanel({ className }: { className?: string }) {
           if (msg.role === 'user') {
             return (
               <div key={msg.id} className="px-4 py-1.5 flex justify-end">
-                <span className="text-xs text-zinc-300 bg-white/[0.06] rounded-lg px-3 py-1.5 max-w-[85%] break-words select-text cursor-text">
-                  {msg.text}
-                </span>
+                <div className="flex flex-col items-end gap-1.5 max-w-[85%]">
+                  {msg.imagePreviews?.map((src, i) => (
+                    <img key={i} src={src} className="rounded-lg max-w-full max-h-40 object-contain border border-white/10" />
+                  ))}
+                  {msg.text && (
+                    <span className="text-xs text-zinc-300 bg-white/[0.06] rounded-lg px-3 py-1.5 break-words select-text cursor-text">
+                      {msg.text}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           }

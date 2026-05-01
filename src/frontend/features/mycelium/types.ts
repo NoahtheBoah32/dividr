@@ -125,6 +125,7 @@ export interface AgentMessage {
   timestamp: number;
   question?: AgentQuestion; // present when this message is a structured question
   plan?: AgentPlan;         // present when this message is an editing plan
+  imagePreviews?: string[]; // base64 data URLs for images attached by the user
 }
 
 export interface MycelliumState {
