@@ -9,6 +9,7 @@ export interface CaptionStyleAnalysis {
   isBold: boolean;
   fillColor: string;
   highlightColor?: string;
+  highlightPattern?: 'first-word' | 'last-word' | 'key-noun' | 'action-verb' | 'random' | 'none';
   strokeColor?: string;
   strokeWidth?: number;
   wordsPerPhrase: number;
@@ -144,18 +145,21 @@ async function uploadToGemini(filePath: string, apiKey: string): Promise<{ uri: 
   return { uri: fileUri, mimeType };
 }
 
-const ANALYSIS_PROMPT = `Watch this entire video carefully from start to finish. You are analyzing it so an AI video editor can recreate this exact style on a different video.
+const ANALYSIS_PROMPT = `Watch this entire video carefully from start to finish. You are a senior social media editor analyzing a reference Reel so an AI editor can recreate its exact style on different footage.
+
+Study the captions closely: what font weight and style, how many words per phrase, which word gets the highlight color and WHY (first word? last word? the key noun? the action verb?), where text sits vertically.
 
 Return ONLY a valid JSON object — no markdown, no explanation, just raw JSON:
 {
   "captions": {
     "position": 0.65,
-    "fontSize": 42,
-    "fontFamily": "Inter",
+    "fontSize": 90,
+    "fontFamily": "Impact",
     "isUppercase": true,
-    "isBold": true,
+    "isBold": false,
     "fillColor": "#FFFFFF",
     "highlightColor": "#FFD700",
+    "highlightPattern": "key-noun",
     "strokeColor": "#000000",
     "strokeWidth": 2,
     "wordsPerPhrase": 3,
@@ -192,7 +196,19 @@ Return ONLY a valid JSON object — no markdown, no explanation, just raw JSON:
 }
 
 Field notes:
-- position: 0.0=top, 1.0=bottom
+- captions.position: 0.0=top, 1.0=bottom. 0.65 = lower-center, typical Reels position.
+- captions.fontSize: estimate relative to frame height. Large bold text filling ~10% of frame height ≈ 90. Standard subtitle size ≈ 48. Pick a number, don't default to 42.
+- captions.fontFamily: pick the closest match from this list only — "Impact", "Arial Black", "Montserrat", "Bebas Neue", "Inter", "Open Sans", "Roboto", "Oswald". If the font is very heavy/condensed with no letter spacing → "Impact". If rounded and modern → "Montserrat" or "Inter". If tall and narrow → "Oswald" or "Bebas Neue".
+- captions.isBold: true only if the font looks heavier than normal (not needed for Impact/Bebas Neue which are already heavy by design).
+- captions.highlightColor: the color used to make one word pop (yellow, orange, cyan, etc). If no highlight color exists, use "#FFD700".
+- captions.highlightPattern: which word is highlighted in each phrase —
+    "first-word" = always the first word (e.g. "SO I'm going" → SO highlighted)
+    "last-word" = always the last word
+    "key-noun" = the main subject/object noun (e.g. "FOR EXAMPLE THEY'RE" → EXAMPLE highlighted)
+    "action-verb" = the verb (e.g. "THEY GROW EVERYTHING" → GROW highlighted)
+    "random" = no consistent pattern
+    "none" = no highlight color used
+- captions.wordsPerPhrase: how many words appear on screen at once (2–5 typical).
 - animationStyle: cut / fade / word-by-word / pop
 - pacing: slow / medium / fast
 - hookStyle: bold-claim / question / visual-surprise / none
@@ -201,9 +217,7 @@ Field notes:
 - colorGrade.contrast: 0.8–1.4 (1.0 = neutral). High contrast = punchy/cinematic.
 - colorGrade.saturation: 0.5–1.8 (1.0 = neutral). Vibrant = >1.2, desaturated/muted = <0.9.
 - colorGrade.hueRotate: degrees (-30 to 30). Use for obvious color shifts (warm orange push = -10, cool/teal = +10).
-- colorGrade.warmth: "warm" / "cool" / "neutral"
-- colorGrade.look: "cinematic" / "raw" / "bright" / "moody" / "natural"
-Use exact values you observe. If not visible, use a sensible default.`;
+Use exact values you observe. Do not default everything to 1.0.`;
 
 export interface SpotCheckItem {
   check: string;
@@ -353,13 +367,14 @@ Return ONLY a valid JSON object — no markdown, no explanation, no code block, 
   },
   "captionStyle": {
     "position": <0–1, vertical position matching VIDEO 2 captions, 0.65 is lower third>,
-    "fontSize": <number, match VIDEO 2 caption size>,
-    "fontFamily": "<match VIDEO 2 font or 'Inter' if unclear>",
+    "fontSize": <number — match VIDEO 2 caption size relative to frame. Heavy full-width text ≈ 90. Standard ≈ 48.>,
+    "fontFamily": "<pick closest from: Impact, Arial Black, Montserrat, Bebas Neue, Inter, Oswald, Roboto — heavy/condensed → Impact>",
     "isUppercase": <true if VIDEO 2 uses all-caps captions>,
-    "isBold": <true if VIDEO 2 captions are bold>,
+    "isBold": <true only if font looks heavier than normal weight — not needed for Impact/Bebas Neue>,
     "fillColor": "<hex color of caption text in VIDEO 2>",
-    "highlightColor": "<hex color used to highlight first/key word in VIDEO 2, or '#FFD700' if none>",
-    "wordsPerPhrase": <2–4, how many words per caption phrase in VIDEO 2>
+    "highlightColor": "<hex color used to highlight one word per phrase in VIDEO 2, or '#FFD700' if none>",
+    "highlightPattern": "<which word gets highlighted: first-word | last-word | key-noun | action-verb | random | none>",
+    "wordsPerPhrase": <2–4, how many words appear on screen at once in VIDEO 2>
   },
   "letterboxBlur": <true if VIDEO 2 shows blurred background bars on a vertical video>,
   "hookDurationSeconds": <how long the opening hook lasts in VIDEO 2>,
@@ -370,7 +385,7 @@ Critical rules:
 - segment.sourceEndSeconds - segment.sourceStartSeconds MUST equal exactly ${targetDurationSeconds}
 - Do NOT pick a segment that starts in the middle of a sentence
 - colorGrade and captionStyle come exclusively from VIDEO 2 — do not invent them
-- If VIDEO 2 has no visible captions, use: fontSize 44, fontFamily "Inter", isUppercase true, isBold true, fillColor "#FFFFFF", highlightColor "#FFD700"`;
+- If VIDEO 2 has no visible captions, use: fontSize 90, fontFamily "Impact", isUppercase true, isBold false, fillColor "#FFFFFF", highlightColor "#FFD700", highlightPattern "key-noun"`;
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,

@@ -192,7 +192,17 @@ Example pacing for a 45s reel:
 85% of viewers watch silently. Captions are not subtitles — they are the narrative spine of the reel.
 
 ### Caption timing
-Use the `[MM:SS-MM:SS]` timestamps from the transcription as your timing guide. Each caption phrase should sit within one timestamp window whenever possible. Do not just divide time evenly.
+Use the `[MM:SS-MM:SS]` timestamps from the transcription as your anchor points. Each timestamp window is one spoken segment — map your caption phrases to those windows.
+
+Rules:
+- If a segment is 2s or shorter: use it as one caption phrase as-is.
+- If a segment is 3–5s: split into 2 caption phrases at the natural mid-point (comma, clause break, or midpoint of the duration).
+- If a segment is 6s+: split into 3 phrases.
+- Start each caption at the segment's start time. End it at the segment's end time (or the start of the next segment).
+- Never let a caption overhang past the next segment's start — captions must not cover different speech.
+- Gap between captions: 0 seconds preferred (cut clean). If the gap between segments is >0.5s, end the caption 0.2s early.
+
+Convert timestamps: `[01:23-01:26]` → startSeconds=83.0, endSeconds=86.0.
 
 ### Caption chunking — how to split phrases
 
@@ -260,10 +270,13 @@ End with exactly one CTA caption. Make it specific to what was just learned — 
 3. **Caption style** — always use the Mycelium standard below UNLESS a reference has been analyzed (see rule 4). Never run `analyzeReference` unless the user explicitly says "match the reference style."
 4. **When reference is analyzed** — if `## Available Project Media` shows a reference with `caption style`, `editing style`, `color grade`, and `structure` fields, apply ALL of them:
 
-   **Captions**: Copy the ENTIRE `caption style` JSON object from the reference directly into the `style` field of every single `addCaption` op. Do not cherry-pick fields. Do not use Mycelium defaults. Every caption op must have the identical style object. Example — if the reference shows `caption style: {"fontSize":44,"fontFamily":"Montserrat","isUppercase":true,"fillColor":"#FFFFFF","highlightColor":"#FFD700","position":0.68,"isBold":true}`, then every caption op looks like:
+   **Captions**: Copy the ENTIRE `caption style` JSON object from the reference directly into the `style` field of every single `addCaption` op. Do not cherry-pick fields. Do not use Mycelium defaults. Every caption op must have the identical style object. Also apply the reference's `highlightPattern` when picking `highlightWordIndex` for each phrase.
+
+   Example — if the reference shows `caption style: {"fontSize":90,"fontFamily":"Impact","isUppercase":true,"fillColor":"#FFFFFF","highlightColor":"#FFD700","highlightPattern":"key-noun","position":0.65,"isBold":false}`:
    ```
-   OP: {"type":"addCaption","text":"MARIGOLD REPELS PESTS","startSeconds":3.0,"endSeconds":5.5,"stepId":"3","style":{"fontSize":44,"fontFamily":"Montserrat","isUppercase":true,"fillColor":"#FFFFFF","highlightColor":"#FFD700","position":0.68,"isBold":true}}
+   OP: {"type":"addCaption","text":"MARIGOLD REPELS PESTS","startSeconds":3.0,"endSeconds":5.5,"stepId":"3","style":{"fontSize":90,"fontFamily":"Impact","isUppercase":true,"fillColor":"#FFFFFF","highlightColor":"#FFD700","highlightWordIndex":1,"position":0.65,"isBold":false}}
    ```
+   (highlightWordIndex: 1 because "key-noun" pattern → REPELS is the verb, MARIGOLD is the subject noun at index 0, PESTS at index 2 — pick the most important noun for "key-noun")
    Zero exceptions. If you emit even one caption without the full reference style object, the reel will look inconsistent.
 
    **Silence removal**: If `silenceRemoved: true` in the reference — or if the footage is interview/talking-head — emit `cutSilence` as the **first op after aspect ratio, before geminiEdit or any other op**. This is non-negotiable. Op order: `setAspectRatio` → `cutSilence` → `geminiEdit` → (captions in next turn after auto-continue).
@@ -290,14 +303,24 @@ End with exactly one CTA caption. Make it specific to what was just learned — 
   "isBold": false
 }
 ```
-**`highlightWordIndex` — choose the key word, not always word 0.** Highlight the word that carries the most emotional or informational weight in the phrase:
+**`highlightWordIndex` — use the reference's `highlightPattern` when one was analyzed. If not, pick the word with the most emotional or informational weight.**
+
+When a reference has been analyzed and `captionStyle.highlightPattern` is available:
+- `"first-word"` → always `highlightWordIndex: 0`
+- `"last-word"` → always `highlightWordIndex: <last word index>`
+- `"key-noun"` → the main subject/object noun in the phrase
+- `"action-verb"` → the verb
+- `"none"` → omit `highlightColor` from the style entirely (set it to `fillColor`)
+
+When no reference pattern is known, use editorial judgment:
 - "THE FROGS DISAPPEARED" → `highlightWordIndex: 1` (FROGS is the key noun)
-- "NO PESTICIDES" → `highlightWordIndex: 1` (PESTICIDES is what matters — NO is obvious)
-- "THIS IS THE OLD WAY" → `highlightWordIndex: 3` (OLD is the contrast word)
-- "WHEN THE FROGS DISAPPEARED" → `highlightWordIndex: 2` (FROGS again)
+- "NO PESTICIDES" → `highlightWordIndex: 1` (PESTICIDES — NO is obvious)
+- "THIS IS THE OLD WAY" → `highlightWordIndex: 3` (OLD is the contrast)
 - "OUR HARVEST IS THREE TIMES BIGGER" → `highlightWordIndex: 4` (THREE — the statistic)
-- "BEFORE MODERN FARMING CAME" → `highlightWordIndex: 1` (MODERN is the contrast)
-- For impact lines with no clear key word: default to word 0
+- "BEFORE MODERN FARMING CAME" → `highlightWordIndex: 1` (MODERN — the contrast)
+- For pure impact lines with no clear key word: `highlightWordIndex: 0`
+
+Be consistent — every caption in a single reel must use the same highlight pattern. If the first caption highlights the noun, all captions highlight the noun.
 
 Always include the full style object on every `addCaption` op when using Mycelium standard:
 ```
