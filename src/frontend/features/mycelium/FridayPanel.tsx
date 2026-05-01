@@ -433,6 +433,59 @@ export function FridayPanel({ className }: { className?: string }) {
   useEffect(() => {
     (window as any).myceliumAPI?.removeAllListeners?.();
 
+    // Shared helper — called when all pending slow ops finish (success or failure)
+    const triggerAutoContinue = (errorContext?: string) => {
+      setTimeout(() => {
+        if (interruptedRef.current) return;
+        const s = useVideoEditorStore.getState() as any;
+        const fps = s.timeline?.fps || 30;
+        const mediaCtx = (s.mediaLibrary ?? []).map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          type: item.type ?? 'video',
+          duration: item.duration,
+          path: item.tempFilePath || item.source || '',
+          isReference: item.category === 'reference',
+          transcription: item.cachedKaraokeSubtitles?.transcriptionResult
+            ? item.cachedKaraokeSubtitles.transcriptionResult.segments
+                ?.map((seg: any) => {
+                  const fmt = (t: number) => `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(Math.floor(t % 60)).padStart(2,'0')}`;
+                  return `[${fmt(seg.start)}-${fmt(seg.end)}] ${seg.text.trim()}`;
+                }).join('\n')
+            : undefined,
+          referenceAnalysis: item.referenceAnalysis,
+        }));
+        const timelineCtx = {
+          fps,
+          currentFrame: s.timeline?.currentFrame ?? 0,
+          totalFrames: s.timeline?.totalFrames ?? 0,
+          selectedClipIds: s.selectedTrackIds ?? [],
+          clips: (s.tracks ?? []).map((t: any) => ({
+            id: t.id,
+            mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+            sourcePath: t.source ?? '',
+            type: t.type,
+            layer: t.trackRowIndex ?? 0,
+            startFrame: t.startFrame ?? 0,
+            endFrame: t.endFrame ?? 0,
+            durationFrames: t.duration ?? ((t.endFrame ?? 0) - (t.startFrame ?? 0)),
+            volume: t.volume,
+            muted: t.muted,
+            letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
+            captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
+          })),
+        };
+        const text = errorContext ? `continue (note: ${errorContext})` : 'continue';
+        window.electronAPI.invoke('mycelium:sendMessage', {
+          text,
+          mediaContext: mediaCtx,
+          timelineSnapshot: timelineCtx,
+          activeDownloads: [],
+        });
+        setAgentStatus('running');
+      }, 600);
+    };
+
     const offApplied = operationEngine.on('opApplied', (_opId: string, op: unknown) => {
       setQueue(operationEngine.getQueue());
       const stepId = (op as any)?.stepId as string | undefined;
@@ -450,60 +503,11 @@ export function FridayPanel({ className }: { className?: string }) {
           }),
         );
       }
-      // Auto-continue after slow ops (runWhisper / analyzeReference) complete
+      // Auto-continue after slow ops (runWhisper / analyzeReference / geminiEdit) complete
       if (pendingSlowOpsRef.current.has(_opId)) {
         pendingSlowOpsRef.current.delete(_opId);
         if (pendingSlowOpsRef.current.size === 0) {
-          // Small delay so store updates flush before EDITH reads context.
-          // Read store directly to avoid stale closure.
-          setTimeout(() => {
-            if (interruptedRef.current) return;
-            const s = useVideoEditorStore.getState() as any;
-            const fps = s.timeline?.fps || 30;
-            const mediaCtx = (s.mediaLibrary ?? []).map((item: any) => ({
-              id: item.id,
-              name: item.name,
-              type: item.type ?? 'video',
-              duration: item.duration,
-              path: item.tempFilePath || item.source || '',
-              isReference: item.category === 'reference',
-              transcription: item.cachedKaraokeSubtitles?.transcriptionResult
-                ? item.cachedKaraokeSubtitles.transcriptionResult.segments
-                    ?.map((seg: any) => {
-                      const fmt = (t: number) => `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(Math.floor(t % 60)).padStart(2,'0')}`;
-                      return `[${fmt(seg.start)}-${fmt(seg.end)}] ${seg.text.trim()}`;
-                    }).join('\n')
-                : undefined,
-              referenceAnalysis: item.referenceAnalysis,
-            }));
-            const timelineCtx = {
-              fps,
-              currentFrame: s.timeline?.currentFrame ?? 0,
-              totalFrames: s.timeline?.totalFrames ?? 0,
-              selectedClipIds: s.selectedTrackIds ?? [],
-              clips: (s.tracks ?? []).map((t: any) => ({
-                id: t.id,
-                mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
-                sourcePath: t.source ?? '',
-                type: t.type,
-                layer: t.trackRowIndex ?? 0,
-                startFrame: t.startFrame ?? 0,
-                endFrame: t.endFrame ?? 0,
-                durationFrames: t.duration ?? ((t.endFrame ?? 0) - (t.startFrame ?? 0)),
-                volume: t.volume,
-                muted: t.muted,
-                letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
-                captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
-              })),
-            };
-            window.electronAPI.invoke('mycelium:sendMessage', {
-              text: 'continue',
-              mediaContext: mediaCtx,
-              timelineSnapshot: timelineCtx,
-              activeDownloads: [],
-            });
-            setAgentStatus('running');
-          }, 600);
+          triggerAutoContinue();
         }
       }
     });
@@ -511,14 +515,22 @@ export function FridayPanel({ className }: { className?: string }) {
       setQueue(operationEngine.getQueue());
       const failed = operationEngine.getQueue().find((q) => q.id === _opId);
       const errText = failed?.error ?? 'Op failed';
-      console.error('[FridayPanel] op failed:', (op as any)?.type, errText);
+      const opType = (op as any)?.type ?? 'unknown';
+      console.error('[FridayPanel] op failed:', opType, errText);
       setMessages((prev) => [...prev, {
         id: Math.random().toString(36).slice(2),
         role: 'system' as const,
-        text: `Op failed (${(op as any)?.type ?? 'unknown'}): ${errText}`,
+        text: `Op failed (${opType}): ${errText}`,
         timestamp: Date.now(),
       }]);
       setTimeout(() => setQueue(operationEngine.getQueue().filter((q) => q.status !== 'failed')), 4000);
+      // If a slow op fails, still auto-continue so EDITH knows and can recover
+      if (pendingSlowOpsRef.current.has(_opId)) {
+        pendingSlowOpsRef.current.delete(_opId);
+        if (pendingSlowOpsRef.current.size === 0) {
+          triggerAutoContinue(`Op ${opType} failed: ${errText}. Adapt your plan accordingly.`);
+        }
+      }
     });
     const offDrained = operationEngine.on('queueDrained', () => {
       setQueue(operationEngine.getQueue());
@@ -901,6 +913,7 @@ export function FridayPanel({ className }: { className?: string }) {
       if (e.key !== 'Escape') return;
       if (agentStatusRef.current !== 'running' && agentStatusRef.current !== 'paused') return;
       interruptedRef.current = true;
+      pendingSlowOpsRef.current.clear();
       operationEngine.clearQueue();
       window.electronAPI.invoke('mycelium:stop');
       submittingRef.current = false;
@@ -973,6 +986,8 @@ export function FridayPanel({ className }: { className?: string }) {
               </button>
               <button
                 onClick={() => {
+                  pendingSlowOpsRef.current.clear();
+                  interruptedRef.current = true;
                   operationEngine.clearQueue();
                   window.electronAPI.invoke('mycelium:stop');
                   setAgentStatus('idle');
