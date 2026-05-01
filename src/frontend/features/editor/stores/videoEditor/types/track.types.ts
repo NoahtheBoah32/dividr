@@ -340,6 +340,8 @@ export interface VideoTrack {
     lineHeight?: number;
     hasGlow?: boolean;
     opacity?: number;
+    highlightColor?: string;
+    highlightWordIndex?: number;
   };
   // Transform properties for text clips (position, scale, rotation)
   textTransform?: {
@@ -367,4 +369,7 @@ export interface VideoTrack {
    * Shown as an overlay on the track strip.
    */
   proxyBlockedMessage?: string;
+
+  /** CSS filter string applied during compositing (e.g. "brightness(1.1) contrast(1.2) saturate(1.3)") */
+  filter?: string;
 }

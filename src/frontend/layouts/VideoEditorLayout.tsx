@@ -5,7 +5,7 @@ import { FullscreenPreview } from '@/frontend/features/editor/preview/Fullscreen
 import { ToolsPanel } from '@/frontend/features/editor/preview/ToolsPanel';
 import { useIsPanelVisible } from '@/frontend/features/editor/stores/PanelStore';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Timeline } from '../features/editor/timeline/timeline';
 import Toolbar from '../features/editor/Toolbar';
@@ -13,6 +13,56 @@ import TitleBar from './Titlebar';
 
 const VideoEditorLayoutComponent = () => {
   const isPanelVisible = useIsPanelVisible();
+  const [panelWidth, setPanelWidth] = useState(320);
+  const [timelineHeight, setTimelineHeight] = useState(220);
+  const startXRef = useRef(0);
+  const startYRef = useRef(0);
+  const startWidthRef = useRef(320);
+  const startHeightRef = useRef(220);
+  const isDraggingRef = useRef(false);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = panelWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const delta = ev.clientX - startXRef.current;
+      setPanelWidth(Math.max(240, Math.min(800, startWidthRef.current + delta)));
+    };
+    const onUp = () => {
+      isDraggingRef.current = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [panelWidth]);
+
+  const handleTimelineResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingRef.current = true;
+    startYRef.current = e.clientY;
+    startHeightRef.current = timelineHeight;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const delta = startYRef.current - ev.clientY;
+      setTimelineHeight(Math.max(160, Math.min(520, startHeightRef.current + delta)));
+    };
+    const onUp = () => {
+      isDraggingRef.current = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [timelineHeight]);
+
   const previewInteractionMode = useVideoEditorStore(
     (state) => state.preview.interactionMode,
   );
@@ -52,37 +102,55 @@ const VideoEditorLayoutComponent = () => {
 
         <div className="border-b border-border/50 -mx-4 px-4 my-[1.5px]" />
 
-        <div className="grid grid-cols-[auto_1fr] grid-rows-[55px_1fr_auto] flex-1 min-h-0">
-          {/* Menubar and Project Additional controllers */}
+        {/* Header row: menu + editor controls */}
+        <div className="grid grid-cols-[auto_1fr] flex-shrink-0" style={{ height: '55px' }}>
           <AppMenuBar />
           <VideoEditorHeader />
+        </div>
 
+        {/* Content row: sidebar + main — fills remaining space above timeline */}
+        <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
           {/* Left sidebar with toolbar and tools panel */}
-          <div className="flex flex-1 min-h-0 gap-2">
+          <div className="flex min-h-0 gap-2">
             <Toolbar />
             {isPanelVisible && (
-              <div className="flex-1 grid overflow-hidden">
-                <ToolsPanel className="h-full" />
-              </div>
+              <>
+                <div
+                  className="grid overflow-hidden flex-shrink-0 h-full"
+                  style={{ width: panelWidth }}
+                >
+                  <ToolsPanel className="h-full" />
+                </div>
+                {/* Horizontal resize handle */}
+                <div
+                  className="w-1 self-stretch cursor-col-resize hover:bg-accent/40 active:bg-accent/60 transition-colors flex-shrink-0 rounded-full"
+                  onMouseDown={handleResizeStart}
+                />
+              </>
             )}
           </div>
 
           {/* Main content area */}
-          <div className="flex flex-col flex-1 overflow-hidden">
-            <div className="flex flex-row flex-1 overflow-hidden">
-              <main className="flex-1 flex overflow-auto">
-                {/* Based on Video Editor component*/}
-                <Outlet />
-              </main>
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <main className="flex-1 flex overflow-auto">
+              <Outlet />
+            </main>
+          </div>
+        </div>
 
-              {/* Properties Panel - always visible */}
-              {/* <PropertiesPanel />  */}
-            </div>
-          </div>
-          {/* Timeline at bottom */}
-          <div className="flex-1 grid col-span-2 -mx-4 -mb-4">
-            <Timeline />
-          </div>
+        {/* Vertical resize handle */}
+        <div
+          className="cursor-row-resize hover:bg-accent/40 active:bg-accent/60 transition-colors flex-shrink-0 -mx-4"
+          style={{ height: '4px' }}
+          onMouseDown={handleTimelineResizeStart}
+        />
+
+        {/* Timeline — fixed height, shrinks/grows via drag */}
+        <div
+          className="-mx-4 -mb-4 overflow-hidden flex-shrink-0"
+          style={{ height: timelineHeight }}
+        >
+          <Timeline />
         </div>
 
         {/* Fullscreen Preview Overlay */}

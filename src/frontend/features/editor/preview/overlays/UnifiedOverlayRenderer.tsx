@@ -794,6 +794,30 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
   );
 };
 
+// Render caption text with optional first-word color highlight
+function renderCaptionWords(
+  text: string,
+  fillColor: string,
+  highlightColor?: string,
+  highlightWordIndex = 0,
+): React.ReactNode {
+  if (!highlightColor) return text;
+  const tokens = text.split(/(\s+)/);
+  let wordCount = 0;
+  return tokens.map((token, i) =>
+    /^\s+$/.test(token)
+      ? token
+      : (() => {
+          const isHighlight = wordCount++ === highlightWordIndex;
+          return (
+            <span key={i} style={{ color: isHighlight ? highlightColor : fillColor }}>
+              {token}
+            </span>
+          );
+        })(),
+  );
+}
+
 // Helper render functions
 
 function renderSubtitleContent(
@@ -916,7 +940,12 @@ function renderSubtitleContent(
                 textShadow: shadow,
               }}
             >
-              {track.subtitleText}
+              {renderCaptionWords(
+                track.subtitleText ?? '',
+                style.color,
+                track.subtitleStyle?.highlightColor,
+                track.subtitleStyle?.highlightWordIndex,
+              )}
             </div>
           </div>
         </div>
@@ -961,7 +990,12 @@ function renderSubtitleContent(
               textShadow: shadow,
             }}
           >
-            {track.subtitleText}
+            {renderCaptionWords(
+              track.subtitleText ?? '',
+              style.color,
+              track.subtitleStyle?.highlightColor,
+              track.subtitleStyle?.highlightWordIndex,
+            )}
           </div>
         </div>
       </div>
@@ -988,7 +1022,12 @@ function renderSubtitleContent(
           maxWidth: 'none',
         }}
       >
-        {track.subtitleText}
+        {renderCaptionWords(
+          track.subtitleText ?? '',
+          style.color,
+          track.subtitleStyle?.highlightColor,
+          track.subtitleStyle?.highlightWordIndex,
+        )}
       </div>
     </div>
   );

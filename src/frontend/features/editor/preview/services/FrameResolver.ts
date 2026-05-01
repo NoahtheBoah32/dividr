@@ -40,6 +40,7 @@ export interface FrameRequest {
   opacity: number;
   transform: Transform;
   visible: boolean;
+  filter?: string;
   track: VideoTrack;
 }
 
@@ -190,6 +191,7 @@ export const resolveFrameRequests = (
       opacity: clip.opacity,
       transform: clip.transform,
       visible: clip.visible,
+      filter: track.filter,
       track,
     });
   }

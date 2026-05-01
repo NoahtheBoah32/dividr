@@ -439,9 +439,9 @@ export const VideoSpriteSheetStrip: React.FC<VideoSpriteSheetStripProps> =
           )}
 
           {state.error && (
-            <div className="absolute top-0 left-0 flex items-center space-x-2 px-2 py-1 bg-red-900/90 backdrop-blur-sm rounded-r border border-red-700/50 z-10 pointer-events-none">
-              <div className="w-2 h-2 rounded-full bg-red-400" />
-              <span className="text-red-200 text-xs font-medium">
+            <div className="absolute top-0 left-0 flex items-center space-x-2 px-2 py-1 bg-zinc-900/70 backdrop-blur-sm rounded-r border border-white/[0.07] z-10 pointer-events-none">
+              <div className="w-2 h-2 rounded-full bg-zinc-500" />
+              <span className="text-zinc-500 text-xs font-medium">
                 {state.error.includes('restart')
                   ? 'Restart required'
                   : 'Failed'}

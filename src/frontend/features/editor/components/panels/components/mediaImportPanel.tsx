@@ -1116,7 +1116,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
   ]);
 
   const getMediaItems = useMemo((): MediaItem[] => {
-    return mediaLibrary.map((item) => {
+    return mediaLibrary.filter((item) => item.category !== 'reference').map((item) => {
       const trackId = sourceToTrackMap.get(item.source);
       const isUsed = !!trackId;
       const isTranscribing = currentTranscribingMediaId === item.id;

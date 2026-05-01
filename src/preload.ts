@@ -238,6 +238,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   deleteFile: (filePath: string) => ipcRenderer.invoke('delete-file', filePath),
 
+  // yt-dlp download helpers
+  initDownloadDir: () => ipcRenderer.invoke('media:initDownloadDir'),
+  downloadFromUrl: (payload: { jobId: string; url: string; startSeconds?: number; endSeconds?: number; downloadDir?: string }) =>
+    ipcRenderer.invoke('media:downloadFromUrl', payload),
+  cancelDownload: (jobId: string) => ipcRenderer.invoke('media:cancelDownload', jobId),
+
   // ============================================================================
 
   // Python Faster-Whisper API
@@ -538,6 +544,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeTranscodeListeners: () => {
     ipcRenderer.removeAllListeners('transcode:progress');
     ipcRenderer.removeAllListeners('transcode:completed');
+  },
+});
+
+// =========================================================================
+// Mycelium Agent API
+// =========================================================================
+contextBridge.exposeInMainWorld('myceliumAPI', {
+  sendMessage: (payload: { text: string }) =>
+    ipcRenderer.invoke('mycelium:sendMessage', payload),
+  pause: () => ipcRenderer.invoke('mycelium:pause'),
+  resume: () => ipcRenderer.invoke('mycelium:resume'),
+  stop: () => ipcRenderer.invoke('mycelium:stop'),
+  onMessage: (callback: (data: { role: string; text: string }) => void) =>
+    ipcRenderer.on('mycelium:message', (_, data) => callback(data)),
+  onOp: (callback: (op: unknown) => void) =>
+    ipcRenderer.on('mycelium:op', (_, op) => callback(op)),
+  onDone: (callback: () => void) =>
+    ipcRenderer.on('mycelium:done', () => callback()),
+  removeAllListeners: () => {
+    ipcRenderer.removeAllListeners('mycelium:message');
+    ipcRenderer.removeAllListeners('mycelium:op');
+    ipcRenderer.removeAllListeners('mycelium:done');
   },
 });
 

@@ -43,6 +43,9 @@ import {
 // Import file I/O manager for controlled concurrency
 import { fileIOManager } from './backend/io/FileIOManager';
 
+// Mycelium agent runtime
+import { registerMyceliumIPC } from './backend/mycelium/agentRuntime';
+
 // Import hardware capabilities service for hybrid proxy encoding
 import {
   buildArnnDenCommand,
@@ -4419,15 +4422,15 @@ const createWindow = () => {
         // 🚫 Remove all default menus so "View → Toggle Developer Tools" disappears
         // Menu.setApplicationMenu(null);
 
-        // 🚫 Block keyboard shortcuts
+        // 🚫 Block DevTools shortcuts, but allow clipboard shortcuts
         mainWindow.webContents.on('before-input-event', (event, input) => {
+          const ctrl = input.control || input.meta;
+          // Allow clipboard: Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+A, Ctrl+Z, Ctrl+Y
+          if (ctrl && ['c','x','v','a','z','y'].includes(input.key.toLowerCase())) return;
           if (
-            (input.control && input.shift && input.key.toLowerCase() === 'i') || // Ctrl+Shift+I
-            input.key === 'F12' || // F12
-            (process.platform === 'darwin' &&
-              input.meta &&
-              input.alt &&
-              input.key.toLowerCase() === 'i') // Cmd+Opt+I
+            (input.control && input.shift && input.key.toLowerCase() === 'i') ||
+            input.key === 'F12' ||
+            (process.platform === 'darwin' && input.meta && input.alt && input.key.toLowerCase() === 'i')
           ) {
             event.preventDefault();
           }
@@ -4438,11 +4441,25 @@ const createWindow = () => {
           mainWindow?.webContents.closeDevTools();
         });
 
-        // 🚫 Disable right-click → Inspect Element
-        mainWindow.webContents.on('context-menu', (e) => {
-          e.preventDefault();
-        });
       }
+
+      // Right-click context menu — always show, Copy enabled when text is selected
+      mainWindow.webContents.on('context-menu', (e, params) => {
+        e.preventDefault();
+        const { Menu } = require('electron');
+        const menu = Menu.buildFromTemplate([
+          {
+            label: 'Copy',
+            enabled: params.selectionText.length > 0,
+            click: () => mainWindow?.webContents.copy(),
+          },
+          {
+            label: 'Paste',
+            click: () => mainWindow?.webContents.paste(),
+          },
+        ]);
+        menu.popup({ window: mainWindow! });
+      });
     }
 
     // Handle window close events - hide instead of close
@@ -4548,6 +4565,621 @@ async function getRunInBackgroundSetting(): Promise<boolean> {
   // For now, return false as default
   return false;
 }
+
+// ── yt-dlp download handlers ─────────────────────────────────────────────────
+
+const ytdlpProcesses = new Map<string, ReturnType<typeof spawn>>();
+
+function getYtdlpPath(): string {
+  const bundled = path.join(app.getAppPath(), 'yt-dlp.exe');
+  if (fs.existsSync(bundled)) return bundled;
+  return 'yt-dlp';
+}
+
+function inferFileType(filePath: string): 'video' | 'audio' | 'image' {
+  const ext = path.extname(filePath).toLowerCase().slice(1);
+  if (['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'opus'].includes(ext)) return 'audio';
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) return 'image';
+  return 'video';
+}
+
+ipcMain.handle('media:initDownloadDir', async () => {
+  const dlDir = path.join(os.homedir(), 'Dividr Downloads');
+  try {
+    if (!fs.existsSync(dlDir)) fs.mkdirSync(dlDir, { recursive: true });
+    return { success: true, path: dlDir };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+});
+
+async function frameVerify(
+  filePath: string,
+  ffmpegBin: string,
+  geminiApiKey: string,
+  verify: string,
+  isStockFootage: boolean,
+  topic: string | undefined,
+): Promise<{ passed: boolean; reason: string }> {
+  const os2 = await import('os');
+  const tmpFrame = path.join(os2.tmpdir(), `dividr_verify_${Date.now()}.jpg`);
+  try {
+    await new Promise<void>((resolve) => {
+      const p = spawn(ffmpegBin, [
+        '-i', filePath,
+        '-vf', 'select=eq(n\\,4)',
+        '-frames:v', '1',
+        '-q:v', '3',
+        '-y', tmpFrame,
+      ], { shell: false });
+      p.on('close', () => resolve());
+      p.on('error', () => resolve());
+    });
+    if (!fs.existsSync(tmpFrame)) return { passed: true, reason: 'no frame' };
+
+    const frameBuf = fs.readFileSync(tmpFrame);
+    const { spotCheckImageInline } = await import('./backend/mycelium/geminiAnalyzer');
+
+    const prompt = isStockFootage
+      ? `Analyze this video frame. Return ONLY a JSON array, no markdown:
+[
+  {"check": "No watermarks or logos visible", "passed": true/false, "reason": "brief"},
+  {"check": "No person talking directly to camera", "passed": true/false, "reason": "brief"},
+  {"check": "Content matches: ${topic || verify}", "passed": true/false, "reason": "brief"}
+]`
+      : `Analyze this video frame. Return ONLY a JSON array, no markdown:
+[
+  {"check": "Frame shows: ${verify}", "passed": true/false, "reason": "brief"}
+]`;
+
+    const checks = await spotCheckImageInline(frameBuf, 'image/jpeg', prompt, geminiApiKey);
+    const failed = checks.filter((c) => !c.passed);
+    return failed.length > 0
+      ? { passed: false, reason: failed.map((c) => `${c.check} — ${c.reason}`).join('; ') }
+      : { passed: true, reason: 'ok' };
+  } catch {
+    return { passed: true, reason: 'skipped' };
+  } finally {
+    try { fs.unlinkSync(tmpFrame); } catch {}
+  }
+}
+
+ipcMain.handle(
+  'media:downloadFromUrl',
+  async (event, { jobId, url, startSeconds, endSeconds, downloadDir, verify, topic, isStockFootage }: {
+    jobId: string;
+    url: string;
+    startSeconds?: number;
+    endSeconds?: number;
+    downloadDir?: string;
+    verify?: string;
+    topic?: string;
+    isStockFootage?: boolean;
+  }) => {
+    const ytdlp = getYtdlpPath();
+    const dlDir = downloadDir || path.join(os.homedir(), 'Dividr Downloads');
+    if (!fs.existsSync(dlDir)) fs.mkdirSync(dlDir, { recursive: true });
+
+    const sendMsg = (text: string) =>
+      event.sender.send('mycelium:message', { role: 'system', text });
+
+
+    // ── PRE-DOWNLOAD SPOT CHECKS ────────────────────────────────────────────
+
+    const loadEnvKey = (key: string): string => {
+      const envPath = path.join(app.getAppPath(), '.env');
+      if (fs.existsSync(envPath)) {
+        for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+          const [k, v] = line.split('=');
+          if (k?.trim() === key) return v?.trim() ?? '';
+        }
+      }
+      return process.env[key] ?? '';
+    };
+
+    const geminiApiKey = loadEnvKey('GEMINI_API_KEY');
+
+    // ── PIXABAY SEARCH ───────────────────────────────────────────────────────
+    if (url.startsWith('pixabaysearch:')) {
+      const query = url.slice('pixabaysearch:'.length).trim();
+      const pixabayKey = loadEnvKey('PIXABAY_API_KEY');
+      if (!pixabayKey) return { success: false, error: 'PIXABAY_API_KEY not set in .env' };
+
+      sendMsg(`↳ Searching Pixabay for: ${query}`);
+      const apiUrl = `https://pixabay.com/api/videos/?key=${pixabayKey}&q=${encodeURIComponent(query)}&video_type=film&per_page=10&safesearch=true`;
+      const apiRes = await fetch(apiUrl);
+      const apiData = (await apiRes.json()) as any;
+      const hits = apiData?.hits as any[];
+      if (!hits?.length) return { success: false, error: `No Pixabay results for "${query}"` };
+
+      // Pick first hit with a medium or large video URL
+      const hit = hits[0];
+      const videoUrl: string = hit.videos?.medium?.url || hit.videos?.large?.url || hit.videos?.small?.url;
+      if (!videoUrl) return { success: false, error: 'Pixabay returned no downloadable video URL' };
+
+      sendMsg(`✓ Found: "${hit.tags?.split(',')[0]?.trim() ?? 'clip'}" (${hit.duration}s) — downloading…`);
+
+      // Direct fetch download — no yt-dlp needed
+      const videoRes = await fetch(videoUrl);
+      if (!videoRes.ok) return { success: false, error: `Failed to fetch Pixabay video: ${videoRes.status}` };
+
+      const ext = 'mp4';
+      const readableName = (hit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
+        .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
+      const basePath = path.join(dlDir, `${readableName}.${ext}`);
+      let filePath = basePath;
+      if (fs.existsSync(filePath)) filePath = path.join(dlDir, `${readableName}-${Date.now()}.${ext}`);
+      const buf = Buffer.from(await videoRes.arrayBuffer());
+      fs.writeFileSync(filePath, buf);
+
+      const pixabayTitle = hit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join(', ') ?? 'Pixabay clip';
+      sendMsg('✓ Download complete — review the clip below.');
+      return { success: true, filePath, fileType: 'video', title: pixabayTitle };
+    }
+
+    const isSearchQuery = url.startsWith('ytsearch') || url.startsWith('ytdl:ytsearch');
+    if (isSearchQuery) sendMsg(`↳ Searching YouTube for: ${url.replace(/^ytsearch\d*:/, '').trim()}`);
+
+    if (geminiApiKey && (verify || topic || isStockFootage) && !isSearchQuery) {
+      sendMsg('Running spot checks before download…');
+
+      try {
+        // Step 1: Fetch metadata via yt-dlp --dump-json (no video download)
+        sendMsg('↳ Fetching video metadata…');
+        const metaJson: string = await new Promise((res, rej) => {
+          let out = '';
+          const p = spawn(ytdlp, [url, '--dump-json', '--no-warnings'], { shell: false });
+          p.stdout?.on('data', (c: Buffer) => { out += c.toString(); });
+          p.on('close', (code) => code === 0 ? res(out) : rej(new Error(`yt-dlp metadata failed (${code})`)));
+          p.on('error', rej);
+        });
+
+        const meta = JSON.parse(metaJson) as { title?: string; description?: string; thumbnail?: string; tags?: string[] };
+        const titleDesc = `Title: ${meta.title ?? ''}\nDescription: ${(meta.description ?? '').slice(0, 400)}\nTags: ${(meta.tags ?? []).slice(0, 10).join(', ')}`;
+
+        // Step 2: Quick text relevance check (no Gemini needed)
+        const searchTerms = (verify || topic || '').toLowerCase().split(/\s+/).filter(Boolean);
+        const metaText = titleDesc.toLowerCase();
+        const metaMatchScore = searchTerms.filter((t) => metaText.includes(t)).length;
+        const metaCheckPassed = searchTerms.length === 0 || metaMatchScore >= Math.ceil(searchTerms.length * 0.4);
+        sendMsg(`${metaCheckPassed ? '✓' : '✗'} Metadata: "${meta.title ?? 'unknown'}" — ${metaMatchScore}/${searchTerms.length} terms matched`);
+
+        if (!metaCheckPassed) {
+          return { success: false, error: `Spot check failed: video title/description does not match "${verify || topic}". Try a different URL.` };
+        }
+
+        // Step 3: Visual check via Gemini (thumbnail)
+        if (meta.thumbnail) {
+          sendMsg('↳ Fetching thumbnail for visual check…');
+          const thumbRes = await fetch(meta.thumbnail);
+          if (thumbRes.ok) {
+            const thumbBuf = Buffer.from(await thumbRes.arrayBuffer());
+            const thumbMime = thumbRes.headers.get('content-type') ?? 'image/jpeg';
+
+            const { spotCheckImageInline } = await import('./backend/mycelium/geminiAnalyzer');
+
+            let visualPrompt: string;
+            if (isStockFootage) {
+              visualPrompt = `Analyze this video thumbnail and answer each question. Return ONLY a JSON array, no markdown:
+[
+  {"check": "No watermarks or text overlays", "passed": true/false, "reason": "brief"},
+  {"check": "No person talking directly to camera", "passed": true/false, "reason": "brief"},
+  {"check": "Content relevant to topic: ${topic || 'unspecified'}", "passed": true/false, "reason": "brief"},
+  {"check": "Real footage (not animated/cartoon)", "passed": true/false, "reason": "brief"}
+]
+Be strict on watermarks — even faint, semi-transparent watermarks count as failing.`;
+            } else {
+              visualPrompt = `Analyze this video thumbnail and answer each question. Return ONLY a JSON array, no markdown:
+[
+  {"check": "Content matches: ${verify || topic || 'requested topic'}", "passed": true/false, "reason": "brief"},
+  {"check": "Real footage (not animated/cartoon/stock watermark)", "passed": true/false, "reason": "brief"}
+]`;
+            }
+
+            const visualChecks = await spotCheckImageInline(thumbBuf, thumbMime, visualPrompt, geminiApiKey);
+
+            for (const c of visualChecks) {
+              sendMsg(`${c.passed ? '✓' : '✗'} ${c.check}: ${c.reason}`);
+            }
+
+            const failedChecks = visualChecks.filter((c) => !c.passed);
+            if (failedChecks.length > 0) {
+              const reasons = failedChecks.map((c) => c.check).join(', ');
+              return { success: false, error: `Spot check failed: ${reasons}. Not downloading.` };
+            }
+          }
+        }
+
+        sendMsg('✓ All checks passed — proceeding with download.');
+      } catch (spotErr) {
+        // Spot check error is non-fatal — warn but continue
+        sendMsg(`⚠ Spot check skipped (${String(spotErr).slice(0, 80)}) — proceeding anyway.`);
+      }
+    }
+
+    // ── ACTUAL DOWNLOAD ─────────────────────────────────────────────────────
+    sendMsg('↳ Downloading… this may take a moment.');
+
+
+    const hasSections = startSeconds !== undefined && endSeconds !== undefined;
+
+    // YouTube authentication — scan Downloads for any YouTube cookies file the extension may have saved
+    const cookieArgs: string[] = [];
+    const dlDir2 = app.getPath('downloads');
+    const cookiesFilePath = (() => {
+      // Check known fixed names first
+      for (const name of ['cookies_www.youtube.com.txt', 'cookies.txt']) {
+        const p = path.join(dlDir2, name);
+        if (fs.existsSync(p)) return p;
+      }
+      // Scan for any file matching youtube + cookies pattern
+      try {
+        const files = fs.readdirSync(dlDir2);
+        const match = files
+          .filter(f => /youtube/i.test(f) && /cookie/i.test(f) && f.endsWith('.txt'))
+          .sort((a, b) => {
+            // Prefer most recently modified
+            const sta = fs.statSync(path.join(dlDir2, a)).mtimeMs;
+            const stb = fs.statSync(path.join(dlDir2, b)).mtimeMs;
+            return stb - sta;
+          })[0];
+        if (match) return path.join(dlDir2, match);
+      } catch { /* ignore */ }
+      return undefined;
+    })();
+
+    if (cookiesFilePath) {
+      sendMsg(`↳ Using cookies file: ${path.basename(cookiesFilePath)}`);
+      cookieArgs.push('--cookies', cookiesFilePath);
+    } else {
+      sendMsg('↳ No cookies file found in Downloads — export from youtube.com using the extension');
+    }
+
+    const args: string[] = [
+      url,
+      '--output', path.join(dlDir, '%(title)s.%(ext)s'),
+      '--no-warnings',
+      '--newline',
+      '--print', 'after_move:filepath',
+      '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+      '--merge-output-format', 'mp4',
+      '--remote-components', 'ejs:github',
+      ...cookieArgs,
+    ];
+
+    if (hasSections) {
+      args.push('--download-sections', `*${startSeconds}-${endSeconds}`);
+      args.push('--force-keyframes-at-cuts');
+    }
+
+    if (ffmpegPath) {
+      args.push('--ffmpeg-location', path.dirname(ffmpegPath));
+    }
+
+    const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+    return new Promise<{ success: boolean; filePath?: string; fileType?: string; error?: string }>((resolve) => {
+      let finalPath = '';
+      let stderrBuf = '';
+      let settled = false;
+
+      const settle = (result: { success: boolean; filePath?: string; fileType?: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        ytdlpProcesses.delete(jobId);
+        resolve(result);
+      };
+
+      const proc = spawn(ytdlp, args, { shell: false });
+      ytdlpProcesses.set(jobId, proc);
+
+      const timer = setTimeout(() => {
+        proc.kill();
+        sendMsg('✗ Download timed out after 3 minutes — try a shorter clip or different URL.');
+        settle({ success: false, error: 'Download timed out' });
+      }, DOWNLOAD_TIMEOUT_MS);
+
+      let lastReportedPct = -1;
+      proc.stdout?.on('data', (chunk: Buffer) => {
+        for (const line of chunk.toString().split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const pct = trimmed.match(/\[download\]\s+(\d+\.?\d*)%/);
+          if (pct) {
+            event.sender.send('media:downloadProgress', { jobId, percent: parseFloat(pct[1]) });
+            const p = Math.floor(parseFloat(pct[1]) / 10) * 10;
+            if (p !== lastReportedPct && p > 0) {
+              lastReportedPct = p;
+              sendMsg(`↳ Downloading… ${p}%`);
+            }
+          } else if (!trimmed.startsWith('[') && (trimmed.includes('\\') || trimmed.includes('/')) && /\.\w{2,4}$/.test(trimmed)) {
+            finalPath = trimmed;
+          }
+        }
+      });
+
+      proc.stderr?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        stderrBuf += text;
+        const errorLine = text.split('\n').find((l) => l.includes('ERROR') || l.includes('error'));
+        if (errorLine) sendMsg(`⚠ ${errorLine.trim().slice(0, 100)}`);
+      });
+
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        if (code === null) return settle({ success: false, error: 'Download cancelled' });
+        if (code === 0 && !finalPath) {
+          // Fallback: find the newest file in dlDir
+          try {
+            const files = fs.readdirSync(dlDir).map((f) => {
+              const fp = path.join(dlDir, f);
+              return { fp, mt: fs.statSync(fp).mtimeMs };
+            }).sort((a, b) => b.mt - a.mt);
+            if (files[0]) finalPath = files[0].fp;
+          } catch {}
+        }
+        if (code === 0 && finalPath) {
+          const runFrameCheck = async (checkPath: string) => {
+            if (geminiApiKey && ffmpegPath && (verify || isStockFootage)) {
+              const result = await frameVerify(checkPath, ffmpegPath, geminiApiKey, verify || topic || '', !!isStockFootage, topic);
+              if (!result.passed) {
+                try { fs.unlinkSync(checkPath); } catch {}
+                settle({ success: false, error: `Downloaded clip failed verification: ${result.reason}` });
+                return false;
+              }
+            }
+            return true;
+          };
+
+          if (hasSections && ffmpegPath) {
+            sendMsg('↳ Trimming clip…');
+            const ext = path.extname(finalPath);
+            const trimmedPath = finalPath.replace(ext, `_trim${ext}`);
+            const ffArgs = [
+              '-i', finalPath,
+              '-ss', String(startSeconds),
+              '-to', String(endSeconds),
+              '-c', 'copy',
+              '-y', trimmedPath,
+            ];
+            const ff = spawn(ffmpegPath, ffArgs, { shell: false });
+            ff.on('close', async (ffCode) => {
+              const usePath = ffCode === 0 && fs.existsSync(trimmedPath) ? trimmedPath : finalPath;
+              if (ffCode === 0 && fs.existsSync(trimmedPath)) {
+                try { fs.unlinkSync(finalPath); } catch {}
+              }
+              const ok = await runFrameCheck(usePath);
+              if (!ok) return;
+              sendMsg('✓ Download complete — review the clip below.');
+              settle({ success: true, filePath: usePath, fileType: inferFileType(usePath), title: topic });
+            });
+          } else {
+            (async () => {
+              const ok = await runFrameCheck(finalPath);
+              if (!ok) return;
+              sendMsg('✓ Download complete — review the clip below.');
+              settle({ success: true, filePath: finalPath, fileType: inferFileType(finalPath), title: topic });
+            })();
+          }
+        } else {
+          const errLine = stderrBuf.trim().split('\n').filter(Boolean).slice(-2).join(' ');
+          settle({ success: false, error: errLine || `yt-dlp exited with code ${code}` });
+        }
+      });
+
+      proc.on('error', (err) => {
+        clearTimeout(timer);
+        settle({ success: false, error: `yt-dlp not found or failed to start: ${err.message}` });
+      });
+    });
+  },
+);
+
+ipcMain.handle('media:cancelDownload', (_event, jobId: string) => {
+  const proc = ytdlpProcesses.get(jobId);
+  if (proc) { proc.kill(); ytdlpProcesses.delete(jobId); }
+  return { success: true };
+});
+
+// IPC Handler to cut silence from a media file using ffmpeg silencedetect
+ipcMain.handle(
+  'media:cutSilence',
+  async (
+    _event,
+    { filePath, noiseDb = -30, minDuration = 0.4 }: { filePath: string; noiseDb?: number; minDuration?: number },
+  ): Promise<{ success: boolean; filePath?: string; error?: string }> => {
+    console.log('✂️ MAIN PROCESS: media:cutSilence called', { filePath, noiseDb, minDuration });
+
+    if (!ffmpegPath) {
+      return { success: false, error: 'FFmpeg binary not available' };
+    }
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+
+    try {
+      // Step 1: Run silencedetect to get silence timestamps from stderr
+      const silenceStderr = await new Promise<string>((resolve, reject) => {
+        const proc = spawn(ffmpegPath!, [
+          '-i', filePath,
+          '-af', `silencedetect=noise=${noiseDb}dB:d=${minDuration}`,
+          '-f', 'null', '-',
+        ]);
+        let stderr = '';
+        proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+        proc.on('close', () => resolve(stderr));
+        proc.on('error', reject);
+      });
+
+      // Step 2: Parse silence_start / silence_end pairs
+      const silenceStartMatches = [...silenceStderr.matchAll(/silence_start:\s*([\d.]+)/g)];
+      const silenceEndMatches = [...silenceStderr.matchAll(/silence_end:\s*([\d.]+)/g)];
+
+      const silences: Array<{ start: number; end: number }> = [];
+      for (let i = 0; i < silenceStartMatches.length; i++) {
+        const start = parseFloat(silenceStartMatches[i][1]);
+        // silence_end may not exist for trailing silence — use a large number
+        const end = silenceEndMatches[i] ? parseFloat(silenceEndMatches[i][1]) : 1e9;
+        silences.push({ start, end });
+      }
+
+      console.log(`✂️ Found ${silences.length} silence region(s)`);
+
+      // Step 3: Get total duration of input
+      const durationRaw = await new Promise<string>((resolve, reject) => {
+        const proc = spawn(ffmpegPath!, [
+          '-i', filePath,
+          '-f', 'null', '-',
+        ]);
+        let stderr = '';
+        proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+        proc.on('close', () => resolve(stderr));
+        proc.on('error', reject);
+      });
+      const durationMatch = durationRaw.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+      const totalDuration = durationMatch
+        ? parseInt(durationMatch[1]) * 3600 + parseInt(durationMatch[2]) * 60 + parseFloat(durationMatch[3])
+        : 0;
+
+      // Step 4: Invert silence regions to get speech segments
+      const speechSegments: Array<{ start: number; end: number }> = [];
+      let cursor = 0;
+      for (const silence of silences) {
+        if (silence.start > cursor + 0.01) {
+          speechSegments.push({ start: cursor, end: silence.start });
+        }
+        cursor = silence.end;
+      }
+      if (totalDuration > 0 && cursor < totalDuration - 0.01) {
+        speechSegments.push({ start: cursor, end: totalDuration });
+      }
+
+      console.log(`✂️ Speech segments: ${JSON.stringify(speechSegments)}`);
+
+      if (speechSegments.length === 0) {
+        return { success: false, error: 'No speech found — file appears to be entirely silence' };
+      }
+
+      // No silence found — return original file unchanged
+      if (speechSegments.length === 1 && speechSegments[0].start < 0.05 && silences.length === 0) {
+        console.log('✂️ No silence detected — returning original file');
+        return { success: true, filePath };
+      }
+
+      const tmpDir = app.getPath('temp');
+      const baseName = path.basename(filePath, path.extname(filePath));
+      const ext = path.extname(filePath) || '.mp4';
+
+      // Step 5: Extract each speech segment as a CFR-encoded temp file
+      const segmentFiles: string[] = [];
+      for (let i = 0; i < speechSegments.length; i++) {
+        const seg = speechSegments[i];
+        const segFile = path.join(tmpDir, `dividr_seg_${Date.now()}_${i}${ext}`);
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn(ffmpegPath!, [
+            '-y',
+            '-ss', String(seg.start),
+            '-to', String(seg.end),
+            '-i', filePath,
+            '-r', '30',
+            '-fps_mode', 'cfr',
+            '-c:v', 'libx264',
+            '-preset', 'fast',
+            '-crf', '18',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            segFile,
+          ]);
+          let stderr = '';
+          proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+          proc.on('close', (code) => {
+            if (code === 0 && fs.existsSync(segFile)) resolve();
+            else reject(new Error(`Segment ${i} extraction failed (exit ${code}): ${stderr.slice(-500)}`));
+          });
+          proc.on('error', reject);
+        });
+        segmentFiles.push(segFile);
+      }
+
+      // If only one segment, just rename it to output (no concat needed)
+      const outputFile = path.join(
+        path.dirname(filePath),
+        `${baseName}_nosilence${ext}`,
+      );
+
+      if (segmentFiles.length === 1) {
+        fs.renameSync(segmentFiles[0], outputFile);
+        console.log('✂️ Single segment — output:', outputFile);
+        return { success: true, filePath: outputFile };
+      }
+
+      // Step 6: Write concat list file
+      const concatListFile = path.join(tmpDir, `dividr_concat_${Date.now()}.txt`);
+      const concatContent = segmentFiles.map((f) => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n');
+      fs.writeFileSync(concatListFile, concatContent, 'utf8');
+
+      // Step 7: Concat segments using ffmpeg concat demuxer
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(ffmpegPath!, [
+          '-y',
+          '-f', 'concat',
+          '-safe', '0',
+          '-i', concatListFile,
+          '-c', 'copy',
+          outputFile,
+        ]);
+        let stderr = '';
+        proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+        proc.on('close', (code) => {
+          if (code === 0 && fs.existsSync(outputFile)) resolve();
+          else reject(new Error(`Concat failed (exit ${code}): ${stderr.slice(-500)}`));
+        });
+        proc.on('error', reject);
+      });
+
+      // Step 8: Clean up temp segment files and concat list
+      for (const segFile of segmentFiles) {
+        try { fs.unlinkSync(segFile); } catch { /* ignore */ }
+      }
+      try { fs.unlinkSync(concatListFile); } catch { /* ignore */ }
+
+      console.log(`✂️ Silence cut complete → ${outputFile}`);
+      return { success: true, filePath: outputFile };
+    } catch (err: any) {
+      console.error('✂️ media:cutSilence error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// delete-file — used by DownloadApprovalModal deny action
+ipcMain.handle('delete-file', async (_event, filePath: string) => {
+  try {
+    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+});
+
+ipcMain.handle('save-temp-image', async (_event, base64Data: string, ext: string) => {
+  try {
+    const buf = Buffer.from(base64Data.replace(/^data:[^;]+;base64,/, ''), 'base64');
+    const tmpDir = app.getPath('temp');
+    const fileName = `edith-paste-${Date.now()}.${ext || 'png'}`;
+    const filePath = path.join(tmpDir, fileName);
+    fs.writeFileSync(filePath, buf);
+    return { success: true, filePath };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Register Mycelium agent IPC handlers
+registerMyceliumIPC(ipcMain, () => mainWindow);
 
 app.on('ready', async () => {
   // Create window first to show loader immediately

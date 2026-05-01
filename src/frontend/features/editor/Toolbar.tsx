@@ -16,9 +16,8 @@ import {
   usePanelStore,
   type PanelType,
 } from '@/frontend/features/editor/stores/PanelStore';
-import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
 import { cn } from '@/frontend/utils/utils';
-import { ClosedCaption, Music, Settings, Type, Upload } from 'lucide-react';
+import { Clapperboard, ClosedCaption, Music, Settings, Type, Upload } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 import { Button } from '../../components/ui/button';
 
@@ -92,6 +91,23 @@ const toolbarConfig: ToolbarConfig[] = [
     icon: <Music size={16} />,
     title: 'Audio tools',
   },
+  {
+    panelType: 'references',
+    icon: <Clapperboard size={16} />,
+    title: 'References',
+  },
+  {
+    panelType: 'friday',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M5 8.5C5.5 10 6.5 11 8 11C9.5 11 10.5 10 11 8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        <circle cx="5.5" cy="6.5" r="1" fill="currentColor" />
+        <circle cx="10.5" cy="6.5" r="1" fill="currentColor" />
+      </svg>
+    ),
+    title: 'E.D.I.T.H',
+  },
 ];
 
 const Toolbar = ({
@@ -102,11 +118,6 @@ const Toolbar = ({
   toggleCollapse?: () => void;
 }) => {
   const { togglePanel, activePanelType } = usePanelStore();
-  const tracks = useVideoEditorStore((state) => state.tracks);
-
-  // Check if there are any subtitle tracks on the timeline
-  const hasSubtitles = tracks.some((track) => track.type === 'subtitle');
-
   // Panel toggle handlers - only open panels, don't close them
   const handleTogglePanel = useCallback(
     (panelType: PanelType) => {
@@ -153,7 +164,7 @@ const Toolbar = ({
               title={config.title}
               onClick={getClickHandler(config)}
               isActive={activePanelType === config.panelType}
-              disabled={config.panelType === 'captions' && !hasSubtitles}
+              disabled={false}
             />
           ))}
         </div>

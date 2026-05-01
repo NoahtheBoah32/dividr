@@ -50,9 +50,11 @@ const persistentMediaUpdateKeys = new Set<string>([
   'size',
   'mimeType',
   'type',
+  'category',
   'spriteSheetDisabled',
   'hasGeneratedKaraoke',
   'cachedKaraokeSubtitles',
+  'referenceAnalysis',
 ]);
 
 const shouldMarkUnsavedChangesForMediaUpdate = (

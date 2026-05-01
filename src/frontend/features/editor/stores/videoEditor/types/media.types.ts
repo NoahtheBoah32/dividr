@@ -152,6 +152,33 @@ export interface MediaLibraryItem {
     completedAt?: number;
   };
 
+  /** Marks this item as a style reference for EDITH (not a timeline asset) */
+  category?: 'reference';
+
+  /** Gemini caption style analysis result for this reference video */
+  referenceAnalysis?: {
+    captionStyle: {
+      position: number;
+      fontSize: number;
+      fontFamily: string;
+      isUppercase: boolean;
+      isBold: boolean;
+      fillColor: string;
+      highlightColor?: string;
+      strokeColor?: string;
+      strokeWidth?: number;
+      wordsPerPhrase: number;
+      animationStyle: string;
+      shadowEnabled: boolean;
+      backdropEnabled: boolean;
+      pacing: string;
+      hookStyle: string;
+      description: string;
+    };
+    analyzedAt: number;
+    model: string;
+  };
+
   /**
    * Coordinated readiness state for UI rendering.
    * - pending: Media is still processing (transcoding, sprites, waveform).

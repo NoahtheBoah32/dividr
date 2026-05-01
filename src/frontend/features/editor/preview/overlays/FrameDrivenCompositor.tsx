@@ -220,7 +220,7 @@ export const FrameDrivenCompositor = forwardRef<
         canvasHeight: number,
       ): boolean => {
         const video = managed.element;
-        const { transform, opacity } = request;
+        const { transform, opacity, filter } = request;
 
         const scaleX = canvasWidth / baseVideoWidth;
         const scaleY = canvasHeight / baseVideoHeight;
@@ -256,6 +256,7 @@ export const FrameDrivenCompositor = forwardRef<
 
         ctx.save();
         ctx.globalAlpha = safeOpacity;
+        if (filter) ctx.filter = filter;
 
         if (safeRotation !== 0) {
           const rotationCenterX = drawX + drawWidth / 2;
@@ -503,7 +504,7 @@ export const FrameDrivenCompositor = forwardRef<
           const y = transform?.y ?? 0;
           const scale = transform?.scale ?? 1;
           const rotation = transform?.rotation ?? 0;
-          return `${t.id}:${x},${y},${scale},${rotation}`;
+          return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''}`;
         })
         .join('|');
 

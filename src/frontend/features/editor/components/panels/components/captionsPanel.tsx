@@ -1,6 +1,6 @@
 import { Button } from '@/frontend/components/ui/button';
 import { cn } from '@/frontend/utils/utils';
-import { Play, Trash2 } from 'lucide-react';
+import { Play, Trash2, X } from 'lucide-react';
 import React, {
   useCallback,
   useEffect,
@@ -11,6 +11,97 @@ import React, {
 import { BasePanel, CustomPanelProps } from '..';
 import { useVideoEditorStore } from '../../../stores/videoEditor';
 import { VideoTrack } from '../../../stores/videoEditor/types/track.types';
+import { useCaptionStylesStore, SavedCaptionStyle } from '../../../stores/captionStylesStore';
+
+// ── Style card ────────────────────────────────────────────────────────────────
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ];
+}
+
+const StyleCard = React.memo(function StyleCard({
+  s,
+  isActive,
+  onSelect,
+  onDelete,
+  isDeletable,
+}: {
+  s: SavedCaptionStyle;
+  isActive: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  isDeletable: boolean;
+}) {
+  const [r, g, b] = useMemo(() => hexToRgb(s.highlightColor), [s.highlightColor]);
+  const fontFamily = s.fontFamily === 'Arial Black'
+    ? '"Arial Black", Impact, sans-serif'
+    : s.fontFamily;
+  const fontWeight = s.fontFamily === 'Arial Black' ? 900 : (s.isBold ? 700 : 600);
+  const previewFontSize = Math.min(Math.round(s.fontSize * 0.28), 22);
+
+  // Single preview line — style name, Farm uses Esteban quote
+  const words: string[] = s.emphasisFirst
+    ? ['MY', 'NAME', 'IS', 'ESTEBAN']
+    : ['YOUR', s.isUppercase ? s.name.toUpperCase() : s.name, 'HERE'];
+  const emphasisIdx = s.emphasisFirst ? 0 : 1;
+
+  return (
+    <div
+      onClick={onSelect}
+      className="group relative cursor-pointer rounded-lg overflow-hidden flex items-center justify-between px-3"
+      style={{
+        height: 52,
+        background: isActive
+          ? `linear-gradient(90deg, rgba(${r},${g},${b},0.12) 0%, rgba(${r},${g},${b},0.04) 100%)`
+          : 'rgba(255,255,255,0.03)',
+        border: isActive
+          ? `1.5px solid rgba(${r},${g},${b},0.5)`
+          : '1.5px solid rgba(255,255,255,0.06)',
+        transition: 'all 0.12s ease',
+      }}
+    >
+      {/* Caption text preview */}
+      <div className="flex items-baseline gap-[5px] flex-1 min-w-0 overflow-hidden">
+        {words.map((w, i) => (
+          <span
+            key={i}
+            style={{
+              fontFamily,
+              fontSize: previewFontSize,
+              fontWeight,
+              textTransform: s.isUppercase ? 'uppercase' : 'none',
+              color: i === emphasisIdx ? s.highlightColor : s.fillColor,
+              textShadow: i === emphasisIdx
+                ? `0 0 12px rgba(${r},${g},${b},0.7)`
+                : undefined,
+              lineHeight: 1,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {w}
+          </span>
+        ))}
+      </div>
+
+      {/* Delete button */}
+      {isDeletable && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="shrink-0 ml-1.5 opacity-0 group-hover:opacity-100 transition-opacity rounded p-0.5 hover:bg-red-500/30"
+        >
+          <X className="size-3 text-red-400" />
+        </button>
+      )}
+    </div>
+  );
+});
+
+// ── Panel types ────────────────────────────────────────────────────────────────
 
 interface SubtitleItemState {
   isActive: boolean;
@@ -18,7 +109,7 @@ interface SubtitleItemState {
   isEditing: boolean;
 }
 
-type CaptionMode = 'karaoke' | 'subtitle';
+type CaptionMode = 'karaoke' | 'subtitle' | 'styles';
 
 // Memoized SubtitleItem component for better performance
 const SubtitleItem = React.memo<{
@@ -176,6 +267,9 @@ export const CaptionsPanel: React.FC<CustomPanelProps> = ({ className }) => {
   const setSelectedTracks = useVideoEditorStore(
     (state) => state.setSelectedTracks,
   );
+
+  // Caption styles bank
+  const { styles: captionStyles, activeStyleId, setActiveStyle, deleteStyle } = useCaptionStylesStore();
 
   // Filter and categorize subtitle tracks - memoized to prevent unnecessary recalculations
   const { subtitleTracks, karaokeSubtitles, regularSubtitles } = useMemo(() => {
@@ -443,12 +537,41 @@ export const CaptionsPanel: React.FC<CustomPanelProps> = ({ className }) => {
           >
             Subtitle
           </Button>
+          <Button
+            variant={captionMode === 'styles' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setCaptionMode('styles')}
+            className="text-xs py-1 h-fit"
+          >
+            Styles
+          </Button>
         </div>
       }
     >
       <div className="flex flex-col flex-1 min-h-0">
+        {/* Caption Styles Bank */}
+        {captionMode === 'styles' && (
+          <div className="flex-1 overflow-y-auto p-2">
+            <div className="flex flex-col gap-1.5">
+              {captionStyles.map((s: SavedCaptionStyle) => (
+                <StyleCard
+                  key={s.id}
+                  s={s}
+                  isActive={activeStyleId === s.id}
+                  onSelect={() => setActiveStyle(s.id)}
+                  onDelete={() => deleteStyle(s.id)}
+                  isDeletable={s.id !== 'mycelium' && s.id !== 'hormozi'}
+                />
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-3 px-1">
+              Active style applies to new EDITH captions. EDITH saves creator styles automatically when she analyzes a reference.
+            </p>
+          </div>
+        )}
+
         {/* Selection count and batch actions */}
-        {selectedSubtitlesInView.length > 0 && (
+        {captionMode !== 'styles' && selectedSubtitlesInView.length > 0 && (
           <div className="flex items-center justify-between gap-2 mb-3 px-1">
             <div className="text-xs text-muted-foreground">
               {selectedSubtitlesInView.length} selected
@@ -468,8 +591,8 @@ export const CaptionsPanel: React.FC<CustomPanelProps> = ({ className }) => {
           </div>
         )}
 
-        {/* Content Area */}
-        <div className="flex-1 overflow-y-auto space-y-2">
+        {/* Subtitle list — hidden in styles mode */}
+        <div className={cn('flex-1 overflow-y-auto space-y-2', captionMode === 'styles' && 'hidden')}>
           {!hasSubtitles ? (
             <div className="text-center text-muted-foreground py-8">
               <p className="text-sm">No captions loaded</p>

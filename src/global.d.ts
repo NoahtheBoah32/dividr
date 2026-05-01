@@ -134,6 +134,17 @@ declare global {
         error?: string;
       }>;
 
+      // yt-dlp download helpers
+      initDownloadDir: () => Promise<{ success: boolean; path?: string; error?: string }>;
+      downloadFromUrl: (payload: {
+        jobId: string;
+        url: string;
+        startSeconds?: number;
+        endSeconds?: number;
+        downloadDir?: string;
+      }) => Promise<{ success: boolean; filePath?: string; fileType?: string; error?: string }>;
+      cancelDownload: (jobId: string) => Promise<{ success: boolean }>;
+
       ffmpegRun: (job: VideoEditJob) => Promise<{
         success: boolean;
         result?: { command: string; logs: string };

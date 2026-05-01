@@ -9,6 +9,8 @@ export type PanelType =
   | 'audio-tools' // Audio editing tools (custom component)
   | 'settings' // Project settings (custom component)
   | 'captions' // Captions (custom component)
+  | 'friday' // F.R.I.D.A.Y agent panel (custom component)
+  | 'references' // Reference footage panel (custom component)
   | null; // No panel shown
 
 // Metadata for panels
@@ -97,6 +99,20 @@ const panelMetadata: Record<Exclude<PanelType, null>, PanelMetadata> = {
     title: 'Captions',
     description: 'Add and edit captions',
     icon: '🎤',
+    hasCustomComponent: true,
+    width: 'w-80',
+  },
+  friday: {
+    title: 'E.D.I.T.H',
+    description: 'AI agent pipeline',
+    icon: '🤖',
+    hasCustomComponent: true,
+    width: 'w-80',
+  },
+  references: {
+    title: 'References',
+    description: 'Style sources for EDITH',
+    icon: '🎬',
     hasCustomComponent: true,
     width: 'w-80',
   },
