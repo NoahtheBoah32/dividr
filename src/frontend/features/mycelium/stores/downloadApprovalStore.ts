@@ -47,6 +47,8 @@ export const useDownloadApprovalStore = create<DownloadApprovalState>((set, get)
     if (!item) return;
     set((s) => ({ pending: s.pending.filter((p) => p.id !== id) }));
     await importFileIntoLibrary(item);
+    // Fire after import is fully done so media library is populated before EDITH reads context
+    window.dispatchEvent(new CustomEvent('edith:downloadImported', { detail: { id, remaining: get().pending.length } }));
   },
 
   approveAll: async (id) => {

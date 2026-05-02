@@ -408,7 +408,6 @@ export function FridayPanel({ className }: { className?: string }) {
   const approvalApprove = useDownloadApprovalStore((s) => s.approve);
   const approvalApproveAll = useDownloadApprovalStore((s) => s.approveAll);
   const approvalDeny = useDownloadApprovalStore((s) => s.deny);
-  const prevApprovalLengthRef = useRef(0);
 
   // Load history + draft when project changes; auto-grant consent if history exists
   useEffect(() => {
@@ -483,16 +482,17 @@ export function FridayPanel({ className }: { className?: string }) {
     }, 600);
   }, []);
 
-  // Silent bell when all pending downloads are approved — EDITH continues without any chat bubble
+  // Silent bell after a download is fully imported — fires when remaining === 0 (last approval)
   useEffect(() => {
-    const prev = prevApprovalLengthRef.current;
-    const curr = approvalPending.length;
-    prevApprovalLengthRef.current = curr;
-    if (prev > 0 && curr === 0 && !interruptedRef.current) {
-      // Give the media library 400ms to finish importing before EDITH reads context
-      setTimeout(() => triggerAutoContinue(), 400);
-    }
-  }, [approvalPending.length, triggerAutoContinue]);
+    const handler = (e: Event) => {
+      const { remaining } = (e as CustomEvent<{ remaining: number }>).detail;
+      if (remaining === 0 && !interruptedRef.current) {
+        triggerAutoContinue();
+      }
+    };
+    window.addEventListener('edith:downloadImported', handler);
+    return () => window.removeEventListener('edith:downloadImported', handler);
+  }, [triggerAutoContinue]);
 
   // IPC listeners
   useEffect(() => {
