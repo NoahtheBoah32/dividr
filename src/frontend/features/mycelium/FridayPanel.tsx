@@ -408,6 +408,7 @@ export function FridayPanel({ className }: { className?: string }) {
   const approvalApprove = useDownloadApprovalStore((s) => s.approve);
   const approvalApproveAll = useDownloadApprovalStore((s) => s.approveAll);
   const approvalDeny = useDownloadApprovalStore((s) => s.deny);
+  const prevApprovalLengthRef = useRef(0);
 
   // Load history + draft when project changes; auto-grant consent if history exists
   useEffect(() => {
@@ -429,62 +430,73 @@ export function FridayPanel({ className }: { className?: string }) {
     });
   }, [currentProjectId]);
 
+  // Shared silent continue — fires EDITH with fresh context, no chat bubble
+  const triggerAutoContinue = useCallback((contextNote?: string) => {
+    setTimeout(() => {
+      if (interruptedRef.current) return;
+      const s = useVideoEditorStore.getState() as any;
+      const fps = s.timeline?.fps || 30;
+      const mediaCtx = (s.mediaLibrary ?? []).map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        type: item.type ?? 'video',
+        duration: item.duration,
+        path: item.tempFilePath || item.source || '',
+        isReference: item.category === 'reference',
+        transcription: item.cachedKaraokeSubtitles?.transcriptionResult
+          ? item.cachedKaraokeSubtitles.transcriptionResult.segments
+              ?.map((seg: any) => {
+                const fmt = (t: number) => `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(Math.floor(t % 60)).padStart(2,'0')}`;
+                return `[${fmt(seg.start)}-${fmt(seg.end)}] ${seg.text.trim()}`;
+              }).join('\n')
+          : undefined,
+        referenceAnalysis: item.referenceAnalysis,
+      }));
+      const timelineCtx = {
+        fps,
+        currentFrame: s.timeline?.currentFrame ?? 0,
+        totalFrames: s.timeline?.totalFrames ?? 0,
+        selectedClipIds: s.selectedTrackIds ?? [],
+        clips: (s.tracks ?? []).map((t: any) => ({
+          id: t.id,
+          mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+          sourcePath: t.source ?? '',
+          type: t.type,
+          layer: t.trackRowIndex ?? 0,
+          startFrame: t.startFrame ?? 0,
+          endFrame: t.endFrame ?? 0,
+          durationFrames: t.duration ?? ((t.endFrame ?? 0) - (t.startFrame ?? 0)),
+          volume: t.volume,
+          muted: t.muted,
+          letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
+          captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
+        })),
+      };
+      const text = contextNote ? `continue (note: ${contextNote})` : 'continue';
+      window.electronAPI.invoke('mycelium:sendMessage', {
+        text,
+        mediaContext: mediaCtx,
+        timelineSnapshot: timelineCtx,
+        activeDownloads: [],
+      });
+      setAgentStatus('running');
+    }, 600);
+  }, []);
+
+  // Silent bell when all pending downloads are approved — EDITH continues without any chat bubble
+  useEffect(() => {
+    const prev = prevApprovalLengthRef.current;
+    const curr = approvalPending.length;
+    prevApprovalLengthRef.current = curr;
+    if (prev > 0 && curr === 0 && !interruptedRef.current) {
+      // Give the media library 400ms to finish importing before EDITH reads context
+      setTimeout(() => triggerAutoContinue(), 400);
+    }
+  }, [approvalPending.length, triggerAutoContinue]);
+
   // IPC listeners
   useEffect(() => {
     (window as any).myceliumAPI?.removeAllListeners?.();
-
-    // Shared helper — called when all pending slow ops finish (success or failure)
-    const triggerAutoContinue = (errorContext?: string) => {
-      setTimeout(() => {
-        if (interruptedRef.current) return;
-        const s = useVideoEditorStore.getState() as any;
-        const fps = s.timeline?.fps || 30;
-        const mediaCtx = (s.mediaLibrary ?? []).map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          type: item.type ?? 'video',
-          duration: item.duration,
-          path: item.tempFilePath || item.source || '',
-          isReference: item.category === 'reference',
-          transcription: item.cachedKaraokeSubtitles?.transcriptionResult
-            ? item.cachedKaraokeSubtitles.transcriptionResult.segments
-                ?.map((seg: any) => {
-                  const fmt = (t: number) => `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(Math.floor(t % 60)).padStart(2,'0')}`;
-                  return `[${fmt(seg.start)}-${fmt(seg.end)}] ${seg.text.trim()}`;
-                }).join('\n')
-            : undefined,
-          referenceAnalysis: item.referenceAnalysis,
-        }));
-        const timelineCtx = {
-          fps,
-          currentFrame: s.timeline?.currentFrame ?? 0,
-          totalFrames: s.timeline?.totalFrames ?? 0,
-          selectedClipIds: s.selectedTrackIds ?? [],
-          clips: (s.tracks ?? []).map((t: any) => ({
-            id: t.id,
-            mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
-            sourcePath: t.source ?? '',
-            type: t.type,
-            layer: t.trackRowIndex ?? 0,
-            startFrame: t.startFrame ?? 0,
-            endFrame: t.endFrame ?? 0,
-            durationFrames: t.duration ?? ((t.endFrame ?? 0) - (t.startFrame ?? 0)),
-            volume: t.volume,
-            muted: t.muted,
-            letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
-            captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
-          })),
-        };
-        const text = errorContext ? `continue (note: ${errorContext})` : 'continue';
-        window.electronAPI.invoke('mycelium:sendMessage', {
-          text,
-          mediaContext: mediaCtx,
-          timelineSnapshot: timelineCtx,
-          activeDownloads: [],
-        });
-        setAgentStatus('running');
-      }, 600);
-    };
 
     const offApplied = operationEngine.on('opApplied', (_opId: string, op: unknown) => {
       setQueue(operationEngine.getQueue());
