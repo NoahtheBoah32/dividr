@@ -20,6 +20,7 @@ export type Op =
       startFrame: number;
       inSeconds: number;
       outSeconds: number;
+      layer?: number; // trackRowIndex — 0 = main, 1 = overlay, 2 = top overlay
     }
   | {
       type: 'addCaption';
@@ -81,6 +82,15 @@ export type Op =
       type: 'saveStyle';
       name: string;          // creator name, e.g. "Esteban", "Mycelium"
       style: CaptionStyle;
+    }
+  | {
+      type: 'renderGraphic';
+      html: string;          // full Hyperframes HTML composition
+      durationSeconds: number;
+      startFrame: number;    // where to place the rendered clip on the timeline
+      layer?: number;        // default 2 (above main video)
+      width?: number;        // default matches canvas (1080 for 9:16)
+      height?: number;       // default matches canvas (1920 for 9:16)
     };
 
 export type OpStatus = 'pending' | 'running' | 'applied' | 'failed' | 'undone';

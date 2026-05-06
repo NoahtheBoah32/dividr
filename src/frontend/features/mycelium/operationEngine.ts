@@ -21,8 +21,15 @@ class OperationEngine {
   // Apply function injected by storeAdapter — mutates Dividr state
   private applyFn: ((op: Op) => Promise<void>) | null = null;
 
+  // Pre-apply hook — runs before applyFn, used for playhead animation
+  private preApplyFn: ((op: Op) => Promise<void>) | null = null;
+
   setApplyFn(fn: (op: Op) => Promise<void>) {
     this.applyFn = fn;
+  }
+
+  setPreApplyFn(fn: (op: Op) => Promise<void>) {
+    this.preApplyFn = fn;
   }
 
   on(event: OpEventType, listener: Function) {
@@ -85,7 +92,7 @@ class OperationEngine {
 
   // Ops that are already slow (async work) — no artificial delay needed
   private static readonly INSTANT_OPS = new Set([
-    'cutSilence', 'runWhisper', 'analyzeReference', 'downloadMedia', 'geminiEdit',
+    'cutSilence', 'runWhisper', 'analyzeReference', 'downloadMedia', 'geminiEdit', 'renderGraphic',
   ]);
 
   private async processNext() {
@@ -105,6 +112,9 @@ class OperationEngine {
     next.status = 'running';
 
     try {
+      if (this.preApplyFn) {
+        await this.preApplyFn(next.op);
+      }
       await this.applyFn(next.op);
       next.status = 'applied';
       next.appliedAt = Date.now();

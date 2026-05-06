@@ -1,8 +1,12 @@
 import { BrowserWindow, app } from 'electron';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { analyzeReferenceVideo, generateEditSpec } from './geminiAnalyzer';
+import { generateEditSpec } from './geminiAnalyzer';
+import { analyzeReferenceVideoWithClaude } from './claudeReferenceAnalyzer';
+import { runQACheck, type QAClip, type QAReferenceInfo } from './qaChecker';
+import { addLesson, loadLessons, formatLessonsForPrompt, inferCategory } from './edithLessons';
 
 // Load GEMINI_API_KEY from .env next to package.json
 function loadGeminiKey(): string {
@@ -50,6 +54,7 @@ export interface TimelineClip {
   startFrame: number;
   endFrame: number;
   durationFrames: number;
+  sourceStartTime?: number; // seconds into the source file where this clip begins playing
   volume?: number;
   muted?: boolean;
   letterboxBlur?: boolean;
@@ -114,6 +119,21 @@ function rebuildConversationHistory(entries: HistoryEntry[]) {
   return entries
     .filter((e) => e.role !== 'system')
     .map((e) => ({ role: e.role, text: e.text }));
+}
+
+// Keep only the last N conversation turns to prevent prompt bloat.
+// The live timeline/media snapshot always reflects current state, so old turns
+// are mostly noise after ~10 exchanges.
+const MAX_HISTORY_TURNS = 12;
+function truncateHistory(history: Array<{ role: string; text: string }>) {
+  if (history.length <= MAX_HISTORY_TURNS) return history;
+  // Always keep the first user message (project intent) + last N turns
+  const first = history[0];
+  const recent = history.slice(-MAX_HISTORY_TURNS);
+  if (recent[0]?.role !== first.role || recent[0]?.text !== first.text) {
+    return [first, { role: 'system', text: '[earlier conversation truncated]' }, ...recent];
+  }
+  return recent;
 }
 
 // --- System prompt ---
@@ -214,6 +234,7 @@ function buildTimelineSection(snapshot?: TimelineSnapshot): string {
   for (const c of sorted) {
     let line = `- ${c.id} [${c.type}, layer ${c.layer}] frames ${c.startFrame}–${c.endFrame} (${toSec(c.startFrame)}–${toSec(c.endFrame)}s) | media: "${c.mediaName}"`;
     if (c.sourcePath) line += ` | path: ${c.sourcePath}`;
+    if (c.sourceStartTime) line += ` | sourceOffset: ${c.sourceStartTime.toFixed(2)}s`;
     if (c.volume !== undefined) line += ` | volume: ${c.volume}dB`;
     if (c.muted) line += ` | muted`;
     if (c.letterboxBlur) line += ` | letterboxBlur: on`;
@@ -253,13 +274,15 @@ export function spawnEdith(
   if (session.projectId) saveHistoryToDisk(session.projectId, session.uiHistory);
 
   const systemPrompt = loadSystemPrompt();
+  const lessons = loadLessons(app.getPath('userData'));
+  const lessonsSection = formatLessonsForPrompt(lessons);
   const mediaSection = buildMediaContext(mediaContext);
   const timelineSection = buildTimelineSection(timelineSnapshot);
   const activeDownloadsSection = buildActiveDownloadsSection(activeDownloads);
-  const historyText = session.conversationHistory
-    .map((m) => `${m.role === 'user' ? 'User' : 'EDITH'}: ${m.text}`)
+  const historyText = truncateHistory(session.conversationHistory)
+    .map((m) => m.role === 'system' ? m.text : `${m.role === 'user' ? 'User' : 'EDITH'}: ${m.text}`)
     .join('\n');
-  const fullPrompt = `${systemPrompt}${mediaSection}${timelineSection}${activeDownloadsSection}\n\n${historyText}\n\nEDITH:`;
+  const fullPrompt = `${systemPrompt}${lessonsSection}${mediaSection}${timelineSection}${activeDownloadsSection}\n\n${historyText}\n\nEDITH:`;
 
   if (session.process) {
     session.process.kill();
@@ -271,7 +294,7 @@ export function spawnEdith(
 
   const claude = spawn(
     'claude',
-    ['--print', '--model', 'claude-sonnet-4-6', '--max-turns', '5'],
+    ['--print', '--model', 'claude-opus-4-7', '--max-turns', '30'],
     { shell: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env } },
   );
 
@@ -406,14 +429,106 @@ export function registerMyceliumIPC(
   ipcMain.handle('mycelium:resume', () => { resumeSession(); return { success: true }; });
   ipcMain.handle('mycelium:stop', () => { stopSession(); return { success: true }; });
 
-  // Analyze a reference video with Gemini — returns captionStyle JSON
+  // Analyze a reference video using Claude vision (frame sampling — fast, no Gemini needed)
   ipcMain.handle('mycelium:analyzeReference', async (_event, payload: { filePath: string }) => {
-    const apiKey = loadGeminiKey();
-    if (!apiKey) return { success: false, error: 'GEMINI_API_KEY not set in .env' };
     try {
-      const result = await analyzeReferenceVideo(payload.filePath, apiKey);
+      const result = await analyzeReferenceVideoWithClaude(payload.filePath, app.getAppPath());
       return { success: true, analysis: result };
     } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  });
+
+  // QA check — frame capture at cut points + Claude Haiku vision + programmatic checks
+  ipcMain.handle('mycelium:runQA', async (_event, payload: {
+    clips: QAClip[];
+    fps: number;
+    reference?: QAReferenceInfo;
+    captionScreenshot?: string;
+  }) => {
+    const apiKey = (() => {
+      const envPath = path.join(app.getAppPath(), '.env');
+      if (fs.existsSync(envPath)) {
+        const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+        for (const line of lines) {
+          const [k, v] = line.split('=');
+          if (k?.trim() === 'ANTHROPIC_API_KEY') return v?.trim() ?? '';
+        }
+      }
+      return process.env.ANTHROPIC_API_KEY ?? '';
+    })();
+    if (!apiKey) return { success: false, error: 'ANTHROPIC_API_KEY not set in .env' };
+    try {
+      const result = await runQACheck(payload.clips, payload.fps, apiKey, payload.reference, payload.captionScreenshot);
+      return { success: true, result };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  });
+
+  // Persist a lesson from a QA correction cycle so EDITH doesn't repeat the mistake
+  ipcMain.handle('mycelium:recordLesson', async (_event, payload: {
+    category?: string;
+    userRequest: string;
+    mistake: string;
+    fix: string;
+  }) => {
+    try {
+      addLesson(app.getPath('userData'), {
+        date: new Date().toISOString(),
+        category: (payload.category as any) || inferCategory(payload.mistake),
+        userRequest: payload.userRequest.slice(0, 120),
+        mistake: payload.mistake,
+        fix: payload.fix,
+      });
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  });
+
+  // Render an HTML graphic via Hyperframes → returns a local video file path
+  ipcMain.handle('mycelium:renderGraphic', async (_event, payload: {
+    html: string;
+    durationSeconds: number;
+    width: number;
+    height: number;
+  }) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edith-graphic-'));
+    const htmlPath = path.join(tmpDir, 'index.html');
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edith-graphic-out-'));
+    const outPath = path.join(outDir, 'graphic.mp4');
+    try {
+      fs.writeFileSync(htmlPath, payload.html, 'utf8');
+
+      // Resolve hyperframes binary (prefer local node_modules, fall back to npx)
+      const hyperframesBin = path.join(app.getAppPath(), 'node_modules', '.bin', 'hyperframes');
+      const bin = fs.existsSync(hyperframesBin) ? `"${hyperframesBin}"` : 'npx hyperframes';
+
+      // Add ffmpeg-static to PATH so Hyperframes can find ffmpeg via `where ffmpeg`
+      let ffmpegDir: string | undefined;
+      try {
+        const ffmpegExe = require('ffmpeg-static') as string;
+        if (ffmpegExe) ffmpegDir = path.dirname(ffmpegExe);
+      } catch { /* skip — system ffmpeg will be used if available */ }
+      const env = { ...process.env };
+      if (ffmpegDir) {
+        env.PATH = `${ffmpegDir}${path.delimiter}${process.env.PATH ?? ''}`;
+      }
+
+      // render takes a project DIRECTORY (containing index.html), outputs to -o path
+      // 5-minute timeout: first run downloads ~100MB Chromium; subsequent runs are fast (cached)
+      execSync(`${bin} render "${tmpDir}" -o "${outPath}" --fps 30 --quiet`, {
+        timeout: 300000,
+        cwd: tmpDir,
+        env,
+      });
+
+      if (!fs.existsSync(outPath)) throw new Error('Hyperframes render produced no output file');
+      return { success: true, filePath: outPath };
+    } catch (e) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
       return { success: false, error: String(e) };
     }
   });

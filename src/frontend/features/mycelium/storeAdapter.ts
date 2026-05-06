@@ -10,8 +10,16 @@ import { Op } from './types';
 import { operationEngine } from './operationEngine';
 import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
 import { pickSubtitleRow } from './captionUtils';
+import { animateForOp, startEdithEditing, stopEdithEditing } from './edithPlayheadAnimator';
+import { useEdithEditingStore } from './stores/edithEditingStore';
 
 export { pickSubtitleRow };
+
+// ── GEMINI KILL SWITCH ────────────────────────────────────────────────────
+// Set to true during testing to prevent any Gemini API calls.
+// Flip back to false when ready to re-enable.
+const GEMINI_DISABLED = true;
+// ─────────────────────────────────────────────────────────────────────────
 
 // Mycelium caption style defaults
 const CAPTION_DEFAULTS = {
@@ -59,6 +67,7 @@ async function applyOp(op: Op): Promise<void> {
         // fall through with raw path
       }
 
+      const isOverlay = op.trackType === 'video' && (op.layer ?? 0) > 0;
       await store.addTrack({
         type: op.trackType,
         name: op.src.split(/[/\\]/).pop() ?? op.src,
@@ -68,6 +77,8 @@ async function applyOp(op: Op): Promise<void> {
         startFrame,
         endFrame,
         sourceStartTime: op.inSeconds,
+        trackRowIndex: op.layer ?? 0,
+        muted: isOverlay ? true : undefined, // auto-mute video overlays — main audio track takes priority
         visible: true,
         locked: false,
         color: op.trackType === 'video' ? '#4A90D9' : op.trackType === 'audio' ? '#7ED321' : '#F5A623',
@@ -204,10 +215,11 @@ async function applyOp(op: Op): Promise<void> {
         duration,
         startFrame,
         endFrame,
+        muted: true, // b-roll audio should never play over dialogue
         visible: true,
         locked: false,
         color: '#27AE60',
-        trackRowIndex: 1, // Overlay row above main footage
+        trackRowIndex: 1,
       });
       break;
     }
@@ -345,7 +357,7 @@ async function applyOp(op: Op): Promise<void> {
       }
       if (!filePath) throw new Error(`runWhisper: no file path for ${op.clipId}`);
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Transcribing with Whisper…' } }));
-      const result = await (window.electronAPI as any).invoke('whisper:transcribe', filePath, { model: 'base' });
+      const result = await (window.electronAPI as any).invoke('whisper:transcribe', filePath, { model: 'small' });
       if (!result.success) throw new Error(result.error ?? 'Whisper failed');
       useVideoEditorStore.getState().updateMediaLibraryItem(mediaId, {
         cachedKaraokeSubtitles: {
@@ -361,6 +373,11 @@ async function applyOp(op: Op): Promise<void> {
       const state = useVideoEditorStore.getState() as any;
       // Try media library first, then fall back to finding a reference item by name/path match
       let mediaItem = state.mediaLibrary?.find((m: any) => m.id === op.clipId);
+      // Hard guard — never re-analyze a reference that already has data
+      if (mediaItem?.referenceAnalysis?.captionStyle) {
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Reference already analyzed — skipping' } }));
+        break;
+      }
       if (!mediaItem) {
         // EDITH may have passed a timeline track ID — find the track and match to media library
         const track = state.tracks?.find((t: any) => t.id === op.clipId);
@@ -376,15 +393,20 @@ async function applyOp(op: Op): Promise<void> {
       }
       if (!mediaItem) throw new Error(`analyzeReference: no reference video found. Make sure a reference is uploaded in the References panel.`);
       const filePath = (mediaItem as any).tempFilePath || (mediaItem as any).source;
-      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Analyzing reference with Gemini…' } }));
+      const mediaLibraryId = (mediaItem as any).id;
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Analyzing reference (frame sampling)…' } }));
       const result = await (window.electronAPI as any).invoke('mycelium:analyzeReference', { filePath });
-      if (!result.success) throw new Error(result.error ?? 'Gemini analysis failed');
-      useVideoEditorStore.getState().updateMediaLibraryItem(op.clipId, { referenceAnalysis: result.analysis });
+      if (!result.success) throw new Error(result.error ?? 'Reference analysis failed');
+      useVideoEditorStore.getState().updateMediaLibraryItem(mediaLibraryId, { referenceAnalysis: result.analysis });
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Reference analyzed' } }));
       break;
     }
 
     case 'geminiEdit': {
+      if (GEMINI_DISABLED) {
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Gemini disabled (test mode) — skipping AI edit pass' } }));
+        break;
+      }
       const state = useVideoEditorStore.getState() as any;
 
       // Resolve user clip
@@ -483,6 +505,46 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'renderGraphic': {
+      const fps = store.fps ?? 30;
+      const canvasWidth = store.canvasWidth ?? 1080;
+      const canvasHeight = store.canvasHeight ?? 1920;
+      const width = op.width ?? canvasWidth;
+      const height = op.height ?? canvasHeight;
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Rendering graphic with Hyperframes…' } }));
+      const result = await (window.electronAPI as any).invoke('mycelium:renderGraphic', {
+        html: op.html,
+        durationSeconds: op.durationSeconds,
+        width,
+        height,
+      });
+      if (!result.success) throw new Error(result.error ?? 'Hyperframes render failed');
+      const filePath: string = result.filePath;
+      let previewUrl = filePath;
+      try {
+        const r = await window.electronAPI.createPreviewUrl(filePath);
+        if (r && typeof r === 'object' && (r as any).url) previewUrl = (r as any).url;
+        else if (typeof r === 'string') previewUrl = r;
+      } catch { /* use raw path */ }
+      const duration = Math.round(op.durationSeconds * fps);
+      const endFrame = op.startFrame + duration;
+      await store.addTrack({
+        type: 'video',
+        name: 'graphic.mp4',
+        source: filePath,
+        previewUrl,
+        duration,
+        startFrame: op.startFrame,
+        endFrame,
+        trackRowIndex: op.layer ?? 2,
+        visible: true,
+        locked: false,
+        color: '#B06AFF',
+      });
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Graphic placed on timeline' } }));
+      break;
+    }
+
     default:
       console.warn('[storeAdapter] Unknown op type — full op:', JSON.stringify(op));
   }
@@ -490,4 +552,25 @@ async function applyOp(op: Op): Promise<void> {
 
 export function initStoreAdapter() {
   operationEngine.setApplyFn(applyOp);
+
+  operationEngine.setPreApplyFn(async (op: Op) => {
+    const store = useVideoEditorStore.getState() as any;
+    const fps: number = store?.timeline?.fps ?? 30;
+    const totalFrames: number = store?.timeline?.totalFrames ?? 900;
+
+    // Start editing mode on first op
+    if (!useEdithEditingStore.getState().isEditing) startEdithEditing();
+
+    // EDITH is now executing — stop the thinking freeze
+    useEdithEditingStore.getState().setIsThinking(false);
+
+    await animateForOp(op, fps, totalFrames);
+
+    // Op animation done — EDITH is thinking about the next one
+    useEdithEditingStore.getState().setIsThinking(true);
+  });
+
+  operationEngine.on('queueDrained', () => {
+    stopEdithEditing();
+  });
 }

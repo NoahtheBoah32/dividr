@@ -53,6 +53,7 @@ import {
   isContextMenuClick,
   TimelineInteractionHandlers,
 } from './utils/timelineInteractionHandlers';
+import { useEdithEditingStore } from '@/frontend/features/mycelium/stores/edithEditingStore';
 
 interface TimelineProps {
   className?: string;
@@ -1944,6 +1945,13 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   magneticSnapFrame={magneticSnapFrame}
                 />
 
+                {/* EDITH editing veil — dark overlay right of playhead while EDITH is active */}
+                <EdithVeil
+                  currentFrame={timeline.currentFrame}
+                  frameWidth={frameWidth}
+                  scrollX={timeline.scrollX}
+                />
+
                 {/* Split Indicator Line - confined to hovered track row */}
                 {isSplitModeActive &&
                   splitIndicatorPosition !== null &&
@@ -2308,3 +2316,70 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
   // Use default shallow comparison - Timeline relies on Zustand subscriptions
   // Custom comparison was preventing re-renders when store state changed
 );
+
+function EdithVeil({
+  currentFrame,
+  frameWidth,
+  scrollX,
+}: {
+  currentFrame: number;
+  frameWidth: number;
+  scrollX: number;
+}) {
+  const isEditing = useEdithEditingStore((s) => s.isEditing);
+  const isThinking = useEdithEditingStore((s) => s.isThinking);
+  const currentOpLabel = useEdithEditingStore((s) => s.currentOpLabel);
+
+  if (!isEditing) return null;
+
+  const veilLeft = Math.max(0, currentFrame * frameWidth - scrollX);
+  const label = isThinking ? 'E.D.I.T.H thinking...' : currentOpLabel;
+  // Veil is slightly more opaque while thinking (playhead paused), lighter while executing
+  const veilOpacity = isThinking ? 0.78 : 0.60;
+
+  return (
+    <>
+      {/* Dark veil covering unprocessed territory to the right of playhead */}
+      <div
+        className="pointer-events-none absolute inset-y-0"
+        style={{
+          left: `${veilLeft}px`,
+          right: 0,
+          background: `rgba(8, 8, 10, ${veilOpacity})`,
+          zIndex: 18,
+          transition: 'left 80ms linear',
+        }}
+      />
+      {/* Label badge — thinking (dim) or active op (bright) */}
+      {label && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            left: `${veilLeft + 6}px`,
+            top: '4px',
+            zIndex: 19,
+            background: isThinking ? 'rgba(120,120,140,0.12)' : 'rgba(0,200,200,0.15)',
+            border: `1px solid ${isThinking ? 'rgba(160,160,180,0.25)' : 'rgba(0,200,200,0.40)'}`,
+            borderRadius: '3px',
+            padding: '1px 6px',
+            fontSize: '10px',
+            color: isThinking ? 'rgba(180,180,200,0.65)' : 'rgba(0,220,220,0.95)',
+            whiteSpace: 'nowrap',
+            backdropFilter: 'blur(4px)',
+            // Subtle slow pulse while thinking
+            animation: isThinking ? 'edith-think-pulse 2s ease-in-out infinite' : 'none',
+          }}
+        >
+          {label}
+        </div>
+      )}
+      {/* Pulse keyframe injected once */}
+      <style>{`
+        @keyframes edith-think-pulse {
+          0%, 100% { opacity: 0.65; }
+          50% { opacity: 0.35; }
+        }
+      `}</style>
+    </>
+  );
+}

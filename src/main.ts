@@ -69,6 +69,9 @@ type WhisperProgress = MediaToolsProgress;
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
+// ── GEMINI KILL SWITCH ── flip false to re-enable
+const GEMINI_DISABLED = true;
+
 // Global variables
 let mainWindow: BrowserWindow | null = null;
 const forceQuit = false;
@@ -4606,8 +4609,8 @@ async function frameVerify(
   try {
     await new Promise<void>((resolve) => {
       const p = spawn(ffmpegBin, [
+        '-ss', '5',
         '-i', filePath,
-        '-vf', 'select=eq(n\\,4)',
         '-frames:v', '1',
         '-q:v', '3',
         '-y', tmpFrame,
@@ -4720,7 +4723,7 @@ ipcMain.handle(
     const isSearchQuery = url.startsWith('ytsearch') || url.startsWith('ytdl:ytsearch');
     if (isSearchQuery) sendMsg(`↳ Searching YouTube for: ${url.replace(/^ytsearch\d*:/, '').trim()}`);
 
-    if (geminiApiKey && (verify || topic || isStockFootage) && !isSearchQuery) {
+    if (!GEMINI_DISABLED && geminiApiKey && (verify || topic || isStockFootage) && !isSearchQuery) {
       sendMsg('Running spot checks before download…');
 
       try {
@@ -4920,7 +4923,7 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
         }
         if (code === 0 && finalPath) {
           const runFrameCheck = async (checkPath: string) => {
-            if (geminiApiKey && ffmpegPath && (verify || isStockFootage)) {
+            if (!GEMINI_DISABLED && geminiApiKey && ffmpegPath && (verify || isStockFootage)) {
               const result = await frameVerify(checkPath, ffmpegPath, geminiApiKey, verify || topic || '', !!isStockFootage, topic);
               if (!result.passed) {
                 try { fs.unlinkSync(checkPath); } catch {}

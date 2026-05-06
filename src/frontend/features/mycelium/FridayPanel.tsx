@@ -5,6 +5,7 @@ import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEdit
 import { usePanelStore } from '@/frontend/features/editor/stores/PanelStore';
 import type { HistoryEntry, MediaContextItem, TimelineSnapshot } from '@/backend/mycelium/agentRuntime';
 import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
+import { useEdithEditingStore } from './stores/edithEditingStore';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -401,6 +402,13 @@ export function FridayPanel({ className }: { className?: string }) {
   const agentStatusRef = useRef<AgentStatus>('idle');
   const interruptedRef = useRef(false);
   const pendingSlowOpsRef = useRef<Set<string>>(new Set());
+  // QA tracking — count substantial ops per EDITH run, trigger QA after done
+  const substantialOpsThisRunRef = useRef(0);
+  const qaRunningRef = useRef(false);
+  // Self-correction memory loop
+  const isQACorrectionRunRef = useRef(false);
+  const lastQAIssuesRef = useRef<any[]>([]);
+  const lastUserRequestRef = useRef('');
   const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
   const tracks = useVideoEditorStore((state) => state.tracks);
   const timeline = useVideoEditorStore((state) => state.timeline);
@@ -498,8 +506,14 @@ export function FridayPanel({ className }: { className?: string }) {
   useEffect(() => {
     (window as any).myceliumAPI?.removeAllListeners?.();
 
+    const SUBSTANTIAL_OP_TYPES = new Set([
+      'addCaption', 'setBroll', 'insertClip', 'colorGrade', 'trimClip', 'cutSilence',
+    ]);
     const offApplied = operationEngine.on('opApplied', (_opId: string, op: unknown) => {
       setQueue(operationEngine.getQueue());
+      if (SUBSTANTIAL_OP_TYPES.has((op as any)?.type)) {
+        substantialOpsThisRunRef.current += 1;
+      }
       const stepId = (op as any)?.stepId as string | undefined;
       if (stepId && activePlanIdRef.current) {
         const planId = activePlanIdRef.current;
@@ -560,6 +574,10 @@ export function FridayPanel({ className }: { className?: string }) {
       if (data.role !== 'user' && data.role !== 'system') {
         setActiveAgent(data.role);
         setAgentStatus('running');
+        // EDITH is speaking — she's thinking, not executing an op
+        if (useEdithEditingStore.getState().isEditing) {
+          useEdithEditingStore.getState().setIsThinking(true);
+        }
       }
     };
 
@@ -580,6 +598,184 @@ export function FridayPanel({ className }: { className?: string }) {
       }
     };
 
+    const runPostEditQA = async (isVerification = false) => {
+      if (qaRunningRef.current || interruptedRef.current) return;
+      qaRunningRef.current = true;
+
+      try {
+        const s = useVideoEditorStore.getState() as any;
+        const fps: number = s.timeline?.fps ?? 30;
+        const allTracks: any[] = s.tracks ?? [];
+        const mediaLib: any[] = s.mediaLibrary ?? [];
+
+        // Build QAClip list
+        const clips = allTracks
+          .filter((t) => t.type === 'video' || t.type === 'subtitle')
+          .map((t) => ({
+            id: t.id,
+            type: t.type,
+            layer: t.trackRowIndex ?? 0,
+            sourcePath: t.source ?? '',
+            startFrame: t.startFrame ?? 0,
+            endFrame: t.endFrame ?? 0,
+            sourceOffset: t.sourceStartTime ?? 0,
+            subtitleY: t.subtitleTransform?.y,
+            subtitleText: t.subtitleText,
+          }));
+
+        // Build transcript context for b-roll clips
+        const transcriptionSegs: any[] = (() => {
+          for (const m of mediaLib) {
+            const segs = m.cachedKaraokeSubtitles?.transcriptionResult?.segments;
+            if (segs?.length) return segs;
+          }
+          return [];
+        })();
+        const mainClip = clips.find((c) => c.type === 'video' && c.layer === 0);
+        const mainOffset = mainClip?.sourceOffset ?? 0;
+        for (const clip of clips) {
+          if (clip.type === 'video' && clip.layer > 0 && transcriptionSegs.length) {
+            const timelineStart = clip.startFrame / fps;
+            const sourceSec = mainOffset + timelineStart;
+            const seg = transcriptionSegs.find((seg: any) => seg.start <= sourceSec && seg.end >= sourceSec);
+            if (seg) clip.transcriptContext = seg.text.trim();
+          }
+        }
+
+        // Find reference video for style comparison
+        let reference: { sourcePath: string; midpointSeconds: number } | undefined;
+        const refItem = mediaLib.find((m) => m.category === 'reference' && m.referenceAnalysis);
+        if (refItem) {
+          const refPath = refItem.tempFilePath || refItem.source;
+          const refDur = refItem.duration ?? 30;
+          if (refPath) reference = { sourcePath: refPath, midpointSeconds: refDur / 2 };
+        }
+
+        // Capture a live canvas screenshot with captions rendered
+        // Seek to the first caption's frame, wait for render, then grab the canvas
+        let captionScreenshot: string | undefined;
+        const firstCaption = allTracks.find((t: any) => t.type === 'subtitle');
+        if (firstCaption) {
+          try {
+            useVideoEditorStore.getState().setCurrentFrame(firstCaption.startFrame ?? 0);
+            await new Promise((r) => setTimeout(r, 350)); // let canvas re-render
+            const previewCanvas = document.querySelector<HTMLCanvasElement>('[data-preview-canvas="true"]');
+            if (previewCanvas) {
+              const dataUrl = previewCanvas.toDataURL('image/jpeg', 0.82);
+              if (dataUrl && dataUrl.length > 100) {
+                captionScreenshot = dataUrl.split(',')[1]; // strip data:image/jpeg;base64,
+              }
+            }
+          } catch {
+            // non-fatal — vision check will proceed without caption screenshot
+          }
+        }
+
+        setMessages((prev) => [
+          ...prev,
+          { id: Math.random().toString(36).slice(2), role: 'system' as const, text: 'Running QA check…', timestamp: Date.now() },
+        ]);
+
+        const result = await (window.electronAPI as any).invoke('mycelium:runQA', { clips, fps, reference, captionScreenshot });
+        if (!result.success) throw new Error(result.error);
+
+        const qa = result.result;
+        const allIssues = [...(qa.programmatic ?? []), ...(qa.issues ?? [])];
+
+        if (allIssues.length === 0 && qa.passed) {
+          setMessages((prev) => [
+            ...prev.filter((m) => m.text !== 'Running QA check…'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA passed — ${qa.summary}`, timestamp: Date.now() },
+          ]);
+          // Verification pass after a correction: record lessons for each original issue
+          if (isVerification) {
+            const origIssues = lastQAIssuesRef.current;
+            const userReq = lastUserRequestRef.current;
+            for (const iss of origIssues) {
+              (window.electronAPI as any).invoke('mycelium:recordLesson', {
+                userRequest: userReq,
+                mistake: iss.issue,
+                fix: iss.suggestion,
+              }).catch(() => {});
+            }
+            isQACorrectionRunRef.current = false;
+            lastQAIssuesRef.current = [];
+          }
+        } else if (isVerification) {
+          // Second QA still has issues — stop the loop, don't record unresolved lessons
+          isQACorrectionRunRef.current = false;
+          lastQAIssuesRef.current = [];
+          setMessages((prev) => [
+            ...prev.filter((m) => m.text !== 'Running QA check…'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) remain after correction — review manually`, timestamp: Date.now() },
+          ]);
+        } else {
+          // Format issues for EDITH
+          const issueLines = allIssues.map((iss: any) =>
+            `[${iss.severity.toUpperCase()}] ${iss.label}: ${iss.issue} → ${iss.suggestion}`
+          ).join('\n');
+          const qaNote = `QA check found ${allIssues.length} issue(s):\n${issueLines}\nSummary: ${qa.summary}`;
+
+          setMessages((prev) => [
+            ...prev.filter((m) => m.text !== 'Running QA check…'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) — sending to EDITH`, timestamp: Date.now() },
+          ]);
+
+          // Mark this as a correction run so handleDone triggers a verification QA
+          isQACorrectionRunRef.current = true;
+          lastQAIssuesRef.current = allIssues;
+
+          // Auto-continue EDITH with the QA report so she can self-correct
+          setTimeout(() => {
+            if (interruptedRef.current) return;
+            const s2 = useVideoEditorStore.getState() as any;
+            const fps2 = s2.timeline?.fps || 30;
+            const mediaCtx = (s2.mediaLibrary ?? []).map((item: any) => ({
+              id: item.id, name: item.name, type: item.type ?? 'video',
+              duration: item.duration, path: item.tempFilePath || item.source || '',
+              isReference: item.category === 'reference',
+              transcription: item.cachedKaraokeSubtitles?.transcriptionResult?.segments
+                ?.map((seg: any) => {
+                  const fmt = (t: number) => `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(Math.floor(t % 60)).padStart(2,'0')}`;
+                  return `[${fmt(seg.start)}-${fmt(seg.end)}] ${seg.text.trim()}`;
+                }).join('\n'),
+              referenceAnalysis: item.referenceAnalysis,
+            }));
+            const timelineCtx = {
+              fps: fps2,
+              currentFrame: s2.timeline?.currentFrame ?? 0,
+              totalFrames: s2.timeline?.totalFrames ?? 0,
+              selectedClipIds: s2.selectedTrackIds ?? [],
+              clips: (s2.tracks ?? []).map((t: any) => ({
+                id: t.id,
+                mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+                sourcePath: t.source ?? '',
+                type: t.type, layer: t.trackRowIndex ?? 0,
+                startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+                durationFrames: t.duration ?? ((t.endFrame ?? 0) - (t.startFrame ?? 0)),
+                sourceStartTime: t.sourceStartTime,
+                volume: t.volume, muted: t.muted,
+                letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
+                captionText: t.type === 'subtitle' ? (t.subtitleText ?? undefined) : undefined,
+              })),
+            };
+            window.electronAPI.invoke('mycelium:sendMessage', {
+              text: `continue (QA report — fix these before declaring done:\n${qaNote})`,
+              mediaContext: mediaCtx,
+              timelineSnapshot: timelineCtx,
+              activeDownloads: [],
+            });
+            setAgentStatus('running');
+          }, 800);
+        }
+      } catch (e) {
+        console.error('[FridayPanel] QA check failed:', e);
+        setMessages((prev) => prev.filter((m) => m.text !== 'Running QA check…'));
+      } finally {
+        qaRunningRef.current = false;
+      }
+    };
+
     const handleDone = () => {
       if (interruptedRef.current) { interruptedRef.current = false; return; }
       setAgentStatus('done');
@@ -587,6 +783,15 @@ export function FridayPanel({ className }: { className?: string }) {
       submittingRef.current = false;
       // Remove the transient "thinking" indicator
       setMessages((prev) => prev.filter((m) => m.text !== 'E.D.I.T.H thinking…'));
+      // If EDITH just finished a QA correction turn, run a verification pass
+      if (isQACorrectionRunRef.current) {
+        substantialOpsThisRunRef.current = 0;
+        runPostEditQA(true);
+      } else if (substantialOpsThisRunRef.current >= 3) {
+        // Trigger initial QA after a substantial edit (3+ meaningful ops)
+        substantialOpsThisRunRef.current = 0;
+        runPostEditQA();
+      }
       if (activePlanIdRef.current) {
         const planId = activePlanIdRef.current;
         setMessages((prev) => {
@@ -617,6 +822,10 @@ export function FridayPanel({ className }: { className?: string }) {
 
     const handlePlan = (_: unknown, data: { steps: Array<{ id: string; step: string }> }) => {
       if (interruptedRef.current) return;
+      // EDITH is laying out a plan — she's thinking
+      if (useEdithEditingStore.getState().isEditing) {
+        useEdithEditingStore.getState().setIsThinking(true);
+      }
       if (activePlanIdRef.current) {
         // Update the placeholder we already inserted
         const planId = activePlanIdRef.current;
@@ -678,6 +887,11 @@ export function FridayPanel({ className }: { className?: string }) {
     return () => {
       offApplied(); offFailed(); offDrained(); offPaused(); offResumed();
       (window as any).myceliumAPI?.removeAllListeners?.();
+      window.electronAPI.removeListener('mycelium:message', handleAgentMsg);
+      window.electronAPI.removeListener('mycelium:op', handleOp);
+      window.electronAPI.removeListener('mycelium:done', handleDone);
+      window.electronAPI.removeListener('mycelium:question', handleQuestion);
+      window.electronAPI.removeListener('mycelium:plan', handlePlan);
     };
   }, []);
 
@@ -756,10 +970,11 @@ export function FridayPanel({ className }: { className?: string }) {
         mediaName: t.source ? t.source.replace(/\\/g, '/').split('/').pop() ?? t.source : (t.name ?? t.id),
         sourcePath: t.source ?? '',
         type: t.type ?? 'video',
-        layer: t.layer ?? 0,
+        layer: t.trackRowIndex ?? 0,
         startFrame: t.startFrame ?? 0,
         endFrame: t.endFrame ?? 0,
         durationFrames: t.duration ?? ((t.endFrame ?? 0) - (t.startFrame ?? 0)),
+        sourceStartTime: t.sourceStartTime ?? 0,
         volume: t.volume,
         muted: t.muted,
         letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
@@ -812,6 +1027,9 @@ export function FridayPanel({ className }: { className?: string }) {
     if ((!text && attachments.length === 0) || submittingRef.current) return;
     interruptedRef.current = false;
     submittingRef.current = true;
+    substantialOpsThisRunRef.current = 0; // reset per-run counter
+    isQACorrectionRunRef.current = false; // new user turn resets correction cycle
+    lastUserRequestRef.current = text;
     const attachedPaths = attachments.map((a) => a.path);
     const imagePreviews = attachments.filter((a) => a.preview).map((a) => a.preview!);
     const fullText = attachedPaths.length > 0
@@ -938,6 +1156,7 @@ export function FridayPanel({ className }: { className?: string }) {
       submittingRef.current = false;
       setAgentStatus('idle');
       setActiveAgent(null);
+      useEdithEditingStore.getState().stopEditing();
       setMessages((prev) => [
         ...prev,
         { id: Math.random().toString(36).slice(2), role: 'system', text: 'Interrupted', timestamp: Date.now() },
@@ -1010,6 +1229,7 @@ export function FridayPanel({ className }: { className?: string }) {
                   operationEngine.clearQueue();
                   window.electronAPI.invoke('mycelium:stop');
                   setAgentStatus('idle');
+                  useEdithEditingStore.getState().stopEditing();
                   submittingRef.current = false;
                 }}
                 className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-red-400 border border-white/10 hover:border-red-900/50 transition-colors"
@@ -1017,6 +1237,87 @@ export function FridayPanel({ className }: { className?: string }) {
                 Stop
               </button>
             </>
+          )}
+          {!isActive && (
+            <button
+              onClick={() => {
+                const { startEditing, stopEditing, setHeadFrame, setOpLabel } =
+                  useEdithEditingStore.getState();
+                const { setCurrentFrame } = useVideoEditorStore.getState();
+                // Scale frame positions to the actual timeline length
+                const totalFrames: number =
+                  (useVideoEditorStore.getState() as any)?.timeline?.totalFrames ?? 900;
+                const scale = (f: number) => Math.round((f / 325) * totalFrames);
+                startEditing();
+                const ops: [number, string][] = [
+                  [scale(0),   'trimClip — in-point'],
+                  [scale(4),   'trimClip — nudge back'],
+                  [scale(6),   'trimClip — locked'],
+                  [scale(18),  'addCaption — start'],
+                  [scale(14),  'addCaption — micro-pull'],
+                  [scale(20),  'addCaption — confirmed'],
+                  [scale(42),  'addCaption — end'],
+                  [scale(38),  'addCaption — shorten'],
+                  [scale(44),  'addCaption — locked'],
+                  [scale(58),  'addCaption — next caption start'],
+                  [scale(62),  'addCaption — confirmed'],
+                  [scale(88),  'addCaption — end'],
+                  [scale(82),  'addCaption — trim end'],
+                  [scale(90),  'addCaption — locked'],
+                  [scale(105), 'addBroll — scanning'],
+                  [scale(116), 'addBroll — placing'],
+                  [scale(110), 'addBroll — micro-pull'],
+                  [scale(118), 'addBroll — align'],
+                  [scale(148), 'addBroll — out-point'],
+                  [scale(142), 'addBroll — trim'],
+                  [scale(152), 'addBroll — locked'],
+                  [scale(165), 'addCaption — start'],
+                  [scale(172), 'addCaption — confirmed'],
+                  [scale(167), 'addCaption — micro-pull'],
+                  [scale(175), 'addCaption — locked'],
+                  [scale(200), 'addCaption — end'],
+                  [scale(195), 'addCaption — tighten'],
+                  [scale(204), 'addCaption — locked'],
+                  [scale(5),   'colorGrade — pass from start…'],
+                  [scale(86),  'colorGrade — mid…'],
+                  [scale(206), 'colorGrade — through'],
+                  [scale(215), 'addBroll — insert'],
+                  [scale(222), 'addBroll — placing'],
+                  [scale(218), 'addBroll — micro-pull'],
+                  [scale(226), 'addBroll — in-point'],
+                  [scale(254), 'addBroll — out-point'],
+                  [scale(248), 'addBroll — shorten'],
+                  [scale(257), 'addBroll — locked'],
+                  [scale(270), 'addCaption — CTA gap check'],
+                  [scale(278), 'addCaption — start'],
+                  [scale(273), 'addCaption — micro-pull'],
+                  [scale(281), 'addCaption — locked'],
+                  [scale(312), 'addCaption — end'],
+                  [scale(307), 'addCaption — tighten'],
+                  [scale(315), 'addCaption — locked'],
+                  [scale(322), 'trimClip — out-point'],
+                  [scale(318), 'trimClip — micro-pull'],
+                  [scale(325), 'trimClip — locked'],
+                  [scale(5),   'colorGrade — final pass…'],
+                  [scale(163), 'colorGrade — mid…'],
+                  [scale(325), '✓ Edit complete'],
+                ];
+                let i = 0;
+                const tick = () => {
+                  if (i >= ops.length) { stopEditing(); return; }
+                  const [frame, label] = ops[i++];
+                  setCurrentFrame(frame);
+                  setHeadFrame(frame);
+                  setOpLabel(label);
+                  setTimeout(tick, 55);
+                };
+                tick();
+              }}
+              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-cyan-400 border border-white/[0.06] hover:border-cyan-900/50 transition-colors"
+              title="Test EDITH timeline visualization"
+            >
+              Test viz
+            </button>
           )}
           {!isActive && messages.length > 1 && (
             <button
