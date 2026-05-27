@@ -18,6 +18,7 @@ import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
 import { getDisplayFps } from '../stores/videoEditor/types/timeline.types';
 import { AudioWaveform } from './audioWaveform';
 import { ImageTrackStrip } from './imageTrackStrip';
+import { TrackContextMenu } from './trackContextMenu';
 import {
   checkSnapPosition,
   findAllSnapPoints,
@@ -191,6 +192,7 @@ const TrackItemWrapper: React.FC<{
 
     return (
       <div
+        data-edith-target={`track-body:${track.id}`}
         className={cn(
           'absolute rounded flex items-center select-none transition-opacity duration-150',
           getTrackItemHeightClasses(track.type),
@@ -894,42 +896,44 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
 
     return (
       <>
-        <TrackItemWrapper
-          track={track}
-          frameWidth={frameWidth}
-          isSelected={isSelected}
-          isDragging={isDragging}
-          isResizing={isResizing}
-          isSplitModeActive={isSplitModeActive}
-          isDuplicationFeedback={isDuplicationFeedback}
-          isProxyProcessing={isProxyProcessing}
-          isTranscoding={isTranscoding}
-          onClick={handleClick}
-          onMouseDown={handleMouseDown}
-        >
-          {trackContent}
+        <TrackContextMenu track={track}>
+          <TrackItemWrapper
+            track={track}
+            frameWidth={frameWidth}
+            isSelected={isSelected}
+            isDragging={isDragging}
+            isResizing={isResizing}
+            isSplitModeActive={isSplitModeActive}
+            isDuplicationFeedback={isDuplicationFeedback}
+            isProxyProcessing={isProxyProcessing}
+            isTranscoding={isTranscoding}
+            onClick={handleClick}
+            onMouseDown={handleMouseDown}
+          >
+            {trackContent}
 
-          {track.type === 'audio' && track.volume !== undefined && (
-            <div className="absolute right-1 top-1 text-[8px] text-foreground z-20">
-              {Math.round(track.volume * 100)}%
-            </div>
-          )}
+            {track.type === 'audio' && track.volume !== undefined && (
+              <div className="absolute right-1 top-1 text-[8px] text-foreground z-20">
+                {Math.round(track.volume * 100)}%
+              </div>
+            )}
 
-          {track.locked && (
-            <div className="absolute top-0.5 right-0.5 text-[10px] text-foreground/60 z-20">
-              🔒
-            </div>
-          )}
+            {track.locked && (
+              <div className="absolute top-0.5 right-0.5 text-[10px] text-foreground/60 z-20">
+                🔒
+              </div>
+            )}
 
-          {track.isLinked && (
-            <div
-              className="absolute top-0.5 left-0.5 text-[10px] text-blue-400 z-20 animate-pulse"
-              title={`Linked to ${track.type === 'video' ? 'audio' : 'video'} track`}
-            >
-              🔗
-            </div>
-          )}
-        </TrackItemWrapper>
+            {track.isLinked && (
+              <div
+                className="absolute top-0.5 left-0.5 text-[10px] text-blue-400 z-20 animate-pulse"
+                title={`Linked to ${track.type === 'video' ? 'audio' : 'video'} track`}
+              >
+                🔗
+              </div>
+            )}
+          </TrackItemWrapper>
+        </TrackContextMenu>
 
         {!track.locked &&
           isSelected &&
@@ -1561,7 +1565,7 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
       });
 
     // Calculate placeholder rows needed
-    const MAX_PLACEHOLDER_ROWS = 3;
+    const MAX_PLACEHOLDER_ROWS = 1;
 
     const { placeholderRowsAbove, placeholderRowsBelow, totalHeight } =
       useMemo(() => {
@@ -2054,7 +2058,7 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
         }}
       >
         <div
-          className="relative flex flex-col justify-center"
+          className="relative flex flex-col"
           style={{
             width: '100%',
             minHeight: `${totalHeight}px`,
@@ -2101,9 +2105,6 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
             return (
               <div
                 key={rowDef.id}
-                className={cn(
-                  isVideoZero && 'sticky bottom-0 z-30 bg-background',
-                )}
               >
                 <TrackRow
                   rowDef={rowDef}

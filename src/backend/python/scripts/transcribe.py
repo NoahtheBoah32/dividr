@@ -1,4 +1,4 @@
-"""
+﻿"""
 Faster-Whisper Transcription Script for Dividr
 Provides word-level transcription with real-time progress updates
 Outputs structured JSON for Electron integration
@@ -203,10 +203,16 @@ def transcribe_audio(
         segments_list = []
         segment_count = 0
         total_duration = info.duration if hasattr(info, 'duration') else 0
-        
+
+        # Chunk batching — emit every 30s so renderer can act progressively
+        CHUNK_DURATION = 30.0
+        current_chunk_segments = []
+        current_chunk_start = 0.0
+        chunk_index = 0
+
         for segment in segments_generator:
             segment_count += 1
-            
+
             # Build word list with timestamps
             words = []
             if segment.words:
@@ -217,7 +223,7 @@ def transcribe_audio(
                         "end": round(word.end, 3),
                         "confidence": round(word.probability, 3)
                     })
-            
+
             # Build segment object
             segment_obj = {
                 "start": round(segment.start, 3),
@@ -226,7 +232,22 @@ def transcribe_audio(
                 "words": words
             }
             segments_list.append(segment_obj)
-            
+            current_chunk_segments.append(segment_obj)
+
+            # Flush chunk when 30 seconds of audio accumulated
+            if segment.end - current_chunk_start >= CHUNK_DURATION:
+                chunk_data = {
+                    "chunkIndex": chunk_index,
+                    "startTime": round(current_chunk_start, 3),
+                    "endTime": round(segment.end, 3),
+                    "segments": current_chunk_segments,
+                    "text": " ".join(s["text"] for s in current_chunk_segments)
+                }
+                print(f"CHUNK|{json.dumps(chunk_data)}", flush=True)
+                chunk_index += 1
+                current_chunk_segments = []
+                current_chunk_start = segment.end
+
             # Calculate progress based on segment end time
             if total_duration > 0:
                 progress = 20 + (segment.end / total_duration) * 70
@@ -235,6 +256,17 @@ def transcribe_audio(
                     progress,
                     f"Processed {segment_count} segments..."
                 )
+
+        # Flush remaining segments as the final chunk
+        if current_chunk_segments:
+            chunk_data = {
+                "chunkIndex": chunk_index,
+                "startTime": round(current_chunk_start, 3),
+                "endTime": round(current_chunk_segments[-1]["end"], 3),
+                "segments": current_chunk_segments,
+                "text": " ".join(s["text"] for s in current_chunk_segments)
+            }
+            print(f"CHUNK|{json.dumps(chunk_data)}", flush=True)
         
         elapsed_time = time.time() - start_time
         
@@ -322,7 +354,7 @@ def main():
         "--model",
         type=str,
         default="large-v3",
-        choices=["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"],
+        choices=["tiny", "base", "small", "medium", "large", "large-v2", "large-v3", "distil-large-v3"],
         help="Model size (default: large-v3)"
     )
     
@@ -420,4 +452,5 @@ if __name__ == "__main__":
     except Exception as e:
         log_error("unknown_error", f"Unexpected error: {str(e)}", str(e))
         sys.exit(1)
+
 

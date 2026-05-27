@@ -1,116 +1,24 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AgentMessage, AgentPlan, AgentQuestion, AgentStatus, QueuedOp } from './types';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AgentMessage, AgentPlan, AgentStatus, QueuedOp } from './types';
 import { operationEngine } from './operationEngine';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor/index';
 import { usePanelStore } from '@/frontend/features/editor/stores/PanelStore';
-import type { HistoryEntry, MediaContextItem, TimelineSnapshot } from '@/backend/mycelium/agentRuntime';
+import type { HistoryEntry, MediaContextItem, SfxEntry, TimelineSnapshot } from '@/backend/mycelium/agentRuntime';
 import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
 import { useEdithEditingStore } from './stores/edithEditingStore';
+import { setSfxLibraryCache } from './storeAdapter';
 
-const LETTERS = ['A', 'B', 'C', 'D'];
-
-function QuestionCard({
-  message,
-  onAnswer,
-}: {
-  message: AgentMessage;
-  onAnswer: (msgId: string, answer: string) => void;
-}) {
-  const q = message.question!;
-  const [otherOpen, setOtherOpen] = useState(false);
-  const [otherText, setOtherText] = useState('');
-  const options = [...q.options, 'Other'];
-
-  const handleSelect = (opt: string, index: number) => {
-    if (q.answered) return;
-    if (index === options.length - 1) {
-      setOtherOpen(true);
-      return;
-    }
-    onAnswer(message.id, opt);
-  };
-
-  const handleOtherSubmit = () => {
-    const val = otherText.trim();
-    if (!val) return;
-    onAnswer(message.id, val);
-    setOtherOpen(false);
-  };
-
+function renderBold(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  if (parts.length === 1) return text;
   return (
-    <div className="px-4 py-2">
-      <div
-        className="rounded-lg border border-white/[0.08] overflow-hidden"
-        style={{ background: '#1a1a1a' }}
-      >
-        <div className="px-3 pt-3 pb-2">
-          <p className="text-xs text-zinc-200 leading-relaxed">{message.text}</p>
-        </div>
-        <div className="border-t border-white/[0.06]">
-          {options.map((opt, i) => {
-            const isSelected = q.answered && q.answer === opt;
-            const isOther = i === options.length - 1;
-            return (
-              <button
-                key={i}
-                onClick={() => handleSelect(opt, i)}
-                disabled={q.answered}
-                className={[
-                  'w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors',
-                  'border-b border-white/[0.04] last:border-0',
-                  q.answered
-                    ? isSelected
-                      ? 'text-emerald-400 bg-emerald-950/30'
-                      : 'text-zinc-700 cursor-default'
-                    : 'text-zinc-300 hover:bg-white/[0.04] cursor-pointer',
-                ].join(' ')}
-              >
-                <span
-                  className={[
-                    'flex-shrink-0 w-5 h-5 rounded text-[10px] font-mono flex items-center justify-center border',
-                    q.answered
-                      ? isSelected
-                        ? 'border-emerald-500/50 text-emerald-400 bg-emerald-950/40'
-                        : 'border-white/[0.06] text-zinc-700'
-                      : isOther
-                        ? 'border-white/10 text-zinc-500'
-                        : 'border-white/10 text-zinc-400',
-                  ].join(' ')}
-                >
-                  {LETTERS[i]}
-                </span>
-                <span className="flex-1">{opt}</span>
-                {isSelected && <span className="text-[10px] text-emerald-600">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-        {otherOpen && !q.answered && (
-          <div className="px-3 pb-3 pt-1 border-t border-white/[0.06]">
-            <div className="flex gap-2 items-center">
-              <input
-                autoFocus
-                className="flex-1 bg-white/[0.04] text-xs text-zinc-200 placeholder-zinc-700 rounded px-2 py-1.5 outline-none border border-white/[0.08] focus:border-white/20"
-                placeholder="Type your answer…"
-                value={otherText}
-                onChange={(e) => setOtherText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleOtherSubmit();
-                  if (e.key === 'Escape') { setOtherOpen(false); setOtherText(''); }
-                }}
-              />
-              <button
-                onClick={handleOtherSubmit}
-                disabled={!otherText.trim()}
-                className="text-[11px] px-2 py-1.5 rounded bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 disabled:opacity-30 transition-colors border border-emerald-900/40"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+    <>
+      {parts.map((part, i) =>
+        part.startsWith('**') && part.endsWith('**')
+          ? <strong key={i} className="font-semibold text-zinc-100">{part.slice(2, -2)}</strong>
+          : <React.Fragment key={i}>{part}</React.Fragment>
+      )}
+    </>
   );
 }
 
@@ -167,7 +75,7 @@ function PlanCard({
           className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-100 transition-colors font-medium"
         >
           <span>View process</span>
-          <span className="text-zinc-500">{plan.open ? '▾' : '›'}</span>
+          <span className="text-zinc-500">{plan.open ? 'â–¾' : 'â€º'}</span>
         </button>
       )}
 
@@ -220,7 +128,7 @@ function PlanCard({
                         if (e.key === 'Escape') { setEditingStepId(null); setEditValue(''); }
                       }}
                       onBlur={() => commitEdit(step.id)}
-                      placeholder="Type your instruction…"
+                      placeholder="Type your instructionâ€¦"
                       className="w-full bg-transparent border-0 border-b border-white/20 text-[13px] text-white outline-none pb-px placeholder-zinc-600 leading-snug"
                       style={{ boxShadow: 'none', WebkitAppearance: 'none' }}
                     />
@@ -273,7 +181,7 @@ function ConsentScreen({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
         <div>
           <p className="text-sm font-medium text-zinc-100 mb-1">Allow EDITH to edit</p>
           <p className="text-[12px] text-zinc-500 leading-relaxed">
-            She'll read your project context to edit effectively — nothing leaves your machine without your approval.
+            She'll read your project context to edit effectively â€" nothing leaves your machine without your approval.
           </p>
         </div>
 
@@ -282,11 +190,11 @@ function ConsentScreen({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
           {[
             'She won\'t record, export, or transmit your footage.',
             'She won\'t upload anything to the cloud without a separate confirmation from you.',
-            'She can\'t see raw video — only clip names, positions, and transcripts.',
+            'She can\'t see raw video â€" only clip names, positions, and transcripts.',
             'When she downloads b-roll, a prompt will ask for your approval before anything enters your media library.',
           ].map((line) => (
             <div key={line} className="flex gap-2 items-start">
-              <span className="text-zinc-700 text-[11px] mt-[1px] flex-shrink-0">—</span>
+              <span className="text-zinc-700 text-[11px] mt-[1px] flex-shrink-0">â€"</span>
               <p className="text-[11px] text-zinc-600 leading-relaxed">{line}</p>
             </div>
           ))}
@@ -318,6 +226,48 @@ function ConsentScreen({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
   );
 }
 
+const THINKING_TEXT = 'E.D.I.T.H thinking...';
+
+function ThinkingIndicator() {
+  const [displayed, setDisplayed] = useState('');
+  const frameRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let index = 0;
+    let cancelled = false;
+
+    const tick = () => {
+      if (cancelled) return;
+      index += 1;
+      setDisplayed(THINKING_TEXT.slice(0, index));
+      if (index < THINKING_TEXT.length) {
+        frameRef.current = setTimeout(tick, 65);
+      } else {
+        // hold at end then restart
+        frameRef.current = setTimeout(() => {
+          if (cancelled) return;
+          index = 0;
+          setDisplayed('');
+          frameRef.current = setTimeout(tick, 100);
+        }, 500);
+      }
+    };
+
+    frameRef.current = setTimeout(tick, 65);
+    return () => {
+      cancelled = true;
+      if (frameRef.current) clearTimeout(frameRef.current);
+    };
+  }, []);
+
+  return (
+    <span className="text-[12px] italic text-zinc-400">
+      {displayed}
+      <span className="inline-block w-[1px] h-[10px] bg-zinc-400 ml-[1px] align-middle animate-pulse" />
+    </span>
+  );
+}
+
 const STATUS_DOT: Record<AgentStatus, string> = {
   idle: 'bg-zinc-600',
   running: 'bg-emerald-400 animate-pulse',
@@ -328,21 +278,6 @@ const STATUS_DOT: Record<AgentStatus, string> = {
 
 function historyToMessages(entries: HistoryEntry[]): AgentMessage[] {
   return entries.map((e, i) => {
-    if (e.role === 'edith' && e.text.startsWith('Q:')) {
-      try {
-        const q = JSON.parse(e.text.slice(2).trim()) as { question: string; options: string[] };
-        // If a user message follows this question in history, it was already answered
-        const answeredEntry = entries.slice(i + 1).find((next) => next.role === 'user');
-        const answered = !!answeredEntry;
-        return {
-          id: e.id,
-          role: 'edith' as AgentMessage['role'],
-          text: q.question,
-          timestamp: e.timestamp,
-          question: { options: q.options, answered, answer: answered ? answeredEntry!.text : undefined },
-        };
-      } catch { /* fall through */ }
-    }
     if (e.role === 'edith' && e.text.startsWith('PLAN:')) {
       try {
         const steps = JSON.parse(e.text.slice(5).trim()) as Array<{ id: string; step: string }>;
@@ -372,6 +307,9 @@ export function FridayPanel({ className }: { className?: string }) {
   const hidePanel = usePanelStore((state) => state.hidePanel);
 
   const currentProjectId = useVideoEditorStore((state) => state.currentProjectId);
+  const currentOpLabel = useEdithEditingStore((s) => s.currentOpLabel);
+  const isEditing = useEdithEditingStore((s) => s.isEditing);
+  const isThinkingStore = useEdithEditingStore((s) => s.isThinking);
 
   // Consent state: per-project, skip if this project already agreed or has existing history
   const getConsentKey = () => `edith-consent-${currentProjectId ?? 'default'}`;
@@ -393,6 +331,7 @@ export function FridayPanel({ className }: { className?: string }) {
   const [showQueue, setShowQueue] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ name: string; path: string; preview?: string }>>([]);
   const [activeDownloads, setActiveDownloads] = useState<{ url: string; topic?: string }[]>([]);
+  const [sfxLibrary, setSfxLibrary] = useState<SfxEntry[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -402,13 +341,24 @@ export function FridayPanel({ className }: { className?: string }) {
   const agentStatusRef = useRef<AgentStatus>('idle');
   const interruptedRef = useRef(false);
   const pendingSlowOpsRef = useRef<Set<string>>(new Set());
-  // QA tracking — count substantial ops per EDITH run, trigger QA after done
+  const pendingSnapshotAnalysisRef = useRef<string | null>(null);
+  // QA tracking â€" count substantial ops per EDITH run, trigger QA after done
   const substantialOpsThisRunRef = useRef(0);
   const qaRunningRef = useRef(false);
   // Self-correction memory loop
   const isQACorrectionRunRef = useRef(false);
   const lastQAIssuesRef = useRef<any[]>([]);
   const lastUserRequestRef = useRef('');
+  // Transcription chunk pipeline — fires EDITH per 30s chunk while Whisper runs in background
+  const pendingTranscriptChunksRef = useRef<Array<{chunkIndex: number; startTime: number; endTime: number; text: string}>>([]);
+  const edithLlmActiveRef = useRef(false);
+  const transcriptionPipelineActiveRef = useRef(false);
+  const pendingDownloadContinueRef = useRef(false);
+  const [approvalTransitioning, setApprovalTransitioning] = useState(false);
+  const denyContextRef = useRef<string | null>(null);
+  // Gate: once a download op is seen in a turn, drop all subsequent non-download ops.
+  // Prevents EDITH from placing broll in the same turn as downloads (files don't exist yet).
+  const seenDownloadThisTurnRef = useRef(false);
   const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
   const tracks = useVideoEditorStore((state) => state.tracks);
   const timeline = useVideoEditorStore((state) => state.timeline);
@@ -417,6 +367,17 @@ export function FridayPanel({ className }: { className?: string }) {
   const approvalApproveAll = useDownloadApprovalStore((s) => s.approveAll);
   const approvalDeny = useDownloadApprovalStore((s) => s.deny);
 
+  // Load SFX library once on mount
+  useEffect(() => {
+    window.electronAPI.invoke('scan-sfx-library').then((result: any) => {
+      if (result?.entries?.length) {
+        setSfxLibrary(result.entries);
+        setSfxLibraryCache(result.entries);
+        console.log(`[SFX] Loaded ${result.entries.length} effects from ${result.libPath}`);
+      }
+    }).catch(() => {});
+  }, []);
+
   // Load history + draft when project changes; auto-grant consent if history exists
   useEffect(() => {
     if (!currentProjectId) return;
@@ -424,7 +385,7 @@ export function FridayPanel({ className }: { className?: string }) {
     window.electronAPI.invoke('mycelium:setProject', currentProjectId).then((result: any) => {
       if (result?.messages?.length) {
         setMessages(historyToMessages(result.messages));
-        // History exists — consent was implicitly given in a prior session
+        // History exists â€" consent was implicitly given in a prior session
         setConsentGiven(true);
       } else {
         setMessages([{
@@ -437,10 +398,14 @@ export function FridayPanel({ className }: { className?: string }) {
     });
   }, [currentProjectId]);
 
-  // Shared silent continue — fires EDITH with fresh context, no chat bubble
+  // Shared silent continue â€" fires EDITH with fresh context, no chat bubble
   const triggerAutoContinue = useCallback((contextNote?: string) => {
+    edithLlmActiveRef.current = true; // EDITH LLM subprocess is about to start
     setTimeout(() => {
-      if (interruptedRef.current) return;
+      if (interruptedRef.current) {
+        edithLlmActiveRef.current = false;
+        return;
+      }
       const s = useVideoEditorStore.getState() as any;
       const fps = s.timeline?.fps || 30;
       const mediaCtx = (s.mediaLibrary ?? []).map((item: any) => ({
@@ -479,22 +444,29 @@ export function FridayPanel({ className }: { className?: string }) {
           captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
         })),
       };
-      const text = contextNote ? `continue (note: ${contextNote})` : 'continue';
+      const snapshotNote = pendingSnapshotAnalysisRef.current;
+      pendingSnapshotAnalysisRef.current = null;
+      const combinedNote = [snapshotNote, contextNote].filter(Boolean).join(' | ');
+      const text = combinedNote ? `continue (note: ${combinedNote})` : 'continue';
       window.electronAPI.invoke('mycelium:sendMessage', {
         text,
         mediaContext: mediaCtx,
         timelineSnapshot: timelineCtx,
         activeDownloads: [],
+        sfxLibrary,
       });
       setAgentStatus('running');
     }, 600);
-  }, []);
+  }, [sfxLibrary]);
 
-  // Silent bell after a download is fully imported — fires when remaining === 0 (last approval)
+  // Fires after each approved download — triggerContinue flag controls whether EDITH runs now
   useEffect(() => {
     const handler = (e: Event) => {
-      const { remaining } = (e as CustomEvent<{ remaining: number }>).detail;
-      if (remaining === 0 && !interruptedRef.current) {
+      const { triggerContinue } = (e as CustomEvent<{ remaining: number; triggerContinue?: boolean }>).detail;
+      if (!triggerContinue || interruptedRef.current) return;
+      if (edithLlmActiveRef.current) {
+        pendingDownloadContinueRef.current = true;
+      } else {
         triggerAutoContinue();
       }
     };
@@ -502,12 +474,171 @@ export function FridayPanel({ className }: { className?: string }) {
     return () => window.removeEventListener('edith:downloadImported', handler);
   }, [triggerAutoContinue]);
 
+  // Deny clears the queue — prompt the user for a new direction
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { title } = (e as CustomEvent<{ title: string }>).detail;
+      denyContextRef.current = `The user denied the b-roll download "${title}". They will tell you what to search for instead — wait for their message.`;
+      setMessages((prev) => [...prev, {
+        id: Math.random().toString(36).slice(2),
+        role: 'system' as const,
+        text: `"${title}" denied — what should EDITH search for instead?`,
+        timestamp: Date.now(),
+      }]);
+    };
+    window.addEventListener('edith:downloadDenied', handler);
+    return () => window.removeEventListener('edith:downloadDenied', handler);
+  }, []);
+
+  // Transcription chunk pipeline — fire EDITH per 30s segment while Whisper runs in background
+  const flushTranscriptChunks = useCallback(() => {
+    const chunks = pendingTranscriptChunksRef.current.splice(0);
+    if (!chunks.length) return;
+    const startTime = chunks[0].startTime;
+    const endTime = chunks[chunks.length - 1].endTime;
+    const text = chunks.map((c: any) => c.text).join(' ').trim();
+    const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    const chunkNote = `Transcription chunk [${fmt(startTime)}–${fmt(endTime)}]: "${text.slice(0, 600)}". Captions for this window are being placed automatically — do NOT emit caption, resize, or letterbox. Emit at most 1 download op (isStockFootage:true) for the single most visually compelling moment in this window. End your turn immediately after the download op (or immediately if nothing compelling).`;
+    triggerAutoContinue(chunkNote);
+  }, [triggerAutoContinue]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const chunk = (e as CustomEvent).detail;
+      if (!chunk?.text?.trim() || !transcriptionPipelineActiveRef.current) return;
+      pendingTranscriptChunksRef.current.push({
+        chunkIndex: chunk.chunkIndex,
+        startTime: chunk.startTime,
+        endTime: chunk.endTime,
+        text: chunk.text,
+      });
+      if (!edithLlmActiveRef.current) {
+        flushTranscriptChunks();
+      }
+    };
+    window.addEventListener('edith:transcriptChunk', handler);
+    return () => window.removeEventListener('edith:transcriptChunk', handler);
+  }, [flushTranscriptChunks]);
+
+  // Frame snapshot verification — EDITH jumps playhead, we capture + analyze, then auto-continue
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { atSeconds, reason, analysis, error, frameBase64 } = (e as CustomEvent<{
+        atSeconds: number; reason: string; analysis: string | null; error: string | null; frameBase64: string | null;
+      }>).detail;
+      const mins = String(Math.floor(atSeconds / 60)).padStart(2, '0');
+      const secs = String(Math.floor(atSeconds % 60)).padStart(2, '0');
+      const label = error
+        ? `snapshot failed at ${mins}:${secs}`
+        : `snapshot · ${mins}:${secs} · ${reason.slice(0, 50)}`;
+      if (frameBase64) {
+        useEdithEditingStore.getState().setLastVerifiedFrame(frameBase64, null);
+        setTimeout(() => useEdithEditingStore.getState().setLastVerifiedFrame(null, null), 6000);
+      }
+      setMessages((prev) => [...prev, {
+        id: Math.random().toString(36).slice(2),
+        role: 'system',
+        text: `__snapshot__${label}`,
+        timestamp: Date.now(),
+        imagePreviews: frameBase64 ? [`data:image/jpeg;base64,${frameBase64}`] : undefined,
+      }]);
+      pendingSnapshotAnalysisRef.current = analysis
+        ? `Visual check at ${mins}:${secs}: ${analysis}`
+        : `Visual check at ${mins}:${secs} failed — continue without visual feedback.`;
+    };
+    window.addEventListener('edith:snapshotTaken', handler);
+    return () => window.removeEventListener('edith:snapshotTaken', handler);
+  }, []);
+
+  // scanVideo result — fires a continue turn with the found timestamp
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { description, foundAtSec, frameBase64 } = (e as CustomEvent).detail;
+      if (frameBase64) {
+        useEdithEditingStore.getState().setLastVerifiedFrame(frameBase64, null);
+        setTimeout(() => useEdithEditingStore.getState().setLastVerifiedFrame(null, null), 8000);
+        setMessages((prev) => [...prev, {
+          id: Math.random().toString(36).slice(2),
+          role: 'system' as const,
+          text: `__snapshot__Scene scan: ${description}`,
+          timestamp: Date.now(),
+          imagePreviews: [`data:image/jpeg;base64,${frameBase64}`],
+        }]);
+      }
+      const allMatchesSec: number[] | null = (e as CustomEvent).detail?.allMatchesSec ?? null;
+      let note: string;
+      if (allMatchesSec !== null) {
+        // findAll mode — format all matching timestamps into segment ranges for EDITH
+        if (allMatchesSec.length === 0) {
+          note = `Segment scan result: no frames matched "${description}". Ask the user for approximate timestamps.`;
+        } else {
+          const tsStr = allMatchesSec.map((t: number) => `${t.toFixed(1)}s`).join(', ');
+          note = `Segment scan result: frames matching "${description}" found at: ${tsStr}. These are SAMPLED timestamps — the actual segment boundaries may be slightly before/after each. Derive contiguous ranges by grouping nearby timestamps, then emit deleteSegment ops to remove everything that does NOT match.`;
+        }
+      } else if (foundAtSec !== null && foundAtSec !== undefined) {
+        note = `Scene scan result: "${description}" found at ${foundAtSec.toFixed(1)}s. Now place the SFX at that timestamp.`;
+      } else {
+        note = `Scene scan result: "${description}" was not found. Ask the user for the timestamp manually.`;
+      }
+
+      // Scan completes after EDITH's turn ends — fire a new continue turn with the result
+      setAgentStatus('running');
+      const s = useVideoEditorStore.getState() as any;
+      const fps = s.timeline?.fps || 30;
+      const timelineCtx = {
+        fps,
+        currentFrame: s.timeline?.currentFrame ?? 0,
+        totalFrames: s.timeline?.totalFrames ?? 0,
+        selectedClipIds: s.selectedTrackIds ?? [],
+        clips: (s.tracks ?? []).map((t: any) => ({
+          id: t.id,
+          mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+          sourcePath: t.source ?? '',
+          type: t.type, layer: t.trackRowIndex ?? 0,
+          startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+          durationFrames: (t.endFrame ?? 0) - (t.startFrame ?? 0),
+        })),
+      };
+      window.electronAPI.invoke('mycelium:sendMessage', {
+        text: `continue (${note})`,
+        timelineSnapshot: timelineCtx,
+        activeDownloads: [],
+        sfxLibrary,
+      }).catch(() => {});
+    };
+    window.addEventListener('edith:scanVideoResult', handler);
+    return () => window.removeEventListener('edith:scanVideoResult', handler);
+  }, [sfxLibrary]);
+
+  // B-roll quality check thumbnails pushed from main process
+  useEffect(() => {
+    const handler = (_: unknown, data: { label: string; duration: number; passed: boolean; reason: string; frameBase64: string | null }) => {
+      if (data.frameBase64) {
+        useEdithEditingStore.getState().setLastVerifiedFrame(data.frameBase64, data.passed);
+        setTimeout(() => useEdithEditingStore.getState().setLastVerifiedFrame(null, null), 6000);
+      }
+      const statusText = data.passed ? 'passed' : `rejected — ${data.reason}`;
+      setMessages((prev) => [...prev, {
+        id: Math.random().toString(36).slice(2),
+        role: 'system',
+        text: `__brollcheck__${data.passed ? '✓' : '✗'} "${data.label}" ${data.duration}s — ${statusText}`,
+        timestamp: Date.now(),
+        imagePreviews: data.frameBase64 ? [`data:image/jpeg;base64,${data.frameBase64}`] : undefined,
+      }]);
+    };
+    (window.electronAPI as any).on('edith:brollCheck', handler);
+    return () => (window.electronAPI as any).removeListener('edith:brollCheck', handler);
+  }, []);
+
   // IPC listeners
   useEffect(() => {
     (window as any).myceliumAPI?.removeAllListeners?.();
 
     const SUBSTANTIAL_OP_TYPES = new Set([
+      // V1 names
       'addCaption', 'setBroll', 'insertClip', 'colorGrade', 'trimClip', 'cutSilence',
+      // V2 names
+      'caption', 'broll', 'grade', 'trim', 'silence', 'transcribe',
     ]);
     const offApplied = operationEngine.on('opApplied', (_opId: string, op: unknown) => {
       setQueue(operationEngine.getQueue());
@@ -533,7 +664,16 @@ export function FridayPanel({ className }: { className?: string }) {
       if (pendingSlowOpsRef.current.has(_opId)) {
         pendingSlowOpsRef.current.delete(_opId);
         if (pendingSlowOpsRef.current.size === 0) {
-          triggerAutoContinue();
+          const completedOp = op as any;
+          let note: string | undefined;
+          const isTranscribeOp = completedOp?.type === 'runWhisper' || completedOp?.type === 'transcribe';
+          if (isTranscribeOp && completedOp?.streamCaptions !== false) {
+            transcriptionPipelineActiveRef.current = false;
+            note = 'Transcription fully complete. Check ## Timeline — if subtitle clips exist, captions were placed automatically. Do NOT emit caption ops. Now: (1) scan transcript for the theanine/requested cut sections and emit cut ops at the start and end of each section, then delete the segment between them by emitting cut at start-of-section, cut at end-of-section, and deleteBroll (or a second cut to remove). (2) Check b-roll coverage and download for any uncovered 30s windows — do NOT re-download already placed. (3) Emit grade. (4) Emit snapshot.';
+          } else if (isTranscribeOp && completedOp?.streamCaptions === false) {
+            note = 'Transcription complete. Full transcript is in ## Available Project Media. Emit caption ops for the full transcript, then cuts, grade, snapshot.';
+          }
+          triggerAutoContinue(note);
         }
       }
     });
@@ -565,16 +705,22 @@ export function FridayPanel({ className }: { className?: string }) {
     const offPaused = operationEngine.on('paused', () => setAgentStatus('paused'));
     const offResumed = operationEngine.on('resumed', () => setAgentStatus('running'));
 
-    const handleAgentMsg = (_: unknown, data: { role: AgentMessage['role']; text: string }) => {
+    const handleAgentMsg = (_: unknown, data: { role: AgentMessage['role']; text: string; imagePreviews?: string[] }) => {
       if (interruptedRef.current) return;
       setMessages((prev) => [
         ...prev,
-        { id: Math.random().toString(36).slice(2), role: data.role, text: data.text, timestamp: Date.now() },
+        {
+          id: Math.random().toString(36).slice(2),
+          role: data.role,
+          text: data.text,
+          timestamp: Date.now(),
+          ...(data.imagePreviews?.length && { imagePreviews: data.imagePreviews }),
+        },
       ]);
       if (data.role !== 'user' && data.role !== 'system') {
         setActiveAgent(data.role);
         setAgentStatus('running');
-        // EDITH is speaking — she's thinking, not executing an op
+        // EDITH is speaking â€" she's thinking, not executing an op
         if (useEdithEditingStore.getState().isEditing) {
           useEdithEditingStore.getState().setIsThinking(true);
         }
@@ -585,12 +731,29 @@ export function FridayPanel({ className }: { className?: string }) {
       if (interruptedRef.current) return;
       try {
         const op = typeof opData === 'string' ? JSON.parse(opData) : opData;
-        if (op.type === 'downloadMedia') {
-          setActiveDownloads((prev) => [...prev, { url: op.url, topic: op.topic }]);
+        const isDownload = op.type === 'downloadMedia' || op.type === 'download';
+
+        // Enforce the download rule: once a download op is seen in a turn, drop every
+        // subsequent non-download op. Downloads are async — files don't exist in the media
+        // library until the next turn, so broll/caption ops placed after downloads fail silently.
+        if (seenDownloadThisTurnRef.current && !isDownload) {
+          console.warn(`[FridayPanel] Dropping op '${op.type}' — emitted after download in same turn`);
+          return;
+        }
+
+        if (isDownload) {
+          seenDownloadThisTurnRef.current = true;
+          setActiveDownloads((prev) => [...prev, { url: op.url ?? op.query, topic: op.topic ?? op.query }]);
         }
         const qId = operationEngine.enqueue(op);
-        if (op.type === 'runWhisper' || op.type === 'analyzeReference' || op.type === 'geminiEdit') {
+        // V1 + V2 slow op names — completion fires triggerAutoContinue with a context note
+        if (op.type === 'runWhisper' || op.type === 'transcribe' || op.type === 'analyzeReference' || op.type === 'geminiEdit' || op.type === 'snapshotVerify' || op.type === 'snapshot') {
           pendingSlowOpsRef.current.add(qId);
+        }
+        // Arm chunk pipeline for both V1 (runWhisper) and V2 (transcribe)
+        if ((op.type === 'runWhisper' || op.type === 'transcribe') && (op as any).streamCaptions !== false) {
+          transcriptionPipelineActiveRef.current = true;
+          pendingTranscriptChunksRef.current = [];
         }
         setQueue(operationEngine.getQueue());
       } catch (e) {
@@ -667,13 +830,13 @@ export function FridayPanel({ className }: { className?: string }) {
               }
             }
           } catch {
-            // non-fatal — vision check will proceed without caption screenshot
+            // non-fatal â€" vision check will proceed without caption screenshot
           }
         }
 
         setMessages((prev) => [
           ...prev,
-          { id: Math.random().toString(36).slice(2), role: 'system' as const, text: 'Running QA check…', timestamp: Date.now() },
+          { id: Math.random().toString(36).slice(2), role: 'system' as const, text: 'Running QA checkâ€¦', timestamp: Date.now() },
         ]);
 
         const result = await (window.electronAPI as any).invoke('mycelium:runQA', { clips, fps, reference, captionScreenshot });
@@ -684,8 +847,8 @@ export function FridayPanel({ className }: { className?: string }) {
 
         if (allIssues.length === 0 && qa.passed) {
           setMessages((prev) => [
-            ...prev.filter((m) => m.text !== 'Running QA check…'),
-            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA passed — ${qa.summary}`, timestamp: Date.now() },
+            ...prev.filter((m) => m.text !== 'Running QA checkâ€¦'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA passed â€" ${qa.summary}`, timestamp: Date.now() },
           ]);
           // Verification pass after a correction: record lessons for each original issue
           if (isVerification) {
@@ -702,23 +865,23 @@ export function FridayPanel({ className }: { className?: string }) {
             lastQAIssuesRef.current = [];
           }
         } else if (isVerification) {
-          // Second QA still has issues — stop the loop, don't record unresolved lessons
+          // Second QA still has issues â€" stop the loop, don't record unresolved lessons
           isQACorrectionRunRef.current = false;
           lastQAIssuesRef.current = [];
           setMessages((prev) => [
-            ...prev.filter((m) => m.text !== 'Running QA check…'),
-            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) remain after correction — review manually`, timestamp: Date.now() },
+            ...prev.filter((m) => m.text !== 'Running QA checkâ€¦'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) remain after correction â€" review manually`, timestamp: Date.now() },
           ]);
         } else {
           // Format issues for EDITH
           const issueLines = allIssues.map((iss: any) =>
-            `[${iss.severity.toUpperCase()}] ${iss.label}: ${iss.issue} → ${iss.suggestion}`
+            `[${iss.severity.toUpperCase()}] ${iss.label}: ${iss.issue} â†’ ${iss.suggestion}`
           ).join('\n');
           const qaNote = `QA check found ${allIssues.length} issue(s):\n${issueLines}\nSummary: ${qa.summary}`;
 
           setMessages((prev) => [
-            ...prev.filter((m) => m.text !== 'Running QA check…'),
-            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) — sending to EDITH`, timestamp: Date.now() },
+            ...prev.filter((m) => m.text !== 'Running QA checkâ€¦'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) â€" sending to EDITH`, timestamp: Date.now() },
           ]);
 
           // Mark this as a correction run so handleDone triggers a verification QA
@@ -760,27 +923,114 @@ export function FridayPanel({ className }: { className?: string }) {
               })),
             };
             window.electronAPI.invoke('mycelium:sendMessage', {
-              text: `continue (QA report — fix these before declaring done:\n${qaNote})`,
+              text: `continue (QA report â€" fix these before declaring done:\n${qaNote})`,
               mediaContext: mediaCtx,
               timelineSnapshot: timelineCtx,
               activeDownloads: [],
+              sfxLibrary,
             });
             setAgentStatus('running');
           }, 800);
         }
       } catch (e) {
         console.error('[FridayPanel] QA check failed:', e);
-        setMessages((prev) => prev.filter((m) => m.text !== 'Running QA check…'));
+        setMessages((prev) => prev.filter((m) => m.text !== 'Running QA checkâ€¦'));
       } finally {
         qaRunningRef.current = false;
       }
     };
 
+    // After EDITH finishes, collapse all per-phrase subtitle clips on each row into one
+    // continuous stream track. The merged track carries subtitleSegments[] so the renderer
+    // can highlight the right word at the right frame without losing per-phrase timing.
+    const mergeCaptionsIntoStream = () => {
+      const s = useVideoEditorStore.getState() as any;
+      const allSubs = (s.tracks as any[]).filter((t: any) => t.type === 'subtitle');
+      if (allSubs.length === 0) return;
+
+      // Group by trackRowIndex
+      const byRow = new Map<number, any[]>();
+      for (const sub of allSubs) {
+        const row = sub.trackRowIndex ?? 0;
+        if (!byRow.has(row)) byRow.set(row, []);
+        byRow.get(row)!.push(sub);
+      }
+
+      for (const [, rowClips] of byRow) {
+        // Expand any previously-merged stream back to its constituent segments so
+        // follow-up EDITH turns can re-merge cleanly with newly added clips.
+        const expanded: any[] = [];
+        const originalIds: string[] = [];
+        for (const clip of rowClips) {
+          originalIds.push(clip.id);
+          if (clip.subtitleSegments && clip.subtitleSegments.length > 0) {
+            for (const seg of clip.subtitleSegments) {
+              expanded.push({
+                subtitleText: seg.text,
+                startFrame: seg.startFrame,
+                endFrame: seg.endFrame,
+                subtitleStyle: { ...(clip.subtitleStyle ?? {}), highlightWordIndex: seg.highlightWordIndex ?? 0 },
+                subtitleTransform: clip.subtitleTransform,
+                color: clip.color,
+              });
+            }
+          } else {
+            expanded.push({
+              subtitleText: clip.subtitleText ?? '',
+              startFrame: clip.startFrame,
+              endFrame: clip.endFrame,
+              subtitleStyle: clip.subtitleStyle,
+              subtitleTransform: clip.subtitleTransform,
+              color: clip.color,
+            });
+          }
+        }
+
+        // Need at least 2 phrases to bother merging
+        if (expanded.length < 2) continue;
+
+        expanded.sort((a: any, b: any) => a.startFrame - b.startFrame);
+
+        const segments = expanded.map((c: any) => ({
+          text: c.subtitleText,
+          startFrame: c.startFrame,
+          endFrame: c.endFrame,
+          highlightWordIndex: c.subtitleStyle?.highlightWordIndex ?? 0,
+        }));
+
+        const mergedStart = segments[0].startFrame;
+        const mergedEnd = segments[segments.length - 1].endFrame;
+        const canonical = expanded[0]; // style/transform from first phrase
+
+        // Update the first original clip to become the merged stream track
+        const anchorId = originalIds[0];
+        s.updateTrack?.(anchorId, {
+          name: 'Captions',
+          subtitleText: segments[0].text,
+          startFrame: mergedStart,
+          endFrame: mergedEnd,
+          duration: mergedEnd - mergedStart,
+          subtitleStyle: canonical.subtitleStyle ?? {},
+          subtitleTransform: canonical.subtitleTransform ?? { x: 0, y: 0.3 },
+          subtitleSegments: segments,
+        });
+
+        // Remove all other clips on this row
+        for (let i = 1; i < originalIds.length; i++) {
+          s.removeTrack?.(originalIds[i]);
+        }
+      }
+    };
+
     const handleDone = () => {
-      if (interruptedRef.current) { interruptedRef.current = false; return; }
+      seenDownloadThisTurnRef.current = false; // reset download gate for next turn
+      if (interruptedRef.current) { interruptedRef.current = false; edithLlmActiveRef.current = false; return; }
+      edithLlmActiveRef.current = false;
       setAgentStatus('done');
       setActiveAgent(null);
       submittingRef.current = false;
+      // Merge all per-phrase subtitle clips into one continuous stream track per row
+      mergeCaptionsIntoStream();
       // Remove the transient "thinking" indicator
       setMessages((prev) => prev.filter((m) => m.text !== 'E.D.I.T.H thinking…'));
       // If EDITH just finished a QA correction turn, run a verification pass
@@ -818,11 +1068,19 @@ export function FridayPanel({ className }: { className?: string }) {
         });
         activePlanIdRef.current = null;
       }
+      // Chunk pipeline: flush buffered transcript chunks if any are waiting
+      if (transcriptionPipelineActiveRef.current && pendingTranscriptChunksRef.current.length > 0) {
+        flushTranscriptChunks();
+      } else if (pendingDownloadContinueRef.current) {
+        // Downloads finished while EDITH was on a chunk turn — now place them
+        pendingDownloadContinueRef.current = false;
+        triggerAutoContinue();
+      }
     };
 
     const handlePlan = (_: unknown, data: { steps: Array<{ id: string; step: string }> }) => {
       if (interruptedRef.current) return;
-      // EDITH is laying out a plan — she's thinking
+      // EDITH is laying out a plan â€" she's thinking
       if (useEdithEditingStore.getState().isEditing) {
         useEdithEditingStore.getState().setIsThinking(true);
       }
@@ -856,32 +1114,9 @@ export function FridayPanel({ className }: { className?: string }) {
       }
     };
 
-    const handleQuestion = (_: unknown, data: { question: string; options: string[] }) => {
-      setMessages((prev) => {
-        // Remove empty plan placeholder if EDITH asks a question instead
-        const withoutEmptyPlan = activePlanIdRef.current
-          ? prev.filter((m) => !(m.id === activePlanIdRef.current && m.plan && m.plan.steps.length === 0))
-          : prev;
-        activePlanIdRef.current = null;
-        return [
-          ...withoutEmptyPlan,
-          {
-            id: Math.random().toString(36).slice(2),
-            role: 'edith' as AgentMessage['role'],
-            text: data.question,
-            timestamp: Date.now(),
-            question: { options: data.options, answered: false },
-          },
-        ];
-      });
-      setActiveAgent('edith');
-      setAgentStatus('running');
-    };
-
     window.electronAPI.on('mycelium:message', handleAgentMsg);
     window.electronAPI.on('mycelium:op', handleOp);
     window.electronAPI.on('mycelium:done', handleDone);
-    window.electronAPI.on('mycelium:question', handleQuestion);
     window.electronAPI.on('mycelium:plan', handlePlan);
 
     return () => {
@@ -890,8 +1125,7 @@ export function FridayPanel({ className }: { className?: string }) {
       window.electronAPI.removeListener('mycelium:message', handleAgentMsg);
       window.electronAPI.removeListener('mycelium:op', handleOp);
       window.electronAPI.removeListener('mycelium:done', handleDone);
-      window.electronAPI.removeListener('mycelium:question', handleQuestion);
-      window.electronAPI.removeListener('mycelium:plan', handlePlan);
+        window.electronAPI.removeListener('mycelium:plan', handlePlan);
     };
   }, []);
 
@@ -903,6 +1137,64 @@ export function FridayPanel({ className }: { className?: string }) {
     window.addEventListener('edith:downloadComplete', handler);
     return () => window.removeEventListener('edith:downloadComplete', handler);
   }, []);
+
+  // Graphic design pre-check failed â€" send Haiku's critique back to EDITH for revision
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { issues, summary } = (e as CustomEvent<{ issues: string[]; summary: string }>).detail;
+      const issueList = issues.map((iss) => `- ${iss}`).join('\n');
+      const critiqueMsg = `Design QA failed â€" revising graphic before renderâ€¦`;
+      const continueMsg = `continue (graphic design critique:\nSummary: ${summary}\n\nFix these issues in the HTML before re-emitting renderGraphic:\n${issueList}\n\nUse glassmorphism: backdrop-filter blur, rgba backgrounds, text-shadow, proper visual hierarchy. No plain colored boxes or unstyled text.)`;
+
+      setMessages((prev) => [
+        ...prev,
+        { id: Math.random().toString(36).slice(2), role: 'system' as const, text: critiqueMsg, timestamp: Date.now() },
+      ]);
+
+      setTimeout(() => {
+        if (interruptedRef.current) return;
+        const s = useVideoEditorStore.getState() as any;
+        const fps = s.timeline?.fps || 30;
+        const mediaCtx = (s.mediaLibrary ?? []).map((item: any) => ({
+          id: item.id, name: item.name, type: item.type ?? 'video',
+          duration: item.duration, path: item.tempFilePath || item.source || '',
+          isReference: item.category === 'reference',
+          transcription: item.cachedKaraokeSubtitles?.transcriptionResult?.segments
+            ?.map((seg: any) => {
+              const fmt = (t: number) => `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(Math.floor(t % 60)).padStart(2,'0')}`;
+              return `[${fmt(seg.start)}-${fmt(seg.end)}] ${seg.text.trim()}`;
+            }).join('\n'),
+          referenceAnalysis: item.referenceAnalysis,
+        }));
+        const timelineCtx = {
+          fps,
+          currentFrame: s.timeline?.currentFrame ?? 0,
+          totalFrames: s.timeline?.totalFrames ?? 0,
+          selectedClipIds: s.selectedTrackIds ?? [],
+          clips: (s.tracks ?? []).map((t: any) => ({
+            id: t.id,
+            mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+            sourcePath: t.source ?? '',
+            type: t.type, layer: t.trackRowIndex ?? 0,
+            startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+            durationFrames: t.duration ?? ((t.endFrame ?? 0) - (t.startFrame ?? 0)),
+            sourceStartTime: t.sourceStartTime,
+            volume: t.volume, muted: t.muted,
+          })),
+        };
+        window.electronAPI.invoke('mycelium:sendMessage', {
+          text: continueMsg,
+          mediaContext: mediaCtx,
+          timelineSnapshot: timelineCtx,
+          activeDownloads: [],
+          sfxLibrary,
+        });
+        setAgentStatus('running');
+      }, 600);
+    };
+    window.addEventListener('edith:graphicRevision', handler);
+    return () => window.removeEventListener('edith:graphicRevision', handler);
+  }, [sfxLibrary]);
 
   const handleMessagesScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -1027,14 +1319,21 @@ export function FridayPanel({ className }: { className?: string }) {
     if ((!text && attachments.length === 0) || submittingRef.current) return;
     interruptedRef.current = false;
     submittingRef.current = true;
+    edithLlmActiveRef.current = true; // block chunk pipeline until this turn completes
+    pendingTranscriptChunksRef.current = []; // clear any stale chunks from prior sessions
+    transcriptionPipelineActiveRef.current = false; // reset pipeline — will re-arm when runWhisper is enqueued
     substantialOpsThisRunRef.current = 0; // reset per-run counter
     isQACorrectionRunRef.current = false; // new user turn resets correction cycle
     lastUserRequestRef.current = text;
     const attachedPaths = attachments.map((a) => a.path);
     const imagePreviews = attachments.filter((a) => a.preview).map((a) => a.preview!);
+    const denyCtx = denyContextRef.current;
+    denyContextRef.current = null;
     const fullText = attachedPaths.length > 0
       ? `${text}\n\n[Attached: ${attachedPaths.join(', ')}]`
-      : text;
+      : denyCtx
+        ? `${denyCtx}\n\nUser says: ${text}`
+        : text;
     setInput('');
     try { localStorage.removeItem(getDraftKey()); } catch {}
     setAttachments([]);
@@ -1056,8 +1355,9 @@ export function FridayPanel({ className }: { className?: string }) {
       mediaContext: buildMediaContext(),
       timelineSnapshot: buildTimelineSnapshot(),
       activeDownloads,
+      sfxLibrary,
     });
-  }, [input, attachments, activeDownloads, buildMediaContext, buildTimelineSnapshot]);
+  }, [input, attachments, activeDownloads, sfxLibrary, buildMediaContext, buildTimelineSnapshot]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1065,29 +1365,6 @@ export function FridayPanel({ className }: { className?: string }) {
       sendMessage();
     }
   };
-
-  const handleQuestionAnswer = useCallback(async (msgId: string, answer: string) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === msgId && m.question
-          ? { ...m, question: { ...m.question, answered: true, answer } }
-          : m,
-      ),
-    );
-    setMessages((prev) => [
-      ...prev,
-      { id: Math.random().toString(36).slice(2), role: 'user', text: answer, timestamp: Date.now() },
-    ]);
-    setAgentStatus('running');
-    interruptedRef.current = false;
-    submittingRef.current = true;
-    await window.electronAPI.invoke('mycelium:sendMessage', {
-      text: answer,
-      mediaContext: buildMediaContext(),
-      timelineSnapshot: buildTimelineSnapshot(),
-      activeDownloads,
-    });
-  }, [activeDownloads, buildMediaContext, buildTimelineSnapshot]);
 
   const handlePlanToggle = useCallback((msgId: string) => {
     setMessages((prev) =>
@@ -1115,7 +1392,17 @@ export function FridayPanel({ className }: { className?: string }) {
   }, []);
 
   const handleClearHistory = useCallback(async () => {
+    // Kill any in-progress transcription first
+    interruptedRef.current = true;
+    pendingSlowOpsRef.current.clear();
+    operationEngine.clearQueue();
+    window.electronAPI.invoke('mycelium:stop');
+    window.electronAPI.invoke('whisper:cancel');
+    useEdithEditingStore.getState().stopEditing();
+    submittingRef.current = false;
+    setAgentStatus('idle');
     await window.electronAPI.invoke('mycelium:clearHistory');
+    interruptedRef.current = false;
     setMessages([{
       id: Math.random().toString(36).slice(2),
       role: 'system',
@@ -1153,6 +1440,7 @@ export function FridayPanel({ className }: { className?: string }) {
       pendingSlowOpsRef.current.clear();
       operationEngine.clearQueue();
       window.electronAPI.invoke('mycelium:stop');
+      window.electronAPI.invoke('whisper:cancel');
       submittingRef.current = false;
       setAgentStatus('idle');
       setActiveAgent(null);
@@ -1168,7 +1456,6 @@ export function FridayPanel({ className }: { className?: string }) {
 
   const pendingOps = queue.filter((q) => q.status === 'pending' || q.status === 'running').length;
   const failedOps = queue.filter((q) => q.status === 'failed').length;
-  const activeQuestion = messages.findLast((m) => m.question && !m.question.answered) ?? null;
   const isActive = agentStatus === 'running' || agentStatus === 'paused';
 
   if (!consentGiven) {
@@ -1201,7 +1488,7 @@ export function FridayPanel({ className }: { className?: string }) {
           </span>
           {activeAgent && activeAgent !== 'friday' && (
             <span className="text-xs text-zinc-600 tracking-widest uppercase">
-              → {activeAgent}
+              â†’ {activeAgent}
             </span>
           )}
         </div>
@@ -1228,6 +1515,7 @@ export function FridayPanel({ className }: { className?: string }) {
                   interruptedRef.current = true;
                   operationEngine.clearQueue();
                   window.electronAPI.invoke('mycelium:stop');
+                  window.electronAPI.invoke('whisper:cancel');
                   setAgentStatus('idle');
                   useEdithEditingStore.getState().stopEditing();
                   submittingRef.current = false;
@@ -1238,7 +1526,7 @@ export function FridayPanel({ className }: { className?: string }) {
               </button>
             </>
           )}
-          {!isActive && (
+          {!isActive && (<>
             <button
               onClick={() => {
                 const { startEditing, stopEditing, setHeadFrame, setOpLabel } =
@@ -1250,57 +1538,57 @@ export function FridayPanel({ className }: { className?: string }) {
                 const scale = (f: number) => Math.round((f / 325) * totalFrames);
                 startEditing();
                 const ops: [number, string][] = [
-                  [scale(0),   'trimClip — in-point'],
-                  [scale(4),   'trimClip — nudge back'],
-                  [scale(6),   'trimClip — locked'],
-                  [scale(18),  'addCaption — start'],
-                  [scale(14),  'addCaption — micro-pull'],
-                  [scale(20),  'addCaption — confirmed'],
-                  [scale(42),  'addCaption — end'],
-                  [scale(38),  'addCaption — shorten'],
-                  [scale(44),  'addCaption — locked'],
-                  [scale(58),  'addCaption — next caption start'],
-                  [scale(62),  'addCaption — confirmed'],
-                  [scale(88),  'addCaption — end'],
-                  [scale(82),  'addCaption — trim end'],
-                  [scale(90),  'addCaption — locked'],
-                  [scale(105), 'addBroll — scanning'],
-                  [scale(116), 'addBroll — placing'],
-                  [scale(110), 'addBroll — micro-pull'],
-                  [scale(118), 'addBroll — align'],
-                  [scale(148), 'addBroll — out-point'],
-                  [scale(142), 'addBroll — trim'],
-                  [scale(152), 'addBroll — locked'],
-                  [scale(165), 'addCaption — start'],
-                  [scale(172), 'addCaption — confirmed'],
-                  [scale(167), 'addCaption — micro-pull'],
-                  [scale(175), 'addCaption — locked'],
-                  [scale(200), 'addCaption — end'],
-                  [scale(195), 'addCaption — tighten'],
-                  [scale(204), 'addCaption — locked'],
-                  [scale(5),   'colorGrade — pass from start…'],
-                  [scale(86),  'colorGrade — mid…'],
-                  [scale(206), 'colorGrade — through'],
-                  [scale(215), 'addBroll — insert'],
-                  [scale(222), 'addBroll — placing'],
-                  [scale(218), 'addBroll — micro-pull'],
-                  [scale(226), 'addBroll — in-point'],
-                  [scale(254), 'addBroll — out-point'],
-                  [scale(248), 'addBroll — shorten'],
-                  [scale(257), 'addBroll — locked'],
-                  [scale(270), 'addCaption — CTA gap check'],
-                  [scale(278), 'addCaption — start'],
-                  [scale(273), 'addCaption — micro-pull'],
-                  [scale(281), 'addCaption — locked'],
-                  [scale(312), 'addCaption — end'],
-                  [scale(307), 'addCaption — tighten'],
-                  [scale(315), 'addCaption — locked'],
-                  [scale(322), 'trimClip — out-point'],
-                  [scale(318), 'trimClip — micro-pull'],
-                  [scale(325), 'trimClip — locked'],
-                  [scale(5),   'colorGrade — final pass…'],
-                  [scale(163), 'colorGrade — mid…'],
-                  [scale(325), '✓ Edit complete'],
+                  [scale(0),   'trimClip â€" in-point'],
+                  [scale(4),   'trimClip â€" nudge back'],
+                  [scale(6),   'trimClip â€" locked'],
+                  [scale(18),  'addCaption â€" start'],
+                  [scale(14),  'addCaption â€" micro-pull'],
+                  [scale(20),  'addCaption â€" confirmed'],
+                  [scale(42),  'addCaption â€" end'],
+                  [scale(38),  'addCaption â€" shorten'],
+                  [scale(44),  'addCaption â€" locked'],
+                  [scale(58),  'addCaption â€" next caption start'],
+                  [scale(62),  'addCaption â€" confirmed'],
+                  [scale(88),  'addCaption â€" end'],
+                  [scale(82),  'addCaption â€" trim end'],
+                  [scale(90),  'addCaption â€" locked'],
+                  [scale(105), 'addBroll â€" scanning'],
+                  [scale(116), 'addBroll â€" placing'],
+                  [scale(110), 'addBroll â€" micro-pull'],
+                  [scale(118), 'addBroll â€" align'],
+                  [scale(148), 'addBroll â€" out-point'],
+                  [scale(142), 'addBroll â€" trim'],
+                  [scale(152), 'addBroll â€" locked'],
+                  [scale(165), 'addCaption â€" start'],
+                  [scale(172), 'addCaption â€" confirmed'],
+                  [scale(167), 'addCaption â€" micro-pull'],
+                  [scale(175), 'addCaption â€" locked'],
+                  [scale(200), 'addCaption â€" end'],
+                  [scale(195), 'addCaption â€" tighten'],
+                  [scale(204), 'addCaption â€" locked'],
+                  [scale(5),   'colorGrade â€" pass from startâ€¦'],
+                  [scale(86),  'colorGrade â€" midâ€¦'],
+                  [scale(206), 'colorGrade â€" through'],
+                  [scale(215), 'addBroll â€" insert'],
+                  [scale(222), 'addBroll â€" placing'],
+                  [scale(218), 'addBroll â€" micro-pull'],
+                  [scale(226), 'addBroll â€" in-point'],
+                  [scale(254), 'addBroll â€" out-point'],
+                  [scale(248), 'addBroll â€" shorten'],
+                  [scale(257), 'addBroll â€" locked'],
+                  [scale(270), 'addCaption â€" CTA gap check'],
+                  [scale(278), 'addCaption â€" start'],
+                  [scale(273), 'addCaption â€" micro-pull'],
+                  [scale(281), 'addCaption â€" locked'],
+                  [scale(312), 'addCaption â€" end'],
+                  [scale(307), 'addCaption â€" tighten'],
+                  [scale(315), 'addCaption â€" locked'],
+                  [scale(322), 'trimClip â€" out-point'],
+                  [scale(318), 'trimClip â€" micro-pull'],
+                  [scale(325), 'trimClip â€" locked'],
+                  [scale(5),   'colorGrade â€" final passâ€¦'],
+                  [scale(163), 'colorGrade â€" midâ€¦'],
+                  [scale(325), 'âœ" Edit complete'],
                 ];
                 let i = 0;
                 const tick = () => {
@@ -1318,7 +1606,28 @@ export function FridayPanel({ className }: { className?: string }) {
             >
               Test viz
             </button>
-          )}
+            <button
+              onClick={async () => {
+                const store = useVideoEditorStore.getState() as any;
+                const fps = store?.timeline?.fps ?? 30;
+                const currentFrame = store?.timeline?.currentFrame ?? 0;
+                const atSeconds = currentFrame / fps;
+                console.log('[TestSnapshot] firing snapshotVerify at', atSeconds, 's');
+                const result = await (window.electronAPI as any).invoke('app:verifySnapshot', {
+                  atSeconds,
+                  reason: 'manual test — verify current frame',
+                });
+                console.log('[TestSnapshot] result:', result);
+                window.dispatchEvent(new CustomEvent('edith:snapshotTaken', {
+                  detail: { atSeconds, reason: 'manual test', analysis: result?.analysis ?? null, error: result?.error ?? null },
+                }));
+              }}
+              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-cyan-400 border border-white/[0.06] hover:border-cyan-900/50 transition-colors"
+              title="Test snapshot verification at current playhead"
+            >
+              Test snap
+            </button>
+          </>)}
           {!isActive && messages.length > 1 && (
             <button
               onClick={handleClearHistory}
@@ -1340,8 +1649,69 @@ export function FridayPanel({ className }: { className?: string }) {
         {messages.map((msg) => {
           if (msg.role === 'system') {
             const isInterrupted = msg.text === 'Interrupted';
-            const isInProgress = !isInterrupted && msg.text.endsWith('…');
+            const isThinking = msg.text === 'E.D.I.T.H thinking…';
+            const isSnapshot = msg.text.startsWith('__snapshot__');
+            const isScreenshot = msg.text.startsWith('__screenshot__');
+            const isInProgress = !isInterrupted && !isThinking && !isSnapshot && !isScreenshot && msg.text.endsWith('…');
             const baseText = isInProgress ? msg.text.slice(0, -1) : msg.text;
+            if (isThinking) {
+              return (
+                <div key={msg.id} className="px-4 py-1">
+                  <ThinkingIndicator />
+                </div>
+              );
+            }
+            const isBrollCheck = msg.text.startsWith('__brollcheck__');
+            if (isSnapshot || isBrollCheck || isScreenshot) {
+              const rawLabel = isSnapshot
+                ? msg.text.slice('__snapshot__'.length)
+                : isBrollCheck
+                ? msg.text.slice('__brollcheck__'.length)
+                : msg.text.slice('__screenshot__'.length);
+              const passed = isBrollCheck ? rawLabel.startsWith('✓') : null;
+              const frame = msg.imagePreviews?.[0];
+              const accentColor = isBrollCheck
+                ? (passed ? 'text-emerald-400' : 'text-red-400')
+                : isScreenshot ? 'text-sky-400'
+                : 'text-violet-400';
+              const borderColor = isBrollCheck
+                ? (passed ? 'border-emerald-500/30' : 'border-red-500/30')
+                : isScreenshot ? 'border-sky-500/20'
+                : 'border-violet-500/20';
+              return (
+                <div key={msg.id} className={`mx-4 my-1.5 rounded-lg border overflow-hidden ${borderColor}`} style={{ background: 'rgba(255,255,255,0.03)' }}>
+                  {frame && (
+                    <div className="relative">
+                      <img
+                        src={frame}
+                        className="w-full block"
+                        style={{ maxHeight: '110px', objectFit: 'cover', opacity: 0.88 }}
+                      />
+                      {isBrollCheck && (
+                        <span className={`absolute top-1.5 right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${passed ? 'bg-emerald-500/90 text-white' : 'bg-red-500/90 text-white'}`}>
+                          {passed ? '✓ pass' : '✗ reject'}
+                        </span>
+                      )}
+                      {isSnapshot && (
+                        <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-violet-600/80 text-white font-mono">
+                          snapshot
+                        </span>
+                      )}
+                      {isScreenshot && (
+                        <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-sky-600/80 text-white font-mono">
+                          EDITH sees this
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div className="px-2.5 py-1.5">
+                    <span className={`text-[10px] font-mono ${accentColor} opacity-80`}>
+                      {rawLabel}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div key={msg.id} className="px-4 py-1 flex items-center gap-1">
                 <span className={`text-[12px] italic ${isInterrupted ? 'text-amber-600/70' : 'text-zinc-400'}`}>
@@ -1377,54 +1747,67 @@ export function FridayPanel({ className }: { className?: string }) {
               </div>
             );
           }
-          if (msg.question) {
-            if (!msg.question.answered) return null; // rendered anchored below
-            return (
-              <div key={msg.id} className="px-4 py-1">
-                <span className="text-[11px] text-zinc-600 italic">{msg.text} → <span className="text-zinc-500">{msg.question.answer}</span></span>
-              </div>
-            );
-          }
           if (msg.plan) {
             return <PlanCard key={msg.id} message={msg} onToggle={handlePlanToggle} onSkipStep={handleSkipStep} />;
           }
           return (
             <div key={msg.id} className="px-4 py-1.5">
-              <span className="text-xs text-zinc-300 leading-relaxed break-words select-text cursor-text">{msg.text}</span>
+              <span className="text-xs text-zinc-300 leading-relaxed break-words select-text cursor-text">{renderBold(msg.text)}</span>
             </div>
           );
         })}
+        {/* Live op ticker — shows while EDITH is working */}
+        {isEditing && currentOpLabel && (
+          <div className="px-4 py-1.5 flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse flex-shrink-0" />
+            <span className="text-[11px] text-cyan-400/80 italic truncate">{currentOpLabel}</span>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
-      {/* Active question — anchored above input, never scrolls */}
-      {activeQuestion && (
-        <div className="border-t border-white/[0.06]">
-          <QuestionCard message={activeQuestion} onAnswer={handleQuestionAnswer} />
-        </div>
-      )}
-
-      {/* Download approval — anchored above input, never scrolls */}
-      {approvalPending.length > 0 && (
-        <div className="border-t border-white/[0.06]">
-          {approvalPending.map((item) => (
-            <div key={item.id} className="px-3 py-2">
+      {/* Download approval — one at a time, sequential with 1s gap between cards */}
+      {(() => {
+        const item = !approvalTransitioning ? approvalPending[0] : undefined;
+        if (!item) return null;
+        const remaining = approvalPending.length - 1;
+        const handleAllow = () => {
+          setApprovalTransitioning(true);
+          approvalApprove(item.id, true);
+          setTimeout(() => setApprovalTransitioning(false), 1000);
+        };
+        const handleAlwaysAllow = () => {
+          setApprovalTransitioning(true);
+          approvalApproveAll(item.id);
+          setTimeout(() => setApprovalTransitioning(false), 400);
+        };
+        const handleDeny = () => {
+          approvalDeny(item.id);
+        };
+        return (
+          <div className="border-t border-white/[0.06]">
+            <div className="px-3 py-2">
               <div className="rounded-lg border border-white/[0.08] overflow-hidden" style={{ background: '#1a1a1a' }}>
                 <div className="px-3 pt-2.5 pb-2">
-                  <p className="text-[11px] font-semibold text-zinc-100 mb-0.5">Allow EDITH to use this download?</p>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <p className="text-[11px] font-semibold text-zinc-100">Allow EDITH to use this download?</p>
+                    {remaining > 0 && (
+                      <span className="text-[10px] text-zinc-600">{remaining} more waiting</span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-zinc-500 leading-relaxed">{item.title ?? item.filePath.split(/[/\\]/).pop()}</p>
                 </div>
                 <div className="flex border-t border-white/[0.06]" style={{ background: '#141414' }}>
-                  <button onClick={() => approvalDeny(item.id)} className="flex-1 py-2 text-[11px] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03] transition-colors border-r border-white/[0.06]">Deny</button>
-                  <button onClick={() => approvalApprove(item.id)} className="flex-1 py-2 text-[11px] font-medium hover:bg-white/[0.04] transition-colors border-r border-white/[0.06]" style={{ color: '#a3b862' }}>Allow</button>
-                  <button onClick={() => approvalApproveAll(item.id)} className="flex-1 py-2 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] transition-colors border-r border-white/[0.06]">Always allow</button>
+                  <button onClick={handleDeny} className="flex-1 py-2 text-[11px] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03] transition-colors border-r border-white/[0.06]">Deny</button>
+                  <button onClick={handleAllow} className="flex-1 py-2 text-[11px] font-medium hover:bg-white/[0.04] transition-colors border-r border-white/[0.06]" style={{ color: '#a3b862' }}>Allow</button>
+                  <button onClick={handleAlwaysAllow} className="flex-1 py-2 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] transition-colors border-r border-white/[0.06]">Always allow</button>
                   <button onClick={() => window.electronAPI.showItemInFolder(item.filePath)} className="flex-1 py-2 text-[11px] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03] transition-colors">View</button>
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
       {/* Op Queue */}
       {(pendingOps > 0 || failedOps > 0) && (
@@ -1435,10 +1818,10 @@ export function FridayPanel({ className }: { className?: string }) {
           >
             <span className="font-mono">
               {pendingOps > 0
-                ? `applying ${pendingOps} edit${pendingOps > 1 ? 's' : ''}…`
+                ? `applying ${pendingOps} edit${pendingOps > 1 ? 's' : ''}â€¦`
                 : `${failedOps} edit${failedOps > 1 ? 's' : ''} failed`}
             </span>
-            <span className="text-zinc-700">{showQueue ? '▲' : '▼'}</span>
+            <span className="text-zinc-700">{showQueue ? 'â–²' : 'â–¼'}</span>
           </button>
           {showQueue && (
             <div className="px-4 pb-2 max-h-28 overflow-y-auto space-y-0.5">
@@ -1447,7 +1830,11 @@ export function FridayPanel({ className }: { className?: string }) {
                 return (
                   <div key={q.id} className="flex items-center gap-2 font-mono text-[10px]" style={{ color }}>
                     <span className="w-1 h-1 rounded-full bg-current flex-shrink-0" />
-                    <span className="truncate">{q.op.type}</span>
+                    <span className="truncate">{
+                      q.op.type === 'zoomToFace'
+                        ? `zoomTo${((q.op as any).target ?? 'face').replace(/^\w/, (c: string) => c.toUpperCase())}`
+                        : q.op.type
+                    }</span>
                   </div>
                 );
               })}
@@ -1472,7 +1859,7 @@ export function FridayPanel({ className }: { className?: string }) {
                 <button
                   onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
                   className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-white pr-1.5 text-xs leading-none"
-                >×</button>
+                >Ã—</button>
               </div>
             ))}
           </div>
@@ -1495,7 +1882,7 @@ export function FridayPanel({ className }: { className?: string }) {
           <textarea
             className="flex-1 bg-transparent text-xs text-zinc-200 placeholder-zinc-700 resize-none outline-none leading-relaxed"
             rows={2}
-            placeholder="Make 3 reels from this video…"
+            placeholder="Make 3 reels from this videoâ€¦"
             value={input}
             onChange={(e) => { setInput(e.target.value); try { localStorage.setItem(getDraftKey(), e.target.value); } catch {} }}
             onKeyDown={handleKeyDown}
@@ -1512,8 +1899,9 @@ export function FridayPanel({ className }: { className?: string }) {
             </svg>
           </button>
         </div>
-        <p className="text-[10px] text-zinc-700 mt-1.5 px-1">↵ send · ⇧↵ newline · paste image to attach</p>
+        <p className="text-[10px] text-zinc-700 mt-1.5 px-1">â†µ send Â· â‡§â†µ newline Â· paste image to attach</p>
       </div>
     </div>
   );
 }
+

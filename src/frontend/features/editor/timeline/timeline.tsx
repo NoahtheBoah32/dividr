@@ -77,6 +77,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     } | null>(null);
     const lastClickTimeRef = useRef<number>(0);
     const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const isPanningRef = useRef<boolean>(false);
+    const panStartRef = useRef<{ x: number; scrollLeft: number } | null>(null);
 
     const lastValidTargetRef = useRef<{
       rowId: string;
@@ -156,6 +158,11 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     const removeSelectedTracks = useVideoEditorStore(
       (state) => state.removeSelectedTracks,
     );
+    const cutAnimation = useVideoEditorStore((state: any) => state.cutAnimation);
+    const clipTransitionsEnabled = useVideoEditorStore((state: any) => state.clipTransitionsEnabled);
+    const restoreAnimation = useVideoEditorStore((state: any) => state.restoreAnimation);
+    const restoreTransitionsEnabled = useVideoEditorStore((state: any) => state.restoreTransitionsEnabled);
+
     const isSplitModeActive = useVideoEditorStore(
       (state) => state.timeline.isSplitModeActive,
     );
@@ -598,18 +605,30 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       };
     }, []);
 
-    // Handle wheel zoom
+    // Handle wheel zoom + scroll
     const handleWheel = useCallback(
       (e: WheelEvent) => {
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
           const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-          // Allow zoom from 0.01 (very zoomed out) to 10 (very zoomed in)
           setZoom(Math.max(0.01, Math.min(timeline.zoom * zoomFactor, 10)));
+        } else if (e.shiftKey) {
+          // Shift+scroll = horizontal timeline pan
+          e.preventDefault();
+          const tracksEl = tracksRef.current;
+          if (!tracksEl) return;
+          tracksEl.scrollLeft += e.deltaY !== 0 ? e.deltaY : e.deltaX;
         } else {
-          // Horizontal scroll - let the native scroll handle this
-          // The onScroll event will update the store
-          e.stopPropagation();
+          // Plain scroll = vertical track navigation
+          e.preventDefault();
+          const tracksEl = tracksRef.current;
+          if (!tracksEl) return;
+          if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+            // Trackpad two-finger horizontal swipe → horizontal pan
+            tracksEl.scrollLeft += e.deltaX;
+          } else {
+            tracksEl.scrollTop += e.deltaY;
+          }
         }
       },
       [timeline.zoom, setZoom],
@@ -655,6 +674,22 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         tracksElement.removeEventListener('scroll', handleTracksScroll);
       };
     }, []);
+
+    // Auto-scroll to reveal newly added track
+    const prevTrackCountRef = useRef(tracks.length);
+    useEffect(() => {
+      const prev = prevTrackCountRef.current;
+      prevTrackCountRef.current = tracks.length;
+      if (tracks.length <= prev) return; // only on additions
+
+      const tracksEl = tracksRef.current;
+      if (!tracksEl) return;
+
+      // Scroll so the bottom of the track area is visible
+      requestAnimationFrame(() => {
+        tracksEl.scrollTop = tracksEl.scrollHeight;
+      });
+    }, [tracks.length]);
 
     // Calculate frame width based on zoom - memoized
     const frameWidth = useMemo(() => 2 * timeline.zoom, [timeline.zoom]);
@@ -1682,6 +1717,33 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       (e: React.MouseEvent) => {
         if (!tracksRef.current) return;
 
+        // Middle-click drag = horizontal pan
+        if (e.button === 1) {
+          e.preventDefault();
+          isPanningRef.current = true;
+          panStartRef.current = {
+            x: e.clientX,
+            scrollLeft: tracksRef.current.scrollLeft,
+          };
+          tracksRef.current.style.cursor = 'grabbing';
+
+          const onMouseMove = (me: MouseEvent) => {
+            if (!isPanningRef.current || !panStartRef.current || !tracksRef.current) return;
+            const dx = me.clientX - panStartRef.current.x;
+            tracksRef.current.scrollLeft = panStartRef.current.scrollLeft - dx;
+          };
+          const onMouseUp = () => {
+            isPanningRef.current = false;
+            panStartRef.current = null;
+            if (tracksRef.current) tracksRef.current.style.cursor = '';
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+          };
+          document.addEventListener('mousemove', onMouseMove);
+          document.addEventListener('mouseup', onMouseUp);
+          return;
+        }
+
         // CRITICAL: Reset preview interaction mode when clicking on timeline
         // This ensures the preview cursor mode doesn't block timeline interaction
         // Preview edit modes (text-edit, pan) should only apply to the preview canvas
@@ -1848,6 +1910,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   ref={tracksRef}
                   className={cn(
                     'relative h-full overflow-auto scrollbar-thin z-10',
+                    clipTransitionsEnabled && 'cut-transitions',
+                    restoreTransitionsEnabled && 'restore-transitions',
                     // Don't apply cursor styles when dragging/resizing tracks
                     playback.isDraggingTrack
                       ? ''
@@ -1865,6 +1929,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                       autoFollowEnabled && playback.isPlaying
                         ? 'smooth'
                         : 'auto',
+                    paddingBottom: '240px',
                   }}
                   onMouseDown={handleMouseDown}
                   onDragOver={handleDragOver}
@@ -1943,6 +2008,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   timelineScrollElement={tracksRef.current}
                   onStartDrag={handlePlayheadDragStart}
                   magneticSnapFrame={magneticSnapFrame}
+                  playheadAnimating={!!cutAnimation && cutAnimation.phase === 'highlighting'}
                 />
 
                 {/* EDITH editing veil — dark overlay right of playhead while EDITH is active */}
@@ -1950,6 +2016,22 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                   currentFrame={timeline.currentFrame}
                   frameWidth={frameWidth}
                   scrollX={timeline.scrollX}
+                />
+
+                {/* EDITH cut segment animation — red highlight spans full track height */}
+                <CutHighlightOverlay
+                  cutAnimation={cutAnimation}
+                  frameWidth={frameWidth}
+                  scrollX={timeline.scrollX}
+                  fps={timeline.fps ?? 30}
+                />
+
+                {/* EDITH restore animation — green right-to-left sweep during trim/restore */}
+                <RestoreHighlightOverlay
+                  restoreAnimation={restoreAnimation}
+                  frameWidth={frameWidth}
+                  scrollX={timeline.scrollX}
+                  fps={timeline.fps ?? 30}
                 />
 
                 {/* Split Indicator Line - confined to hovered track row */}
@@ -2329,6 +2411,8 @@ function EdithVeil({
   const isEditing = useEdithEditingStore((s) => s.isEditing);
   const isThinking = useEdithEditingStore((s) => s.isThinking);
   const currentOpLabel = useEdithEditingStore((s) => s.currentOpLabel);
+  const lastVerifiedFrame = useEdithEditingStore((s) => s.lastVerifiedFrame);
+  const lastVerifiedPassed = useEdithEditingStore((s) => s.lastVerifiedPassed);
 
   if (!isEditing) return null;
 
@@ -2373,11 +2457,271 @@ function EdithVeil({
           {label}
         </div>
       )}
+      {/* Verified frame thumbnail — appears after brollCheck or snapshotVerify, fades out after 6s */}
+      {lastVerifiedFrame && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            left: `${veilLeft + 6}px`,
+            top: '24px',
+            zIndex: 19,
+            borderRadius: '4px',
+            overflow: 'hidden',
+            border: `1.5px solid ${lastVerifiedPassed === null ? 'rgba(167,139,250,0.5)' : lastVerifiedPassed ? 'rgba(52,211,153,0.6)' : 'rgba(248,113,113,0.6)'}`,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+            animation: 'edith-frame-fadein 0.2s ease-out',
+          }}
+        >
+          <img
+            src={`data:image/jpeg;base64,${lastVerifiedFrame}`}
+            style={{ display: 'block', width: '96px', height: '54px', objectFit: 'cover', opacity: 0.92 }}
+          />
+          <div style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0,
+            background: 'rgba(0,0,0,0.55)',
+            fontSize: '9px', fontFamily: 'monospace', textAlign: 'center',
+            padding: '1px 0',
+            color: lastVerifiedPassed === null ? 'rgba(196,181,253,0.9)' : lastVerifiedPassed ? 'rgba(110,231,183,0.9)' : 'rgba(252,165,165,0.9)',
+          }}>
+            {lastVerifiedPassed === null ? 'snapshot' : lastVerifiedPassed ? '✓ b-roll pass' : '✗ rejected'}
+          </div>
+        </div>
+      )}
       {/* Pulse keyframe injected once */}
       <style>{`
         @keyframes edith-think-pulse {
           0%, 100% { opacity: 0.65; }
           50% { opacity: 0.35; }
+        }
+        @keyframes edith-frame-fadein {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </>
+  );
+}
+
+// ── Restore segment animation overlay ─────────────────────────────────────────
+// Full-height green highlight that sweeps right-to-left during EDITH trim/restore.
+// Mirrors CutHighlightOverlay but: green colors, right→left clip-path reveal, label at right edge.
+// Phases: highlighting (r-to-l sweep) → pulse → restoring (green flash) → closing (fade with clip expanding).
+
+function RestoreHighlightOverlay({
+  restoreAnimation,
+  frameWidth,
+  scrollX,
+  fps,
+}: {
+  restoreAnimation: { fromFrame: number; toFrame: number; phase: string } | null;
+  frameWidth: number;
+  scrollX: number;
+  fps: number;
+}) {
+  if (!restoreAnimation) return null;
+
+  const { fromFrame, toFrame, phase } = restoreAnimation;
+
+  const rawLeft = fromFrame * frameWidth - scrollX;
+  const clampedLeft = Math.max(0, rawLeft);
+  const leftOverflow = clampedLeft - rawLeft;
+  const rawWidth = (toFrame - fromFrame) * frameWidth;
+  const clampedWidth = Math.max(0, rawWidth - leftOverflow);
+
+  if (clampedWidth <= 0) return null;
+
+  const isFlashing = phase === 'restoring';
+  const isPulsing = phase === 'pulse';
+  const isClosing = phase === 'closing';
+  const isHighlighting = phase === 'highlighting';
+
+  const fromSecs = fromFrame / fps;
+  const toSecs = toFrame / fps;
+
+  // Label sits near the right edge of the overlay (mirrored from CutHighlightOverlay's left-edge placement)
+  const labelLeft = clampedLeft + Math.max(6, clampedWidth - 110);
+
+  return (
+    <>
+      {/* Green region — right-to-left reveal during highlighting, static thereafter */}
+      <div
+        className="pointer-events-none absolute inset-y-0"
+        style={{
+          left: `${clampedLeft}px`,
+          width: `${clampedWidth}px`,
+          background: isFlashing
+            ? 'rgba(50, 255, 120, 0.30)'
+            : isClosing
+              ? 'rgba(50, 220, 100, 0.06)'
+              : 'rgba(50, 220, 100, 0.22)',
+          borderLeft: rawLeft >= 0 ? '2px solid rgba(50, 220, 100, 0.85)' : 'none',
+          borderRight: '2px solid rgba(50, 220, 100, 0.85)',
+          zIndex: 22,
+          transition: isFlashing
+            ? 'background 0.12s ease'
+            : isClosing
+              ? 'background 0.3s ease, opacity 0.4s ease'
+              : 'background 0.2s ease',
+          animation: isHighlighting
+            ? 'restore-sweep-in 0.85s ease-out forwards'
+            : isPulsing
+              ? 'restore-region-pulse 0.55s ease-in-out infinite'
+              : 'none',
+          opacity: isClosing ? 0 : 1,
+        }}
+      />
+
+      {/* Label badge — right-aligned, visible during highlighting and pulse */}
+      {(isHighlighting || isPulsing) && clampedWidth > 40 && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            left: `${labelLeft}px`,
+            top: '6px',
+            zIndex: 23,
+            background: 'rgba(50, 220, 100, 0.14)',
+            border: '1px solid rgba(50, 220, 100, 0.45)',
+            borderRadius: '3px',
+            padding: '1px 7px',
+            fontSize: '10px',
+            fontFamily: 'monospace',
+            color: 'rgba(150, 255, 180, 0.95)',
+            whiteSpace: 'nowrap',
+            backdropFilter: 'blur(4px)',
+            animation: isPulsing ? 'restore-label-blink 1s ease-in-out infinite' : 'none',
+          }}
+        >
+          {`↩ ${formatTimecode(fromSecs)} → ${formatTimecode(toSecs)}`}
+        </div>
+      )}
+
+      <style>{`
+        /* Right-to-left reveal: visible area grows from right edge toward left */
+        @keyframes restore-sweep-in {
+          from { clip-path: inset(0 0% 0 100%); }
+          to   { clip-path: inset(0 0% 0 0%); }
+        }
+        @keyframes restore-region-pulse {
+          0%, 100% { background: rgba(50, 220, 100, 0.18); }
+          50%       { background: rgba(50, 220, 100, 0.38); }
+        }
+        @keyframes restore-label-blink {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.55; }
+        }
+        /* Clip expand transition — active only during EDITH restore */
+        .restore-transitions [data-edith-target^="track-body:"] {
+          transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+                      width 0.45s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+      `}</style>
+    </>
+  );
+}
+
+// ── Cut segment animation overlay ─────────────────────────────────────────────
+// Full-height red highlight that spans all track rows during EDITH deleteSegment.
+// Phases: highlighting (fade in) → pulse → cutting (white flash) → closing (fade out with clips sliding).
+
+function formatTimecode(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function CutHighlightOverlay({
+  cutAnimation,
+  frameWidth,
+  scrollX,
+  fps,
+}: {
+  cutAnimation: { fromFrame: number; toFrame: number; phase: string } | null;
+  frameWidth: number;
+  scrollX: number;
+  fps: number;
+}) {
+  if (!cutAnimation) return null;
+
+  const { fromFrame, toFrame, phase } = cutAnimation;
+
+  // Clamp left edge to viewport — overlay only shows the visible portion
+  const rawLeft = fromFrame * frameWidth - scrollX;
+  const clampedLeft = Math.max(0, rawLeft);
+  const leftOverflow = clampedLeft - rawLeft;
+  const rawWidth = (toFrame - fromFrame) * frameWidth;
+  const clampedWidth = Math.max(0, rawWidth - leftOverflow);
+
+  if (clampedWidth <= 0) return null;
+
+  const isFlashing = phase === 'cutting';
+  const isPulsing = phase === 'pulse';
+  const isClosing = phase === 'closing';
+
+  const fromSecs = fromFrame / fps;
+  const toSecs = toFrame / fps;
+
+  return (
+    <>
+      {/* Red region — spans inset-y-0 of the overlay container (full track height) */}
+      <div
+        className="pointer-events-none absolute inset-y-0"
+        style={{
+          left: `${clampedLeft}px`,
+          width: `${clampedWidth}px`,
+          background: isFlashing
+            ? 'rgba(255, 255, 255, 0.45)'
+            : isClosing
+              ? 'rgba(255, 50, 50, 0.06)'
+              : 'rgba(255, 50, 50, 0.22)',
+          borderLeft: rawLeft >= 0 ? '2px solid rgba(255, 60, 60, 0.85)' : 'none',
+          borderRight: '2px solid rgba(255, 60, 60, 0.85)',
+          zIndex: 22,
+          transition: isFlashing
+            ? 'background 0.12s ease'
+            : isClosing
+              ? 'background 0.3s ease, opacity 0.4s ease'
+              : 'background 0.2s ease',
+          animation: isPulsing ? 'cut-region-pulse 0.55s ease-in-out infinite' : 'none',
+          opacity: isClosing ? 0 : 1,
+        }}
+      />
+
+      {/* Label badge — visible during highlighting and pulse only */}
+      {(phase === 'highlighting' || phase === 'pulse') && clampedWidth > 40 && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            left: `${clampedLeft + 6}px`,
+            top: '6px',
+            zIndex: 23,
+            background: 'rgba(255, 30, 30, 0.14)',
+            border: '1px solid rgba(255, 60, 60, 0.45)',
+            borderRadius: '3px',
+            padding: '1px 7px',
+            fontSize: '10px',
+            fontFamily: 'monospace',
+            color: 'rgba(255, 170, 170, 0.95)',
+            whiteSpace: 'nowrap',
+            backdropFilter: 'blur(4px)',
+            animation: isPulsing ? 'cut-label-blink 1s ease-in-out infinite' : 'none',
+          }}
+        >
+          {`✂ ${formatTimecode(fromSecs)} → ${formatTimecode(toSecs)}`}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes cut-region-pulse {
+          0%, 100% { background: rgba(255, 50, 50, 0.18); }
+          50%       { background: rgba(255, 50, 50, 0.38); }
+        }
+        @keyframes cut-label-blink {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.55; }
+        }
+        /* Clip slide transition — active only during EDITH deleteSegment gap-close */
+        .cut-transitions [data-edith-target^="track-body:"] {
+          transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1) !important;
         }
       `}</style>
     </>

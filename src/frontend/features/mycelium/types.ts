@@ -60,7 +60,7 @@ export type Op =
       isStockFootage?: boolean; // triggers watermark + talking-to-camera checks
     }
   | { type: 'cutSilence'; clipId: string; noiseDb?: number; minDuration?: number }
-  | { type: 'runWhisper'; clipId: string }
+  | { type: 'runWhisper'; clipId: string; streamCaptions?: boolean }
   | { type: 'analyzeReference'; clipId: string }
   | {
       type: 'geminiEdit';
@@ -91,6 +91,43 @@ export type Op =
       layer?: number;        // default 2 (above main video)
       width?: number;        // default matches canvas (1080 for 9:16)
       height?: number;       // default matches canvas (1920 for 9:16)
+      useHyperframes?: boolean; // opt-in to full frame-by-frame render (~60s) — default false uses fast screenshot+FFmpeg path (~3s)
+    }
+  | { type: 'cursorMoveTo'; target: string; offsetX?: number; offsetY?: number }
+  | { type: 'cursorClick' }
+  | { type: 'cursorStartDrag'; target: string; label: string }
+  | { type: 'cursorDrop'; target: string }
+  | { type: 'cursorHide' }
+  | { type: 'highlightClipSegment'; clipId: string; startFrac: number; endFrac: number; label: string }
+  | { type: 'clearClipHighlight'; clipId: string }
+  | { type: 'snapshotVerify'; atSeconds: number; reason: string }
+  | { type: 'renameProject'; title: string }
+  | { type: 'placeSFX'; file: string; atTime: number; volume?: number; trackName?: string }
+  | { type: 'scanVideo'; clipName: string; description: string; intervalSec?: number; maxFrames?: number }
+  | { type: 'duck'; musicClipName: string; targetDb?: number; fadeDuration?: number }
+  | { type: 'unduck'; musicClipName: string }
+  | {
+      type: 'setSpeed';
+      clipId: string;
+      speed: number;           // 0.25 = 4x slow-mo, 0.5 = half speed, 2.0 = 2x fast
+      startSeconds?: number;   // partial ramp: only affect this range
+      endSeconds?: number;
+    }
+  | {
+      type: 'zoomToFace';
+      clipId: string;
+      startSeconds: number;    // when to start the zoom
+      endSeconds: number;      // when to ease back out
+      zoomLevel?: number;      // default 2.5
+      easeSeconds?: number;    // ease-in/out ramp duration, default 0.4s
+      target?: string;         // what to zoom into — 'face' (default), 'ball', 'vase', 'money', etc.
+    }
+  | {
+      type: 'analyzeMotion';
+      clipId: string;
+      detect?: string;        // comma-separated: 'punch,jump,energy,speaker' — default all
+      autoIsolate?: boolean;  // if true, delete original and insert isolated segments after analysis
+      windowSeconds?: number; // seconds of context around each event (default 1.5)
     };
 
 export type OpStatus = 'pending' | 'running' | 'applied' | 'failed' | 'undone';
@@ -110,12 +147,6 @@ export type AgentStatus =
   | 'done'
   | 'error';
 
-export interface AgentQuestion {
-  options: string[];   // exactly 3 options — UI always appends "Other" as D
-  answered: boolean;
-  answer?: string;     // the final answer text after user responds
-}
-
 export interface AgentPlanStep {
   id: string;
   step: string;
@@ -133,7 +164,6 @@ export interface AgentMessage {
   role: 'user' | 'friday' | 'arthur' | 'edith' | 'system';
   text: string;
   timestamp: number;
-  question?: AgentQuestion; // present when this message is a structured question
   plan?: AgentPlan;         // present when this message is an editing plan
   imagePreviews?: string[]; // base64 data URLs for images attached by the user
 }

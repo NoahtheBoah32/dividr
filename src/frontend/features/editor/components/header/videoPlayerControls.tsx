@@ -16,6 +16,16 @@ import React, { useCallback } from 'react';
 import { useVideoEditorStore } from '../../stores/videoEditor';
 import { ZoomControls } from './zoomControls';
 
+const SkeletonIcon = ({ active }: { active: boolean }) => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+    <circle cx="7" cy="2" r="1.5" fill={active ? '#00ff50' : 'currentColor'} />
+    <line x1="7" y1="3.5" x2="7" y2="8" stroke={active ? '#00ff50' : 'currentColor'} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="3.5" y1="5" x2="10.5" y2="5" stroke={active ? '#00ff50' : 'currentColor'} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="7" y1="8" x2="4.5" y2="12" stroke={active ? '#00ff50' : 'currentColor'} strokeWidth="1.2" strokeLinecap="round" />
+    <line x1="7" y1="8" x2="9.5" y2="12" stroke={active ? '#00ff50' : 'currentColor'} strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
 interface VideoPlayerControlsProps {
   className?: string;
 }
@@ -53,6 +63,13 @@ export const VideoPlayerControls = React.memo(
     );
     const undo = useVideoEditorStore((state) => state.undo);
     const redo = useVideoEditorStore((state) => state.redo);
+    const tracks = useVideoEditorStore((state) => state.tracks);
+    const skeletonOverlayEnabled = useVideoEditorStore((state) => state.skeletonOverlayEnabled);
+    const toggleSkeletonOverlay = useVideoEditorStore((state) => state.toggleSkeletonOverlay);
+    const hasSkeletonData = tracks.some(
+      (t) => t.type === 'video' && (t as any).poseLandmarks?.length > 0,
+    );
+
     const selectionKeys = useShortcutKeys('preview-select-tool', ['v']);
     const handKeys = useShortcutKeys('preview-hand-tool', ['h']);
     const textEditKeys = useShortcutKeys('preview-text-edit-tool', ['t']);
@@ -226,6 +243,33 @@ export const VideoPlayerControls = React.memo(
             {redoShortcutText ? `Redo (${redoShortcutText})` : 'Redo'}
           </TooltipContent>
         </Tooltip>
+
+        <>
+          <Separator orientation="vertical" className="!h-3/4" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="native"
+                size="icon"
+                onClick={toggleSkeletonOverlay}
+                className={cn(
+                  'transition-colors !p-1.5',
+                  skeletonOverlayEnabled && 'bg-accent',
+                  !hasSkeletonData && 'opacity-40',
+                )}
+              >
+                <SkeletonIcon active={skeletonOverlayEnabled} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {!hasSkeletonData
+                ? 'No skeleton data — run analyzeMotion first'
+                : skeletonOverlayEnabled
+                  ? 'Hide Skeleton Overlay'
+                  : 'Show Skeleton Overlay'}
+            </TooltipContent>
+          </Tooltip>
+        </>
       </div>
     );
   },

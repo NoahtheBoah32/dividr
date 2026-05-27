@@ -10,16 +10,23 @@ import type {
   ColorGradeAnalysis,
 } from './geminiAnalyzer';
 
-function loadAnthropicKey(appPath: string): string {
-  const envPath = path.join(appPath, '.env');
-  if (fs.existsSync(envPath)) {
-    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
-    for (const line of lines) {
-      const [k, v] = line.split('=');
-      if (k?.trim() === 'ANTHROPIC_API_KEY') return v?.trim() ?? '';
+function resolveAnthropicAuth(): { header: string; value: string } | null {
+  // 1. Explicit API key in env or .env file (original path)
+  const envKey = process.env.ANTHROPIC_API_KEY;
+  if (envKey) return { header: 'x-api-key', value: envKey };
+
+  // 2. OAuth token from Claude Code credentials (~/.claude/.credentials.json)
+  // Claude Code uses this same token for all its own API calls
+  try {
+    const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
+    if (fs.existsSync(credPath)) {
+      const creds = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+      const token = creds?.claudeAiOauth?.accessToken;
+      if (token) return { header: 'Authorization', value: `Bearer ${token}` };
     }
-  }
-  return process.env.ANTHROPIC_API_KEY ?? '';
+  } catch { /* fall through */ }
+
+  return null;
 }
 
 function getFfmpegPath(): string {
@@ -125,8 +132,19 @@ export async function analyzeReferenceVideoWithClaude(
   filePath: string,
   appPath: string,
 ): Promise<ReferenceAnalysis> {
-  const apiKey = loadAnthropicKey(appPath);
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in .env');
+  // Try .env file first (legacy path)
+  const envPath = path.join(appPath, '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const [k, v] = line.split('=');
+      if (k?.trim() === 'ANTHROPIC_API_KEY' && v?.trim()) {
+        process.env.ANTHROPIC_API_KEY = v.trim();
+        break;
+      }
+    }
+  }
+  const auth = resolveAnthropicAuth();
+  if (!auth) throw new Error('No Anthropic auth found — set ANTHROPIC_API_KEY in .env or ensure Claude Code credentials are present');
 
   const ffmpegPath = getFfmpegPath();
   const ffprobePath = getFfprobePath();
@@ -167,22 +185,14 @@ export async function analyzeReferenceVideoWithClaude(
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'x-api-key': apiKey,
+        [auth.header]: auth.value,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1024,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              ...imageBlocks,
-              { type: 'text', text: ANALYSIS_PROMPT },
-            ],
-          },
-        ],
+        messages: [{ role: 'user', content: [...imageBlocks, { type: 'text', text: ANALYSIS_PROMPT }] }],
       }),
     });
 

@@ -229,7 +229,38 @@ export const resolveAudioFrameRequests = (
     // Convert volumeDb to linear gain for HTMLAudioElement
     // volumeDb is the source of truth (track.volume is deprecated)
     const volumeDb = track.volumeDb ?? 0;
-    const linearVolume = dbToLinear(volumeDb);
+    let linearVolume = dbToLinear(volumeDb);
+
+    // Preview-time audio ducking: apply speech-interval-based gain reduction.
+    // If duckingEnabled but no intervals are set, duck for the entire clip.
+    if (track.duckingEnabled) {
+      const currentSec = timelineFrame / fps;
+      const targetDb = track.duckingTargetDb ?? -12;
+      const fadeSec = track.duckingFadeDuration ?? 0.3;
+      const targetGain = dbToLinear(targetDb);
+      const fullGain = linearVolume;
+
+      const intervals: { start: number; end: number }[] =
+        track.duckingSpeechIntervals?.length
+          ? track.duckingSpeechIntervals
+          : [{ start: track.startFrame / fps, end: track.endFrame / fps }];
+
+      let gain = fullGain;
+      for (const iv of intervals) {
+        const fadeInStart = iv.start - fadeSec;
+        const fadeOutEnd = iv.end + fadeSec;
+        if (currentSec >= fadeInStart && currentSec < iv.start) {
+          const t = (currentSec - fadeInStart) / fadeSec;
+          gain = Math.min(gain, fullGain + t * (targetGain - fullGain));
+        } else if (currentSec >= iv.start && currentSec <= iv.end) {
+          gain = Math.min(gain, targetGain);
+        } else if (currentSec > iv.end && currentSec <= fadeOutEnd) {
+          const t = (currentSec - iv.end) / fadeSec;
+          gain = Math.min(gain, targetGain + t * (fullGain - targetGain));
+        }
+      }
+      linearVolume = gain;
+    }
 
     requests.push({
       clipId: track.id,

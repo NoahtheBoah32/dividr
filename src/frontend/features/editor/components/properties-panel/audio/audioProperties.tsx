@@ -64,6 +64,9 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   const updateTrackAudio = useVideoEditorStore(
     (state) => state.updateTrackAudio,
   );
+  const updateTrackDucking = useVideoEditorStore(
+    (state) => state.updateTrackDucking,
+  );
   const beginAudioUpdate = useVideoEditorStore(
     (state) => state.beginAudioUpdate,
   );
@@ -710,6 +713,113 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
               : 'Reduce background noise from audio'}
           </p>
         )}
+      </div>
+
+      <Separator />
+
+      {/* Audio Ducking */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-foreground">
+              Audio Ducking
+            </label>
+            {selectedTrack.duckingEnabled && (
+              <div className="w-2 h-2 bg-green-500 rounded-full" />
+            )}
+          </div>
+          <Switch
+            checked={selectedTrack.duckingEnabled ?? false}
+            onCheckedChange={(checked) => {
+              selectedAudioTracks.forEach((t) =>
+                updateTrackDucking(t.id, { duckingEnabled: checked }),
+              );
+            }}
+            className="h-4 w-7"
+            thumbClassName="size-3.5"
+            disabled={isMultipleSelected}
+          />
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          {selectedTrack.duckingEnabled
+            ? 'Volume reduces automatically when narration plays'
+            : 'Auto-reduce volume when narration or voice tracks are active'}
+        </p>
+
+        {selectedTrack.duckingEnabled && !isMultipleSelected && (
+          <div className="space-y-3 pt-1">
+            {/* Duck target dB */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">
+                  Target level
+                </label>
+                <span className="text-xs text-muted-foreground">
+                  {(selectedTrack.duckingTargetDb ?? -18).toFixed(1)} dB
+                </span>
+              </div>
+              <Slider
+                value={[selectedTrack.duckingTargetDb ?? -18]}
+                onValueChange={([val]) =>
+                  updateTrackDucking(selectedTrack.id, { duckingTargetDb: val })
+                }
+                min={-40}
+                max={-6}
+                step={0.5}
+                className="w-full"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground px-1">
+                <span>-40</span>
+                <span>-20</span>
+                <span>-6</span>
+              </div>
+            </div>
+
+            {/* Fade duration */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">
+                  Fade time
+                </label>
+                <span className="text-xs text-muted-foreground">
+                  {((selectedTrack.duckingFadeDuration ?? 0.3) * 1000).toFixed(0)} ms
+                </span>
+              </div>
+              <Slider
+                value={[selectedTrack.duckingFadeDuration ?? 0.3]}
+                onValueChange={([val]) =>
+                  updateTrackDucking(selectedTrack.id, { duckingFadeDuration: val })
+                }
+                min={0.05}
+                max={1.0}
+                step={0.05}
+                className="w-full"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Primary (narration) toggle — shown on all audio tracks */}
+        <div className="flex items-center justify-between pt-1">
+          <label className="text-xs text-muted-foreground">
+            Narration / voice track
+          </label>
+          <Switch
+            checked={selectedTrack.duckingPrimary ?? false}
+            onCheckedChange={(checked) => {
+              selectedAudioTracks.forEach((t) =>
+                updateTrackDucking(t.id, { duckingPrimary: checked }),
+              );
+            }}
+            className="h-4 w-7"
+            thumbClassName="size-3.5"
+            disabled={isMultipleSelected}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Mark this as a narration track to trigger ducking on music tracks
+        </p>
       </div>
 
       {isMultipleSelected && (

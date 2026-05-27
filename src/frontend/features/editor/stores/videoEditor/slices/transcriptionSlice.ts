@@ -368,6 +368,10 @@ export const createTranscriptionSlice: StateCreator<
 
     const subtitleRowIndex = resolveSubtitleRowIndex(state.tracks || []);
 
+    // Stamp the project ID at the moment transcription starts so progress
+    // events from this job can be dropped if the user switches projects mid-run.
+    const transcriptionProjectId = (get() as any).currentProjectId as string | null;
+
     // Start transcription
     set({
       isTranscribing: true,
@@ -398,12 +402,17 @@ export const createTranscriptionSlice: StateCreator<
         console.log('   Audio path:', audioPath);
         console.log('   Model:', options.model);
 
-        // Setup progress listener
+        // Setup progress listener — drop events if the user has switched projects
         const progressListener = (progress: {
           stage: 'loading' | 'processing' | 'complete' | 'error';
           progress: number;
           message?: string;
         }) => {
+          const activeProjectId = (get() as any).currentProjectId as string | null;
+          if (activeProjectId !== transcriptionProjectId) {
+            console.warn('[transcriptionSlice] dropping whisper progress — project switched');
+            return;
+          }
           set({ transcriptionProgress: progress });
           if (options.onProgress) {
             options.onProgress(progress);

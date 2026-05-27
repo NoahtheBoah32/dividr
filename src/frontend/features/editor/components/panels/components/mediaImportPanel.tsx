@@ -259,6 +259,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
         <ContextMenuTrigger asChild>
           <div className="flex flex-col space-y-2">
             <div
+              data-edith-target={`media:${file.name}`}
               draggable={!file.isOnTimeline && !isLocked}
               onDragStart={(e) => {
                 if (!file.isOnTimeline && !isLocked) {

@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+﻿/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-var-requires */
 import { spawn, spawnSync } from 'child_process';
@@ -69,7 +69,7 @@ type WhisperProgress = MediaToolsProgress;
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
-// ── GEMINI KILL SWITCH ── flip false to re-enable
+// â”€â”€ GEMINI KILL SWITCH â”€â”€ flip false to re-enable
 const GEMINI_DISABLED = true;
 
 // Global variables
@@ -115,11 +115,11 @@ function getFfmpegAudioDenoiseFilter(): 'arnndn' | 'afftdn' | null {
       ffmpegAudioDenoiseFilter = null;
     }
   } catch (error) {
-    console.warn('⚠️ Failed to detect FFmpeg filters:', error);
+    console.warn('âš ï¸ Failed to detect FFmpeg filters:', error);
     ffmpegAudioDenoiseFilter = null;
   }
 
-  console.log('🔎 FFmpeg denoise filter support:', ffmpegAudioDenoiseFilter);
+  console.log('ðŸ”Ž FFmpeg denoise filter support:', ffmpegAudioDenoiseFilter);
   return ffmpegAudioDenoiseFilter;
 }
 
@@ -239,12 +239,12 @@ function killCurrentFfmpegProcess(reason: string): boolean {
     return false;
   }
 
-  console.warn(`🛑 Killing FFmpeg process (${reason})`);
+  console.warn(`ðŸ›‘ Killing FFmpeg process (${reason})`);
   const proc = currentFfmpegProcess;
   try {
     proc.kill('SIGTERM');
   } catch (error) {
-    console.warn('⚠️ Failed to send SIGTERM to FFmpeg:', error);
+    console.warn('âš ï¸ Failed to send SIGTERM to FFmpeg:', error);
   }
 
   setTimeout(() => {
@@ -252,7 +252,7 @@ function killCurrentFfmpegProcess(reason: string): boolean {
       try {
         proc.kill('SIGKILL');
       } catch (error) {
-        console.warn('⚠️ Failed to send SIGKILL to FFmpeg:', error);
+        console.warn('âš ï¸ Failed to send SIGKILL to FFmpeg:', error);
       }
     }
     clearCurrentFfmpegProcess();
@@ -311,7 +311,7 @@ function queueFFmpegTask<T>(
     ffmpegTaskQueue.splice(insertIndex, 0, task);
 
     console.log(
-      `📋 FFmpeg task queued: ${taskId} (priority ${priority}), queue length: ${ffmpegTaskQueue.length}`,
+      `ðŸ“‹ FFmpeg task queued: ${taskId} (priority ${priority}), queue length: ${ffmpegTaskQueue.length}`,
     );
 
     // Start processing if not already running
@@ -331,19 +331,19 @@ async function processFFmpegQueue() {
     if (!task) break;
 
     console.log(
-      `⚙️ Processing FFmpeg task: ${task.id} (priority ${task.priority}), remaining: ${ffmpegTaskQueue.length}`,
+      `âš™ï¸ Processing FFmpeg task: ${task.id} (priority ${task.priority}), remaining: ${ffmpegTaskQueue.length}`,
     );
 
     try {
       await task.execute();
     } catch (error) {
-      console.error(`❌ FFmpeg task ${task.id} failed:`, error);
+      console.error(`âŒ FFmpeg task ${task.id} failed:`, error);
       // Error is already handled by the task's reject
     }
   }
 
   isProcessingFFmpegQueue = false;
-  console.log('✅ FFmpeg queue empty');
+  console.log('âœ… FFmpeg queue empty');
 }
 
 // =============================================================================
@@ -475,14 +475,14 @@ function runQueuedFfmpeg(
 
 // Initialize ffmpeg paths dynamically with fallbacks
 async function initializeFfmpegPaths() {
-  console.log('🔍 Initializing FFmpeg paths...');
-  console.log('📦 Is packaged:', app.isPackaged);
-  console.log('🌍 Environment:', process.env.NODE_ENV || 'production');
+  console.log('ðŸ” Initializing FFmpeg paths...');
+  console.log('ðŸ“¦ Is packaged:', app.isPackaged);
+  console.log('ðŸŒ Environment:', process.env.NODE_ENV || 'production');
 
   // Method 1: Try ffmpeg-static first (bundled, fast, reliable)
   if (!ffmpegPath) {
     try {
-      console.log('🔄 Attempting ffmpeg-static (bundled binary)...');
+      console.log('ðŸ”„ Attempting ffmpeg-static (bundled binary)...');
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const ffmpegStatic = require('ffmpeg-static');
@@ -491,7 +491,7 @@ async function initializeFfmpegPaths() {
         const fs = require('fs');
         if (fs.existsSync(ffmpegStatic)) {
           ffmpegPath = ffmpegStatic;
-          console.log('✅ FFmpeg resolved via ffmpeg-static:', ffmpegPath);
+          console.log('âœ… FFmpeg resolved via ffmpeg-static:', ffmpegPath);
 
           // Check version to confirm it's modern
           try {
@@ -504,21 +504,21 @@ async function initializeFfmpegPaths() {
             );
             if (versionMatch) {
               console.log(
-                `ℹ️  FFmpeg version ${versionMatch[1]}.${versionMatch[2]} (bundled)`,
+                `â„¹ï¸  FFmpeg version ${versionMatch[1]}.${versionMatch[2]} (bundled)`,
               );
             }
           } catch (vErr) {
             console.log(
-              'ℹ️  (Could not detect version, but using ffmpeg-static)',
+              'â„¹ï¸  (Could not detect version, but using ffmpeg-static)',
             );
           }
         } else {
-          console.log('⚠️ ffmpeg-static returned invalid path:', ffmpegStatic);
+          console.log('âš ï¸ ffmpeg-static returned invalid path:', ffmpegStatic);
         }
       }
     } catch (requireError) {
-      console.log('⚠️ ffmpeg-static not available:', requireError.message);
-      console.log('ℹ️  Install with: yarn add ffmpeg-static');
+      console.log('âš ï¸ ffmpeg-static not available:', requireError.message);
+      console.log('â„¹ï¸  Install with: yarn add ffmpeg-static');
     }
   }
 
@@ -526,7 +526,7 @@ async function initializeFfmpegPaths() {
   if (!ffmpegPath) {
     try {
       console.log(
-        '🔄 Attempting ffbinaries fallback (downloads FFmpeg if needed)...',
+        'ðŸ”„ Attempting ffbinaries fallback (downloads FFmpeg if needed)...',
       );
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
@@ -546,10 +546,10 @@ async function initializeFfmpegPaths() {
 
       if (require('fs').existsSync(expectedPath)) {
         ffmpegPath = expectedPath;
-        console.log('✅ FFmpeg already downloaded via ffbinaries:', ffmpegPath);
+        console.log('âœ… FFmpeg already downloaded via ffbinaries:', ffmpegPath);
       } else {
         console.log(
-          '📥 Downloading FFmpeg via ffbinaries (first time setup)...',
+          'ðŸ“¥ Downloading FFmpeg via ffbinaries (first time setup)...',
         );
 
         // Download FFmpeg (async operation)
@@ -559,11 +559,11 @@ async function initializeFfmpegPaths() {
             { destination: binDir },
             (err: any) => {
               if (err) {
-                console.error('❌ Failed to download FFmpeg:', err);
+                console.error('âŒ Failed to download FFmpeg:', err);
                 reject(err);
               } else {
                 ffmpegPath = expectedPath;
-                console.log('✅ FFmpeg downloaded successfully:', ffmpegPath);
+                console.log('âœ… FFmpeg downloaded successfully:', ffmpegPath);
                 resolve(null);
               }
             },
@@ -583,47 +583,47 @@ async function initializeFfmpegPaths() {
           );
           if (versionMatch) {
             console.log(
-              `ℹ️  FFmpeg version ${versionMatch[1]}.${versionMatch[2]} from ffbinaries`,
+              `â„¹ï¸  FFmpeg version ${versionMatch[1]}.${versionMatch[2]} from ffbinaries`,
             );
           }
         } catch (vErr) {
-          console.log('ℹ️  (Could not detect version, but FFmpeg is ready)');
+          console.log('â„¹ï¸  (Could not detect version, but FFmpeg is ready)');
         }
       }
     } catch (error) {
-      console.log('⚠️ ffbinaries failed:', error.message);
-      console.log('ℹ️  Install with: yarn add ffbinaries');
+      console.log('âš ï¸ ffbinaries failed:', error.message);
+      console.log('â„¹ï¸  Install with: yarn add ffbinaries');
     }
   }
 
   // Log if no FFmpeg found yet
   if (!ffmpegPath) {
-    console.log('⚠️ No FFmpeg binary found in standard locations');
+    console.log('âš ï¸ No FFmpeg binary found in standard locations');
   }
 
   // FFprobe require method (only for development, same issue as ffmpeg)
   if (!app.isPackaged) {
     try {
-      console.log('🔄 Attempting FFprobe require method (development mode)...');
+      console.log('ðŸ”„ Attempting FFprobe require method (development mode)...');
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const ffprobeStatic = require('ffprobe-static');
       if (ffprobeStatic) {
         ffprobePath = ffprobeStatic;
-        console.log('✅ FFprobe resolved via require:', ffprobePath?.path);
+        console.log('âœ… FFprobe resolved via require:', ffprobePath?.path);
       }
     } catch (requireError) {
-      console.log('⚠️ FFprobe require method failed:', requireError.message);
+      console.log('âš ï¸ FFprobe require method failed:', requireError.message);
     }
   } else {
     console.log(
-      '🚫 Skipping FFprobe require method for packaged app - using manual resolution',
+      'ðŸš« Skipping FFprobe require method for packaged app - using manual resolution',
     );
   }
 
   // Method 2: Manual path resolution for packaged apps (always used for packaged apps)
   if (app.isPackaged) {
     try {
-      console.log('🔄 Attempting manual path resolution...');
+      console.log('ðŸ”„ Attempting manual path resolution...');
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const path = require('path');
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
@@ -635,9 +635,9 @@ async function initializeFfmpegPaths() {
       const isWindows = process.platform === 'win32';
       const ffmpegBinary = isWindows ? 'ffmpeg.exe' : 'ffmpeg';
 
-      console.log('📁 App path:', appPath);
-      console.log('📁 Resources path:', resourcesPath);
-      console.log('🖥️ Platform:', process.platform);
+      console.log('ðŸ“ App path:', appPath);
+      console.log('ðŸ“ Resources path:', resourcesPath);
+      console.log('ðŸ–¥ï¸ Platform:', process.platform);
 
       const possiblePaths = [
         // Try @ffmpeg-installer first (better hardware acceleration)
@@ -714,13 +714,13 @@ async function initializeFfmpegPaths() {
       ];
 
       for (const testPath of possiblePaths) {
-        console.log('🔍 Checking FFmpeg path:', testPath);
+        console.log('ðŸ” Checking FFmpeg path:', testPath);
         if (fs.existsSync(testPath)) {
           ffmpegPath = testPath;
-          console.log('✅ FFmpeg found at manual path:', testPath);
+          console.log('âœ… FFmpeg found at manual path:', testPath);
           break;
         } else {
-          console.log('❌ FFmpeg not found at:', testPath);
+          console.log('âŒ FFmpeg not found at:', testPath);
         }
       }
 
@@ -823,33 +823,33 @@ async function initializeFfmpegPaths() {
       ];
 
       for (const testPath of ffprobePaths) {
-        console.log('🔍 Checking FFprobe path:', testPath);
+        console.log('ðŸ” Checking FFprobe path:', testPath);
         if (fs.existsSync(testPath)) {
           ffprobePath = { path: testPath };
-          console.log('✅ FFprobe found at manual path:', testPath);
+          console.log('âœ… FFprobe found at manual path:', testPath);
           break;
         } else {
-          console.log('❌ FFprobe not found at:', testPath);
+          console.log('âŒ FFprobe not found at:', testPath);
         }
       }
     } catch (manualError) {
-      console.log('⚠️ Manual path resolution failed:', manualError.message);
+      console.log('âš ï¸ Manual path resolution failed:', manualError.message);
     }
   }
 
   // Method 3: System fallback
   if (!ffmpegPath) {
     try {
-      console.log('🔄 Attempting system FFmpeg fallback...');
+      console.log('ðŸ”„ Attempting system FFmpeg fallback...');
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
       const { execSync } = require('child_process');
       const systemFfmpeg = execSync('where ffmpeg', {
         encoding: 'utf8',
       }).trim();
       ffmpegPath = systemFfmpeg.split('\n')[0];
-      console.log('✅ Using system FFmpeg:', ffmpegPath);
+      console.log('âœ… Using system FFmpeg:', ffmpegPath);
     } catch (systemError) {
-      console.log('⚠️ System FFmpeg not available:', systemError.message);
+      console.log('âš ï¸ System FFmpeg not available:', systemError.message);
     }
   }
 
@@ -861,14 +861,14 @@ async function initializeFfmpegPaths() {
         encoding: 'utf8',
       }).trim();
       ffprobePath = { path: systemFfprobe.split('\n')[0] };
-      console.log('✅ Using system FFprobe:', ffprobePath.path);
+      console.log('âœ… Using system FFprobe:', ffprobePath.path);
     } catch (systemError) {
-      console.log('⚠️ System FFprobe not available:', systemError.message);
+      console.log('âš ï¸ System FFprobe not available:', systemError.message);
     }
   }
 
   // Final status report
-  console.log('🎯 FFmpeg initialization complete:');
+  console.log('ðŸŽ¯ FFmpeg initialization complete:');
   console.log(
     '  - FFmpeg available:',
     !!ffmpegPath,
@@ -881,11 +881,11 @@ async function initializeFfmpegPaths() {
   );
 
   if (!ffmpegPath || !ffprobePath?.path) {
-    console.error('❌ FFmpeg initialization failed!');
+    console.error('âŒ FFmpeg initialization failed!');
     console.error(
-      '📋 Please ensure ffmpeg-static and ffprobe-static packages are installed correctly',
+      'ðŸ“‹ Please ensure ffmpeg-static and ffprobe-static packages are installed correctly',
     );
-    console.error('📋 Or install FFmpeg system-wide as a fallback');
+    console.error('ðŸ“‹ Or install FFmpeg system-wide as a fallback');
   }
 }
 
@@ -907,7 +907,7 @@ const kickoffDeferredInitialization = () => {
     initializeFfmpegPaths()
       .then(() => logStartupPerf())
       .catch((error) => {
-        console.error('⚠️ FFmpeg init failed (non-blocking):', error);
+        console.error('âš ï¸ FFmpeg init failed (non-blocking):', error);
       });
   }, 0);
 };
@@ -918,7 +918,7 @@ const ensurePythonInitialized = async (_reason: string): Promise<void> => {
   try {
     await initializePythonWhisper();
   } catch (error) {
-    console.error('⚠️ Python Whisper initialization failed:', error);
+    console.error('âš ï¸ Python Whisper initialization failed:', error);
     throw error;
   }
 };
@@ -941,7 +941,7 @@ function getMediaCacheDir(): string {
       fs.mkdirSync(baseDir, { recursive: true });
     }
   } catch (error) {
-    console.warn('⚠️ Failed to ensure media cache directory:', error);
+    console.warn('âš ï¸ Failed to ensure media cache directory:', error);
   }
   mediaCacheDir = baseDir;
   return mediaCacheDir;
@@ -968,7 +968,7 @@ function resolveMediaPath(input: string): string | null {
         }
       }
     } catch (error) {
-      console.warn('⚠️ Failed to parse media URL:', error);
+      console.warn('âš ï¸ Failed to parse media URL:', error);
       return null;
     }
   }
@@ -1187,7 +1187,7 @@ function createMediaServer() {
 
   mediaServer.listen(MEDIA_SERVER_PORT, 'localhost', () => {
     console.log(
-      `📁 Media server started on http://localhost:${MEDIA_SERVER_PORT}`,
+      `ðŸ“ Media server started on http://localhost:${MEDIA_SERVER_PORT}`,
     );
     logStartupPerf();
   });
@@ -1360,7 +1360,7 @@ ipcMain.handle('show-item-in-folder', async (event, filePath: string) => {
     // Show item in folder (works cross-platform)
     shell.showItemInFolder(filePath);
 
-    console.log('📂 Opened file location:', filePath);
+    console.log('ðŸ“‚ Opened file location:', filePath);
     return { success: true };
   } catch (error) {
     console.error('Failed to show file in folder:', error);
@@ -1414,8 +1414,8 @@ ipcMain.handle('run-ffmpeg-with-progress', async (event, job: VideoEditJob) => {
 ipcMain.handle(
   'extract-audio-from-video',
   async (event, videoPath: string, outputDir?: string) => {
-    console.log('🎵 MAIN PROCESS: extractAudioFromVideo handler called!');
-    console.log('🎵 MAIN PROCESS: Video path:', videoPath);
+    console.log('ðŸŽµ MAIN PROCESS: extractAudioFromVideo handler called!');
+    console.log('ðŸŽµ MAIN PROCESS: Video path:', videoPath);
 
     if (!ffmpegPath) {
       return {
@@ -1434,7 +1434,7 @@ ipcMain.handle(
 
       // Use fileIOManager for directory creation with EMFILE protection
       await fileIOManager.mkdir(audioOutputDir, 'normal');
-      console.log('📁 Audio extraction directory ready:', audioOutputDir);
+      console.log('ðŸ“ Audio extraction directory ready:', audioOutputDir);
 
       // Generate unique filename for extracted audio
       const videoBaseName = path.basename(videoPath, path.extname(videoPath));
@@ -1442,7 +1442,7 @@ ipcMain.handle(
       const audioFileName = `${videoBaseName}_${timestamp}_extracted.wav`;
       const audioOutputPath = path.join(audioOutputDir, audioFileName);
 
-      console.log('🎵 Extracting audio to:', audioOutputPath);
+      console.log('ðŸŽµ Extracting audio to:', audioOutputPath);
 
       // FFmpeg command to extract audio with high quality
       const args = [
@@ -1459,7 +1459,7 @@ ipcMain.handle(
         audioOutputPath, // Output audio file
       ];
 
-      console.log('🎬 AUDIO EXTRACTION FFMPEG COMMAND:');
+      console.log('ðŸŽ¬ AUDIO EXTRACTION FFMPEG COMMAND:');
       console.log(['ffmpeg', ...args].join(' '));
 
       const ffmpegResult = await runQueuedFfmpeg(args, {
@@ -1493,7 +1493,7 @@ ipcMain.handle(
               lastError = statErr as Error;
               if (isEMFILEError(statErr) && attempt < 3) {
                 console.warn(
-                  `⚠️ EMFILE during audio file verification, retry ${attempt}/3`,
+                  `âš ï¸ EMFILE during audio file verification, retry ${attempt}/3`,
                 );
                 await new Promise((r) => setTimeout(r, 500 * attempt));
               } else {
@@ -1507,9 +1507,9 @@ ipcMain.handle(
             // Use the same logic as the create-preview-url handler
             const previewUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodeURIComponent(audioOutputPath)}`;
 
-            console.log('✅ Audio extraction successful!');
-            console.log('📁 Audio file path:', audioOutputPath);
-            console.log('📏 Audio file size:', stats.size, 'bytes');
+            console.log('âœ… Audio extraction successful!');
+            console.log('ðŸ“ Audio file path:', audioOutputPath);
+            console.log('ðŸ“ Audio file size:', stats.size, 'bytes');
 
             return {
               success: true,
@@ -1520,7 +1520,7 @@ ipcMain.handle(
             };
           }
 
-          console.error('❌ Audio file was created but is empty');
+          console.error('âŒ Audio file was created but is empty');
           return {
             success: false,
             error: 'Audio extraction failed: output file is empty',
@@ -1529,7 +1529,7 @@ ipcMain.handle(
           const errorMessage =
             statError instanceof Error ? statError.message : 'Unknown error';
           console.error(
-            '❌ Failed to verify extracted audio file:',
+            'âŒ Failed to verify extracted audio file:',
             errorMessage,
           );
 
@@ -1550,7 +1550,7 @@ ipcMain.handle(
       }
 
       console.error(
-        '❌ Audio extraction failed with exit code:',
+        'âŒ Audio extraction failed with exit code:',
         ffmpegResult.code,
       );
       return {
@@ -1566,9 +1566,9 @@ ipcMain.handle(
 ipcMain.handle(
   'run-custom-ffmpeg',
   async (event, args: string[], outputDir: string) => {
-    console.log('🎯 MAIN PROCESS: runCustomFFmpeg handler called!');
-    console.log('🎯 MAIN PROCESS: FFmpeg args:', args);
-    console.log('🎯 MAIN PROCESS: Output directory:', outputDir);
+    console.log('ðŸŽ¯ MAIN PROCESS: runCustomFFmpeg handler called!');
+    console.log('ðŸŽ¯ MAIN PROCESS: FFmpeg args:', args);
+    console.log('ðŸŽ¯ MAIN PROCESS: Output directory:', outputDir);
 
     if (!ffmpegPath) {
       return {
@@ -1589,12 +1589,12 @@ ipcMain.handle(
     try {
       if (hasOutputDir) {
         await fileIOManager.mkdir(absoluteOutputDir, 'high');
-        console.log('📁 Output directory ready:', absoluteOutputDir);
+        console.log('ðŸ“ Output directory ready:', absoluteOutputDir);
       }
     } catch (dirError) {
       const errorMessage =
         dirError instanceof Error ? dirError.message : 'Unknown error';
-      console.error('❌ Failed to create output directory:', errorMessage);
+      console.error('âŒ Failed to create output directory:', errorMessage);
 
       if (isEMFILEError(dirError)) {
         return {
@@ -1619,7 +1619,7 @@ ipcMain.handle(
         })
       : args;
 
-    console.log('🎬 COMPLETE CUSTOM FFMPEG COMMAND:');
+    console.log('ðŸŽ¬ COMPLETE CUSTOM FFMPEG COMMAND:');
     console.log(['ffmpeg', ...finalArgs].join(' '));
 
     // Use priority queue with LOWEST priority (3) for thumbnail extraction
@@ -1637,7 +1637,7 @@ ipcMain.handle(
       };
     }
 
-    console.log(`🎬 FFmpeg process exited with code: ${ffmpegResult.code}`);
+    console.log(`ðŸŽ¬ FFmpeg process exited with code: ${ffmpegResult.code}`);
 
     if (ffmpegResult.code === 0) {
       if (!hasOutputDir) {
@@ -1651,7 +1651,7 @@ ipcMain.handle(
           .sort();
 
         console.log(
-          `✅ Generated ${outputFiles.length} thumbnail files:`,
+          `âœ… Generated ${outputFiles.length} thumbnail files:`,
           outputFiles,
         );
 
@@ -1660,7 +1660,7 @@ ipcMain.handle(
           output: outputFiles,
         };
       } catch (listError) {
-        console.error('❌ Error listing output files:', listError);
+        console.error('âŒ Error listing output files:', listError);
         return {
           success: false,
           error: `FFmpeg succeeded but failed to list output files: ${listError.message}`,
@@ -1668,7 +1668,7 @@ ipcMain.handle(
       }
     }
 
-    console.error(`❌ FFmpeg failed with exit code: ${ffmpegResult.code}`);
+    console.error(`âŒ FFmpeg failed with exit code: ${ffmpegResult.code}`);
     return {
       success: false,
       error: `FFmpeg process failed with exit code ${ffmpegResult.code}. stderr: ${ffmpegResult.stderr}`,
@@ -1690,10 +1690,10 @@ ipcMain.handle(
   ) => {
     const { jobId, videoPath, outputDir, commands } = options;
 
-    console.log('🎬 Starting background sprite sheet generation:', jobId);
-    console.log('📹 Video:', videoPath);
-    console.log('📁 Output:', outputDir);
-    console.log('🔧 Commands:', commands.length);
+    console.log('ðŸŽ¬ Starting background sprite sheet generation:', jobId);
+    console.log('ðŸ“¹ Video:', videoPath);
+    console.log('ðŸ“ Output:', outputDir);
+    console.log('ðŸ”§ Commands:', commands.length);
 
     if (!ffmpegPath) {
       return {
@@ -1767,7 +1767,7 @@ ipcMain.handle('cancel-sprite-sheet-job', async (event, jobId: string) => {
 
   activeSpriteSheetJobs.delete(jobId);
 
-  console.log('🛑 Cancelled sprite sheet job:', jobId);
+  console.log('ðŸ›‘ Cancelled sprite sheet job:', jobId);
   return {
     success: true,
     message: 'Job cancelled',
@@ -1786,13 +1786,13 @@ async function processSpriteSheetsInBackground(
       : path.resolve(job.outputDir);
 
     await fileIOManager.mkdir(absoluteOutputDir, 'normal');
-    console.log('📁 Sprite sheet output directory ready:', absoluteOutputDir);
+    console.log('ðŸ“ Sprite sheet output directory ready:', absoluteOutputDir);
 
     // Process each command sequentially
     for (let i = 0; i < job.commands.length; i++) {
       const currentJob = activeSpriteSheetJobs.get(jobId);
       if (!currentJob) {
-        console.log('🛑 Job cancelled during processing:', jobId);
+        console.log('ðŸ›‘ Job cancelled during processing:', jobId);
         return;
       }
 
@@ -1812,10 +1812,10 @@ async function processSpriteSheetsInBackground(
       };
 
       console.log(
-        `🎬 Processing sprite sheet ${i + 1}/${job.commands.length} for job ${jobId}`,
+        `ðŸŽ¬ Processing sprite sheet ${i + 1}/${job.commands.length} for job ${jobId}`,
       );
       console.log(
-        '🔧 FFmpeg command:',
+        'ðŸ”§ FFmpeg command:',
         ['ffmpeg', ...adjustedCommand].join(' '),
       );
 
@@ -1838,7 +1838,7 @@ async function processSpriteSheetsInBackground(
         result.success = false;
         result.error = `FFmpeg process timed out after ${timeoutMs / 1000} seconds`;
       } else if (ffmpegResult.code === 0) {
-        console.log(`✅ Sprite sheet ${i + 1} generated successfully`);
+        console.log(`âœ… Sprite sheet ${i + 1} generated successfully`);
 
         // Progressive loading: Notify renderer that this sheet is ready
         if (mainWindow) {
@@ -1856,7 +1856,7 @@ async function processSpriteSheetsInBackground(
         result.success = true;
       } else {
         console.error(
-          `❌ Sprite sheet ${i + 1} failed with exit code: ${ffmpegResult.code}`,
+          `âŒ Sprite sheet ${i + 1} failed with exit code: ${ffmpegResult.code}`,
         );
         // Try to extract meaningful error from stderr
         const errorMatch =
@@ -1871,7 +1871,7 @@ async function processSpriteSheetsInBackground(
 
       if (!result.success) {
         console.error(
-          `❌ Failed to generate sprite sheet ${i + 1}/${job.commands.length}:`,
+          `âŒ Failed to generate sprite sheet ${i + 1}/${job.commands.length}:`,
           result.error,
         );
 
@@ -1893,7 +1893,7 @@ async function processSpriteSheetsInBackground(
       }
 
       console.log(
-        `✅ Successfully generated sprite sheet ${i + 1}/${job.commands.length}`,
+        `âœ… Successfully generated sprite sheet ${i + 1}/${job.commands.length}`,
       );
     }
 
@@ -1926,7 +1926,7 @@ async function processSpriteSheetsInBackground(
             lastError = err as Error;
             if (isEMFILEError(err) && attempt < 3) {
               console.warn(
-                `⚠️ EMFILE listing sprite sheet files, retry ${attempt}/3`,
+                `âš ï¸ EMFILE listing sprite sheet files, retry ${attempt}/3`,
               );
               await new Promise((r) => setTimeout(r, 500 * attempt));
             } else {
@@ -1936,7 +1936,7 @@ async function processSpriteSheetsInBackground(
         }
 
         console.log(
-          `✅ Generated ${outputFiles.length} sprite sheet files for job ${jobId}`,
+          `âœ… Generated ${outputFiles.length} sprite sheet files for job ${jobId}`,
         );
 
         // Notify renderer about completion
@@ -1951,7 +1951,7 @@ async function processSpriteSheetsInBackground(
         const errorMessage =
           listError instanceof Error ? listError.message : 'Unknown error';
         console.error(
-          '❌ Error listing sprite sheet output files:',
+          'âŒ Error listing sprite sheet output files:',
           errorMessage,
         );
       }
@@ -1959,7 +1959,7 @@ async function processSpriteSheetsInBackground(
       activeSpriteSheetJobs.delete(jobId);
     }
   } catch (error) {
-    console.error('❌ Background sprite sheet processing error:', error);
+    console.error('âŒ Background sprite sheet processing error:', error);
 
     // Notify renderer about error
     if (mainWindow) {
@@ -2022,7 +2022,7 @@ async function writeFileWithRetry(
       lastError = error as Error;
       if (isEMFILEError(error) && attempt < maxRetries) {
         console.warn(
-          `⚠️ EMFILE error writing ${filePath}, retry ${attempt}/${maxRetries}`,
+          `âš ï¸ EMFILE error writing ${filePath}, retry ${attempt}/${maxRetries}`,
         );
         // Exponential backoff
         await new Promise((resolve) =>
@@ -2052,7 +2052,7 @@ ipcMain.handle(
   ) => {
     try {
       console.log(
-        `🎯 Processing ${fileBuffers.length} dropped files in main process (controlled concurrency)`,
+        `ðŸŽ¯ Processing ${fileBuffers.length} dropped files in main process (controlled concurrency)`,
       );
 
       const tempDir = path.join(os.tmpdir(), 'dividr-uploads');
@@ -2086,7 +2086,7 @@ ipcMain.handle(
         const batch = fileBuffers.slice(batchStart, batchEnd);
 
         console.log(
-          `📁 Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(totalFiles / BATCH_SIZE)} (files ${batchStart + 1}-${batchEnd} of ${totalFiles})`,
+          `ðŸ“ Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(totalFiles / BATCH_SIZE)} (files ${batchStart + 1}-${batchEnd} of ${totalFiles})`,
         );
 
         // Process batch in parallel (within concurrency limits)
@@ -2122,7 +2122,7 @@ ipcMain.handle(
             }
 
             console.log(
-              `✅ [${globalIndex + 1}/${totalFiles}] Wrote: ${fileData.name} -> ${tempFilePath}`,
+              `âœ… [${globalIndex + 1}/${totalFiles}] Wrote: ${fileData.name} -> ${tempFilePath}`,
             );
 
             return {
@@ -2142,7 +2142,7 @@ ipcMain.handle(
             const errorMessage =
               error instanceof Error ? error.message : 'Unknown error';
             console.error(
-              `❌ [${globalIndex + 1}/${totalFiles}] Failed to write: ${fileData.name}:`,
+              `âŒ [${globalIndex + 1}/${totalFiles}] Failed to write: ${fileData.name}:`,
               errorMessage,
             );
 
@@ -2174,7 +2174,7 @@ ipcMain.handle(
       // Log file I/O stats
       const stats = fileIOManager.getStats();
       console.log(
-        `📊 File I/O Stats - Completed: ${stats.completedOperations}, Failed: ${stats.failedOperations}, EMFILE errors: ${stats.emfileErrors}`,
+        `ðŸ“Š File I/O Stats - Completed: ${stats.completedOperations}, Failed: ${stats.failedOperations}, EMFILE errors: ${stats.emfileErrors}`,
       );
 
       if (processedFiles.length === 0 && errors.length > 0) {
@@ -2223,14 +2223,14 @@ ipcMain.handle('cleanup-temp-files', async (event, filePaths: string[]) => {
             filePath.includes('dividr-uploads')
           ) {
             await fileIOManager.deleteFile(filePath, 'low');
-            console.log(`🗑️ Cleaned up temporary file: ${filePath}`);
+            console.log(`ðŸ—‘ï¸ Cleaned up temporary file: ${filePath}`);
             return true;
           }
           return false;
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : 'Unknown error';
-          console.warn(`⚠️ Failed to cleanup file ${filePath}:`, errorMessage);
+          console.warn(`âš ï¸ Failed to cleanup file ${filePath}:`, errorMessage);
           errors.push(`${path.basename(filePath)}: ${errorMessage}`);
           return false;
         }
@@ -2253,10 +2253,108 @@ ipcMain.handle('cleanup-temp-files', async (event, filePaths: string[]) => {
   }
 });
 
+// ─── SFX Library ────────────────────────────────────────────────────────────
+
+function loadSfxLibraryPath(): string {
+  const envPath = path.join(app.getAppPath(), '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const [k, v] = line.split('=');
+      if (k?.trim() === 'SFX_LIBRARY_PATH') return v?.trim() ?? '';
+    }
+  }
+  return process.env.SFX_LIBRARY_PATH ?? '';
+}
+
+async function getAudioDurationSec(filePath: string): Promise<number> {
+  return new Promise((resolve) => {
+    const probe = spawn(ffprobePath.path, [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'json',
+      filePath,
+    ]);
+    let out = '';
+    probe.stdout.on('data', (d) => { out += d.toString(); });
+    probe.on('close', () => {
+      try {
+        const parsed = JSON.parse(out);
+        resolve(parseFloat(parsed?.format?.duration ?? '0') || 0);
+      } catch {
+        resolve(0);
+      }
+    });
+    probe.on('error', () => resolve(0));
+  });
+}
+
+function parseSfxCategories(filename: string): string[] {
+  // "ES_User Interface, Click, Button Click, Input Response, Tap, Short - Epidemic Sound.mp3"
+  // Strip prefix and suffix, split by comma
+  const inner = filename
+    .replace(/^ES_User Interface, /i, '')
+    .replace(/ - Epidemic Sound\.(mp3|wav)$/i, '');
+  return inner.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 4);
+}
+
+async function detectSfxBounds(filePath: string, totalDuration: number): Promise<{ audioStartSec: number; audioEndSec: number }> {
+  // Use ffmpeg silencedetect to find where actual audio starts/ends
+  // -50dB threshold, minimum 0.02s silence — catches leading/trailing pad in SFX files
+  let ffmpegBin = 'ffmpeg';
+  try { const s = require('ffmpeg-static') as string; if (s) ffmpegBin = s; } catch {}
+  try {
+    const { stderr } = await execAsync(
+      `"${ffmpegBin}" -i "${filePath}" -af silencedetect=n=-50dB:d=0.02 -f null -`,
+      { timeout: 5000 },
+    );
+    const lines = stderr.split('\n');
+    let audioStart = 0;
+    let audioEnd = totalDuration;
+    // First silence_end = where audio starts (after leading silence)
+    for (const line of lines) {
+      const endMatch = line.match(/silence_end: ([\d.]+)/);
+      if (endMatch) { audioStart = parseFloat(endMatch[1]); break; }
+    }
+    // Last silence_start = where audio ends (before trailing silence)
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const startMatch = lines[i].match(/silence_start: ([\d.]+)/);
+      if (startMatch) { audioEnd = parseFloat(startMatch[1]); break; }
+    }
+    // Sanity: if bounds are inverted or too tight, fall back to full duration
+    if (audioStart >= audioEnd || (audioEnd - audioStart) < 0.05) {
+      return { audioStartSec: 0, audioEndSec: totalDuration };
+    }
+    return { audioStartSec: audioStart, audioEndSec: audioEnd };
+  } catch {
+    return { audioStartSec: 0, audioEndSec: totalDuration };
+  }
+}
+
+ipcMain.handle('scan-sfx-library', async () => {
+  const libPath = loadSfxLibraryPath();
+  if (!libPath || !fs.existsSync(libPath)) {
+    return { entries: [], libPath: libPath || '(not configured — set SFX_LIBRARY_PATH in .env)' };
+  }
+  const AUDIO_EXTS = ['.mp3', '.wav', '.ogg', '.m4a'];
+  const files = fs.readdirSync(libPath).filter((f) =>
+    AUDIO_EXTS.includes(path.extname(f).toLowerCase()),
+  );
+  const entries: { name: string; path: string; durationSec: number; audioStartSec: number; audioEndSec: number; size: number; categories: string[] }[] = [];
+  for (const file of files) {
+    const fullPath = path.join(libPath, file);
+    const durationSec = await getAudioDurationSec(fullPath);
+    const { audioStartSec, audioEndSec } = await detectSfxBounds(fullPath, durationSec);
+    const size = fs.existsSync(fullPath) ? fs.statSync(fullPath).size : 0;
+    entries.push({ name: file, path: fullPath, durationSec, audioStartSec, audioEndSec, size, categories: parseSfxCategories(file) });
+  }
+  console.log(`[SFX] Scanned ${entries.length} files from ${libPath}`);
+  return { entries, libPath };
+});
+
 // IPC Handler for reading file content with EMFILE protection
 ipcMain.handle('read-file', async (event, filePath: string) => {
   try {
-    console.log(`📖 Reading file content from: ${filePath}`);
+    console.log(`ðŸ“– Reading file content from: ${filePath}`);
 
     if (!fileIOManager.exists(filePath)) {
       throw new Error(`File not found: ${filePath}`);
@@ -2267,13 +2365,13 @@ ipcMain.handle('read-file', async (event, filePath: string) => {
       encoding: 'utf-8',
       priority: 'normal',
     });
-    console.log(`📄 Successfully read file, content length: ${content.length}`);
+    console.log(`ðŸ“„ Successfully read file, content length: ${content.length}`);
 
     return content;
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error';
-    console.error(`❌ Failed to read file ${filePath}:`, errorMessage);
+    console.error(`âŒ Failed to read file ${filePath}:`, errorMessage);
 
     // Provide helpful error message for EMFILE
     if (isEMFILEError(error)) {
@@ -2289,7 +2387,7 @@ ipcMain.handle('read-file', async (event, filePath: string) => {
 // IPC Handler for reading file as ArrayBuffer (for validation) with EMFILE protection
 ipcMain.handle('read-file-as-buffer', async (event, filePath: string) => {
   try {
-    console.log(`📖 Reading file as buffer from: ${filePath}`);
+    console.log(`ðŸ“– Reading file as buffer from: ${filePath}`);
 
     if (!fileIOManager.exists(filePath)) {
       throw new Error(`File not found: ${filePath}`);
@@ -2298,7 +2396,7 @@ ipcMain.handle('read-file-as-buffer', async (event, filePath: string) => {
     // Read file as Buffer using controlled I/O manager
     const buffer = await fileIOManager.readFileAsBuffer(filePath, 'normal');
     console.log(
-      `📄 Successfully read file buffer, size: ${buffer.length} bytes`,
+      `ðŸ“„ Successfully read file buffer, size: ${buffer.length} bytes`,
     );
 
     // Convert Node Buffer to ArrayBuffer for transfer to renderer
@@ -2310,7 +2408,7 @@ ipcMain.handle('read-file-as-buffer', async (event, filePath: string) => {
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error';
     console.error(
-      `❌ Failed to read file as buffer ${filePath}:`,
+      `âŒ Failed to read file as buffer ${filePath}:`,
       errorMessage,
     );
 
@@ -2356,7 +2454,7 @@ ipcMain.handle('get-io-status', async () => {
 // IPC Handler for cancelling background tasks for a specific media
 ipcMain.handle('cancel-media-tasks', async (event, mediaId: string) => {
   const cancelledCount = backgroundTaskQueue.cancelTasksForMedia(mediaId);
-  console.log(`🛑 Cancelled ${cancelledCount} tasks for media ${mediaId}`);
+  console.log(`ðŸ›‘ Cancelled ${cancelledCount} tasks for media ${mediaId}`);
   return { success: true, cancelledCount };
 });
 
@@ -2395,7 +2493,7 @@ ipcMain.handle('create-preview-url', async (event, filePath: string) => {
       const encodedPath = encodeURIComponent(filePath);
       const serverUrl = `http://localhost:${MEDIA_SERVER_PORT}/${encodedPath}`;
 
-      console.log(`🎬 Created server URL for media: ${serverUrl}`);
+      console.log(`ðŸŽ¬ Created server URL for media: ${serverUrl}`);
       return { success: true, url: serverUrl };
     }
 
@@ -2573,7 +2671,7 @@ ipcMain.handle('ffmpeg:get-duration', async (event, filePath: string) => {
           if (result.format && result.format.duration) {
             const duration = parseFloat(result.format.duration);
             console.log(
-              `📏 Duration from format: ${duration}s for ${filePath}`,
+              `ðŸ“ Duration from format: ${duration}s for ${filePath}`,
             );
             resolve(duration);
             return;
@@ -2585,7 +2683,7 @@ ipcMain.handle('ffmpeg:get-duration', async (event, filePath: string) => {
               if (stream.duration && parseFloat(stream.duration) > 0) {
                 const duration = parseFloat(stream.duration);
                 console.log(
-                  `📏 Duration from stream: ${duration}s for ${filePath}`,
+                  `ðŸ“ Duration from stream: ${duration}s for ${filePath}`,
                 );
                 resolve(duration);
                 return;
@@ -2597,7 +2695,7 @@ ipcMain.handle('ffmpeg:get-duration', async (event, filePath: string) => {
           const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(filePath);
           const fallbackDuration = isImage ? 5 : 60;
           console.warn(
-            `⚠️ Could not determine duration for ${filePath}, using fallback: ${fallbackDuration}s`,
+            `âš ï¸ Could not determine duration for ${filePath}, using fallback: ${fallbackDuration}s`,
           );
           resolve(fallbackDuration);
         } catch (err) {
@@ -2628,7 +2726,7 @@ ipcMain.handle('getVideoDimensions', async (_event, filePath: string) => {
       '-select_streams',
       'v:0',
       '-show_entries',
-      'stream=width,height',
+      'stream=width,height,side_data_list:stream_tags=rotate',
       '-of',
       'json',
       filePath,
@@ -2658,7 +2756,29 @@ ipcMain.handle('getVideoDimensions', async (_event, filePath: string) => {
           reject(new Error('Could not read video dimensions'));
           return;
         }
-        resolve({ width: stream.width, height: stream.height });
+
+        let { width, height } = stream;
+
+        // Check rotation tag — phone videos are often stored as landscape
+        // with a rotate tag (90 or 270). Swap dims so the editor treats them
+        // as portrait from the start.
+        const rotateDeg =
+          parseInt(stream.tags?.rotate ?? '0', 10) ||
+          (() => {
+            // Also check side_data_list for displaymatrix rotation
+            const sideData: Array<{ side_data_type?: string; rotation?: number }> =
+              stream.side_data_list ?? [];
+            const matrix = sideData.find(
+              (d) => d.side_data_type === 'Display Matrix',
+            );
+            return matrix?.rotation ? Math.round(Math.abs(matrix.rotation)) : 0;
+          })();
+
+        if (rotateDeg === 90 || rotateDeg === 270) {
+          [width, height] = [height, width];
+        }
+
+        resolve({ width, height });
       } catch (err) {
         reject(err);
       }
@@ -2670,8 +2790,8 @@ ipcMain.handle('getVideoDimensions', async (_event, filePath: string) => {
   });
 });
 ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
-  console.log('🎯 MAIN PROCESS: ffmpegRun handler called!');
-  console.log('🎯 MAIN PROCESS: Received job:', JSON.stringify(job, null, 2));
+  console.log('ðŸŽ¯ MAIN PROCESS: ffmpegRun handler called!');
+  console.log('ðŸŽ¯ MAIN PROCESS: Received job:', JSON.stringify(job, null, 2));
 
   const location = job.outputPath || 'public/output/';
   // Ensure we have an absolute path for the location
@@ -2694,11 +2814,11 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
 
         // Write subtitle content to file
         fs.writeFileSync(tempSubtitlePath, job.subtitleContent, 'utf8');
-        console.log('📝 Created temporary subtitle file:', tempSubtitlePath);
+        console.log('ðŸ“ Created temporary subtitle file:', tempSubtitlePath);
 
         // Update the job to use the absolute path instead of just the filename
         job.operations.subtitles = tempSubtitlePath;
-        console.log('📁 Updated subtitle path to absolute:', tempSubtitlePath);
+        console.log('ðŸ“ Updated subtitle path to absolute:', tempSubtitlePath);
       }
 
       // Verify subtitle file exists before running FFmpeg
@@ -2706,7 +2826,7 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
         if (!fs.existsSync(tempSubtitlePath)) {
           throw new Error(`Subtitle file does not exist: ${tempSubtitlePath}`);
         }
-        console.log('✅ Subtitle file verified to exist:', tempSubtitlePath);
+        console.log('âœ… Subtitle file verified to exist:', tempSubtitlePath);
       }
 
       // Build proper FFmpeg command
@@ -2717,7 +2837,7 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
       );
       const args = ['-progress', 'pipe:1', '-y', ...baseArgs];
 
-      console.log('🎬 COMPLETE FFMPEG COMMAND:');
+      console.log('ðŸŽ¬ COMPLETE FFMPEG COMMAND:');
       console.log(['ffmpeg', ...args].join(' '));
 
       return new Promise((resolve, reject) => {
@@ -2777,11 +2897,11 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
             try {
               fs.unlinkSync(tempSubtitlePath);
               console.log(
-                '🗑️ Cleaned up temporary subtitle file after FFmpeg completion',
+                'ðŸ—‘ï¸ Cleaned up temporary subtitle file after FFmpeg completion',
               );
             } catch (cleanupError) {
               console.warn(
-                '⚠️ Failed to cleanup temporary subtitle file after completion:',
+                'âš ï¸ Failed to cleanup temporary subtitle file after completion:',
                 cleanupError,
               );
             }
@@ -2798,12 +2918,12 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
                 logs.includes('Exiting normally, received signal')));
 
           if (wasCancelled) {
-            console.log('🛑 FFmpeg process was cancelled by user');
+            console.log('ðŸ›‘ FFmpeg process was cancelled by user');
 
             // Delete the incomplete output file
             const outputFilePath = path.join(absoluteLocation, job.output);
             console.log(
-              '🔍 Checking for incomplete output file at:',
+              'ðŸ” Checking for incomplete output file at:',
               outputFilePath,
             );
 
@@ -2811,18 +2931,18 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
               try {
                 fs.unlinkSync(outputFilePath);
                 console.log(
-                  '🗑️ Deleted incomplete output file:',
+                  'ðŸ—‘ï¸ Deleted incomplete output file:',
                   outputFilePath,
                 );
               } catch (deleteError) {
                 console.warn(
-                  '⚠️ Failed to delete incomplete output file:',
+                  'âš ï¸ Failed to delete incomplete output file:',
                   deleteError,
                 );
               }
             } else {
               console.log(
-                'ℹ️ No output file found to delete (may not have been created yet)',
+                'â„¹ï¸ No output file found to delete (may not have been created yet)',
               );
             }
 
@@ -2836,7 +2956,7 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
           }
 
           console.log(
-            `🏁 FFmpeg process finished with code: ${code}, signal: ${signal}`,
+            `ðŸ FFmpeg process finished with code: ${code}, signal: ${signal}`,
           );
 
           if (code === 0) {
@@ -2853,18 +2973,18 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
           if (ffmpeg.stderr) ffmpeg.stderr.removeAllListeners();
           ffmpeg.removeAllListeners();
           clearCurrentFfmpegProcess();
-          console.log('❌ FFmpeg process error:', err.message);
+          console.log('âŒ FFmpeg process error:', err.message);
 
           // Cleanup temporary subtitle file on error
           if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
             try {
               fs.unlinkSync(tempSubtitlePath);
               console.log(
-                '🗑️ Cleaned up temporary subtitle file after FFmpeg error',
+                'ðŸ—‘ï¸ Cleaned up temporary subtitle file after FFmpeg error',
               );
             } catch (cleanupError) {
               console.warn(
-                '⚠️ Failed to cleanup temporary subtitle file after error:',
+                'âš ï¸ Failed to cleanup temporary subtitle file after error:',
                 cleanupError,
               );
             }
@@ -2874,18 +2994,18 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
         });
       });
     } catch (error) {
-      console.log('💥 Setup error occurred before FFmpeg could start:', error);
+      console.log('ðŸ’¥ Setup error occurred before FFmpeg could start:', error);
 
       // Only cleanup on setup errors, not FFmpeg execution errors
       if (tempSubtitlePath && fs.existsSync(tempSubtitlePath)) {
         try {
           fs.unlinkSync(tempSubtitlePath);
           console.log(
-            '🗑️ Cleaned up temporary subtitle file due to setup error',
+            'ðŸ—‘ï¸ Cleaned up temporary subtitle file due to setup error',
           );
         } catch (cleanupError) {
           console.warn(
-            '⚠️ Failed to cleanup temporary subtitle file after setup error:',
+            'âš ï¸ Failed to cleanup temporary subtitle file after setup error:',
             cleanupError,
           );
         }
@@ -2928,7 +3048,7 @@ async function runProxyFFmpeg(
   }
 
   console.log(
-    `🎬 FFmpeg proxy command (${encoderConfig.description}):`,
+    `ðŸŽ¬ FFmpeg proxy command (${encoderConfig.description}):`,
     [ffmpegBinaryPath, ...args].join(' '),
   );
 
@@ -2956,7 +3076,7 @@ async function runProxyFFmpeg(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`❌ FFmpeg spawn error (${encoderConfig.type}):`, message);
+    console.error(`âŒ FFmpeg spawn error (${encoderConfig.type}):`, message);
     return {
       success: false,
       code: -1,
@@ -2968,11 +3088,11 @@ async function runProxyFFmpeg(
 // IPC Handler for generating proxy files for 4K video optimization
 // Uses hybrid encoder selection: GPU hardware encoder if available, CPU fallback otherwise
 ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
-  console.log('🔄 generate-proxy called for:', inputPath);
+  console.log('ðŸ”„ generate-proxy called for:', inputPath);
 
   // Check if there is already an active generation for this file
   if (activeProxyGenerations.has(inputPath)) {
-    console.log('🔄 Joining existing proxy generation for:', inputPath);
+    console.log('ðŸ”„ Joining existing proxy generation for:', inputPath);
     return activeProxyGenerations.get(inputPath);
   }
 
@@ -2993,7 +3113,7 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
 
       // Check if proxy already exists
       if (fs.existsSync(outputPath)) {
-        console.log('✅ Proxy already exists at:', outputPath);
+        console.log('âœ… Proxy already exists at:', outputPath);
         // Verify it's valid (size > 0)
         const stats = fs.statSync(outputPath);
         if (stats.size > 0) {
@@ -3005,26 +3125,26 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
 
       // Use a temporary file during generation to prevent incomplete reads
       const tempPath = outputPath + '.tmp';
-      console.log(`📝 Writing to temp file: ${tempPath}`);
+      console.log(`ðŸ“ Writing to temp file: ${tempPath}`);
 
       // Clean up any stale temp file
       if (fs.existsSync(tempPath)) {
         try {
           fs.unlinkSync(tempPath);
         } catch (e) {
-          console.warn('⚠️ Could not cleanup old temp proxy:', e);
+          console.warn('âš ï¸ Could not cleanup old temp proxy:', e);
         }
       }
 
       // Get optimal encoder configuration (hardware if available, software fallback)
       const encoderConfig = await getProxyEncoderConfig(ffmpegPath);
 
-      console.log('🚀 Starting proxy generation to:', outputPath);
-      console.log(`🎮 Using encoder: ${encoderConfig.description}`);
+      console.log('ðŸš€ Starting proxy generation to:', outputPath);
+      console.log(`ðŸŽ® Using encoder: ${encoderConfig.description}`);
       const startTime = Date.now();
       const startTimeString = new Date(startTime).toLocaleTimeString();
       console.log(
-        `⏱️ Proxy generation START: ${startTimeString} (${startTime})`,
+        `â±ï¸ Proxy generation START: ${startTimeString} (${startTime})`,
       );
 
       // Attempt proxy generation with selected encoder
@@ -3042,7 +3162,7 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
       // If hardware encoder failed, fallback to software encoding
       if (!result.success && encoderConfig.type !== 'software') {
         console.warn(
-          `⚠️ Hardware encoder ${encoderConfig.type} failed (code: ${result.code}), falling back to software encoding`,
+          `âš ï¸ Hardware encoder ${encoderConfig.type} failed (code: ${result.code}), falling back to software encoding`,
         );
         console.warn(`   Error: ${result.stderr?.slice(-200)}`);
 
@@ -3051,13 +3171,13 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
           try {
             fs.unlinkSync(tempPath);
           } catch (e) {
-            console.warn('⚠️ Could not cleanup temp file after failure:', e);
+            console.warn('âš ï¸ Could not cleanup temp file after failure:', e);
           }
         }
 
         // Retry with software encoder
         const softwareConfig = getSoftwareEncoderConfig();
-        console.log(`🔄 Retrying with ${softwareConfig.description}...`);
+        console.log(`ðŸ”„ Retrying with ${softwareConfig.description}...`);
 
         result = await runProxyFFmpeg(
           inputPath,
@@ -3075,8 +3195,8 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
       const endTimeString = new Date(endTime).toLocaleTimeString();
       const durationMs = endTime - startTime;
 
-      console.log(`⏱️ Proxy generation END: ${endTimeString} (${endTime})`);
-      console.log(`⏱️ Duration: ${durationMs}ms`);
+      console.log(`â±ï¸ Proxy generation END: ${endTimeString} (${endTime})`);
+      console.log(`â±ï¸ Duration: ${durationMs}ms`);
 
       if (result.success) {
         try {
@@ -3087,7 +3207,7 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
           if (fs.existsSync(tempPath)) {
             fs.renameSync(tempPath, outputPath);
             console.log(
-              '✅ Proxy generation complete (renamed temp -> final):',
+              'âœ… Proxy generation complete (renamed temp -> final):',
               outputPath,
             );
 
@@ -3115,20 +3235,20 @@ ipcMain.handle('generate-proxy', async (event, inputPath: string) => {
             };
           } else {
             console.error(
-              '❌ Temp proxy file missing after successful FFmpeg exit',
+              'âŒ Temp proxy file missing after successful FFmpeg exit',
             );
             return { success: false, error: 'Temp proxy file missing' };
           }
         } catch (err) {
-          console.error('❌ Failed to rename temp proxy file:', err);
+          console.error('âŒ Failed to rename temp proxy file:', err);
           return {
             success: false,
             error: 'Failed to finalize proxy file',
           };
         }
       } else {
-        console.error(`❌ Proxy generation failed with code: ${result.code}`);
-        console.error(`❌ FFmpeg stderr:`, result.stderr);
+        console.error(`âŒ Proxy generation failed with code: ${result.code}`);
+        console.error(`âŒ FFmpeg stderr:`, result.stderr);
 
         // Cleanup temp file
         if (fs.existsSync(tempPath)) {
@@ -3238,7 +3358,7 @@ ipcMain.handle(
       vad?: boolean;
     },
   ) => {
-    console.log('🎤 MAIN PROCESS: whisper:transcribe handler called (Python)');
+    console.log('ðŸŽ¤ MAIN PROCESS: whisper:transcribe handler called (Python)');
     console.log('   Audio path:', audioPath);
     console.log('   Options:', options);
 
@@ -3248,15 +3368,17 @@ ipcMain.handle(
       const result: WhisperResult = await transcribeAudio(audioPath, {
         ...options,
         onProgress: (progress: WhisperProgress) => {
-          // Send progress updates to renderer process
           event.sender.send('whisper:progress', progress);
+        },
+        onChunk: (chunk: any) => {
+          event.sender.send('whisper:chunk', chunk);
         },
       });
 
-      console.log('✅ Transcription successful');
+      console.log('âœ… Transcription successful');
       return { success: true, result };
     } catch (error) {
-      console.error('❌ Whisper transcription failed:', error);
+      console.error('âŒ Whisper transcription failed:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3267,7 +3389,7 @@ ipcMain.handle(
 
 // IPC Handler to cancel transcription
 ipcMain.handle('whisper:cancel', async () => {
-  console.log('🛑 MAIN PROCESS: whisper:cancel handler called');
+  console.log('ðŸ›‘ MAIN PROCESS: whisper:cancel handler called');
 
   const cancelled = cancelTranscription();
   return {
@@ -3280,7 +3402,7 @@ ipcMain.handle('whisper:cancel', async () => {
 
 // IPC Handler to check Whisper status
 ipcMain.handle('whisper:status', async () => {
-  console.log('📊 MAIN PROCESS: whisper:status handler called');
+  console.log('ðŸ“Š MAIN PROCESS: whisper:status handler called');
 
   // Try to initialize if not already initialized (but don't fail if it doesn't work)
   if (!getPythonWhisperStatus().available) {
@@ -3288,7 +3410,7 @@ ipcMain.handle('whisper:status', async () => {
       await ensurePythonInitialized('ipc:whisper:status');
     } catch (error) {
       console.log(
-        '⚠️ Python initialization failed during status check:',
+        'âš ï¸ Python initialization failed during status check:',
         error,
       );
       // Continue to return status even if initialization failed
@@ -3319,7 +3441,7 @@ ipcMain.handle(
       engine?: 'ffmpeg' | 'deepfilter';
     },
   ) => {
-    console.log('🔇 MAIN PROCESS: media-tools:noise-reduce handler called');
+    console.log('ðŸ”‡ MAIN PROCESS: media-tools:noise-reduce handler called');
     console.log('   Input path:', inputPath);
     console.log('   Output path:', outputPath);
     console.log('   Options:', options);
@@ -3343,11 +3465,11 @@ ipcMain.handle(
           },
         );
 
-        console.log('✅ DeepFilter noise reduction successful');
+        console.log('âœ… DeepFilter noise reduction successful');
         return { success: true, result };
       } else {
         // --- FFmpeg (Native) ---
-        console.log('⚡ Using FFmpeg for noise reduction');
+        console.log('âš¡ Using FFmpeg for noise reduction');
 
         if (!ffmpegPath) {
           throw new Error('FFmpeg binary not available');
@@ -3439,7 +3561,7 @@ ipcMain.handle(
           }
 
           console.error(
-            '❌ FFmpeg noise reduction failed. Code:',
+            'âŒ FFmpeg noise reduction failed. Code:',
             ffmpegResult.code,
           );
           return { success: false, stderrLog };
@@ -3447,7 +3569,7 @@ ipcMain.handle(
 
         const firstAttempt = await runFfmpegDenoise(args);
         if (firstAttempt.success) {
-          console.log('✅ FFmpeg noise reduction successful');
+          console.log('âœ… FFmpeg noise reduction successful');
           event.sender.send('media-tools:progress', {
             stage: 'complete',
             progress: 100,
@@ -3480,7 +3602,7 @@ ipcMain.handle(
         };
       }
     } catch (error) {
-      console.error('❌ Noise reduction failed:', error);
+      console.error('âŒ Noise reduction failed:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3491,7 +3613,7 @@ ipcMain.handle(
 
 // IPC Handler to cancel media-tools operation
 ipcMain.handle('media-tools:cancel', async () => {
-  console.log('🛑 MAIN PROCESS: media-tools:cancel handler called');
+  console.log('ðŸ›‘ MAIN PROCESS: media-tools:cancel handler called');
 
   const cancelled = cancelCurrentOperation();
   return {
@@ -3504,7 +3626,7 @@ ipcMain.handle('media-tools:cancel', async () => {
 
 // IPC Handler to check media-tools status
 ipcMain.handle('media-tools:status', async () => {
-  console.log('📊 MAIN PROCESS: media-tools:status handler called');
+  console.log('ðŸ“Š MAIN PROCESS: media-tools:status handler called');
 
   // Try to initialize if not already initialized
   if (!getMediaToolsStatus().available) {
@@ -3512,7 +3634,7 @@ ipcMain.handle('media-tools:status', async () => {
       await ensurePythonInitialized('ipc:media-tools:status');
     } catch (error) {
       console.log(
-        '⚠️ Media tools initialization failed during status check:',
+        'âš ï¸ Media tools initialization failed during status check:',
         error,
       );
     }
@@ -3540,7 +3662,7 @@ ipcMain.handle(
   'noise-reduction:get-output-path',
   async (_event, inputPath: string, engine?: string) => {
     console.log(
-      '📁 MAIN PROCESS: noise-reduction:get-output-path handler called',
+      'ðŸ“ MAIN PROCESS: noise-reduction:get-output-path handler called',
     );
     console.log('   Input path:', inputPath);
     console.log('   Engine:', engine);
@@ -3571,7 +3693,7 @@ ipcMain.handle(
       console.log('   Generated output path:', outputPath);
       return { success: true, outputPath };
     } catch (error) {
-      console.error('❌ Failed to generate output path:', error);
+      console.error('âŒ Failed to generate output path:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3585,7 +3707,7 @@ ipcMain.handle(
   'noise-reduction:cleanup-files',
   async (_event, filePaths: string[]) => {
     console.log(
-      '🗑️ MAIN PROCESS: noise-reduction:cleanup-files handler called',
+      'ðŸ—‘ï¸ MAIN PROCESS: noise-reduction:cleanup-files handler called',
     );
     console.log('   Files to clean:', filePaths.length);
 
@@ -3610,10 +3732,10 @@ ipcMain.handle(
         }
       }
 
-      console.log(`✅ Cleaned up ${cleanedCount} noise reduction files`);
+      console.log(`âœ… Cleaned up ${cleanedCount} noise reduction files`);
       return { success: true, cleanedCount };
     } catch (error) {
-      console.error('❌ Failed to cleanup noise reduction files:', error);
+      console.error('âŒ Failed to cleanup noise reduction files:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3627,7 +3749,7 @@ ipcMain.handle(
   'noise-reduction:create-preview-url',
   async (_event, filePath: string) => {
     console.log(
-      '🔗 MAIN PROCESS: noise-reduction:create-preview-url handler called',
+      'ðŸ”— MAIN PROCESS: noise-reduction:create-preview-url handler called',
     );
     console.log('   File path:', filePath);
 
@@ -3641,10 +3763,10 @@ ipcMain.handle(
       const base64 = buffer.toString('base64');
       const mimeType = 'audio/wav';
 
-      console.log('✅ Created preview URL data, size:', buffer.length);
+      console.log('âœ… Created preview URL data, size:', buffer.length);
       return { success: true, base64, mimeType };
     } catch (error) {
-      console.error('❌ Failed to create preview URL:', error);
+      console.error('âŒ Failed to create preview URL:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -3659,7 +3781,7 @@ ipcMain.handle(
 
 // IPC Handler to check runtime status
 ipcMain.handle('runtime:status', async () => {
-  console.log('📊 MAIN PROCESS: runtime:status handler called');
+  console.log('ðŸ“Š MAIN PROCESS: runtime:status handler called');
 
   const status = await checkRuntimeStatus();
   console.log('   Runtime status:', status);
@@ -3669,7 +3791,7 @@ ipcMain.handle('runtime:status', async () => {
 
 // IPC Handler to start runtime download
 ipcMain.handle('runtime:download', async (event) => {
-  console.log('📥 MAIN PROCESS: runtime:download handler called');
+  console.log('ðŸ“¥ MAIN PROCESS: runtime:download handler called');
 
   try {
     const result = await downloadRuntime((progress) => {
@@ -3680,7 +3802,7 @@ ipcMain.handle('runtime:download', async (event) => {
     console.log('   Download result:', result);
     return result;
   } catch (error) {
-    console.error('❌ Runtime download failed:', error);
+    console.error('âŒ Runtime download failed:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -3690,7 +3812,7 @@ ipcMain.handle('runtime:download', async (event) => {
 
 // IPC Handler to cancel runtime download
 ipcMain.handle('runtime:cancel-download', async () => {
-  console.log('🛑 MAIN PROCESS: runtime:cancel-download handler called');
+  console.log('ðŸ›‘ MAIN PROCESS: runtime:cancel-download handler called');
 
   const result = await cancelDownload();
   return result;
@@ -3698,7 +3820,7 @@ ipcMain.handle('runtime:cancel-download', async () => {
 
 // IPC Handler to verify runtime installation
 ipcMain.handle('runtime:verify', async () => {
-  console.log('🔍 MAIN PROCESS: runtime:verify handler called');
+  console.log('ðŸ” MAIN PROCESS: runtime:verify handler called');
 
   const isValid = await verifyInstallation();
   return { valid: isValid };
@@ -3706,7 +3828,7 @@ ipcMain.handle('runtime:verify', async () => {
 
 // IPC Handler to remove runtime
 ipcMain.handle('runtime:remove', async () => {
-  console.log('🗑️ MAIN PROCESS: runtime:remove handler called');
+  console.log('ðŸ—‘ï¸ MAIN PROCESS: runtime:remove handler called');
 
   const result = await removeRuntime();
   return result;
@@ -3714,7 +3836,7 @@ ipcMain.handle('runtime:remove', async () => {
 
 // IPC Handler to check if a media file has audio
 ipcMain.handle('media:has-audio', async (event, filePath: string) => {
-  console.log('🔊 MAIN PROCESS: media:has-audio handler called');
+  console.log('ðŸ”Š MAIN PROCESS: media:has-audio handler called');
   console.log('   File path:', filePath);
 
   if (!ffmpegPath) {
@@ -3770,7 +3892,7 @@ ipcMain.handle('media:has-audio', async (event, filePath: string) => {
       });
     });
   } catch (error) {
-    console.error('❌ Error checking audio:', error);
+    console.error('âŒ Error checking audio:', error);
     return {
       success: false,
       hasAudio: false,
@@ -3836,14 +3958,14 @@ const transcodeOutputDir = path.join(os.tmpdir(), 'dividr-transcode');
 if (!fs.existsSync(transcodeOutputDir)) {
   fs.mkdirSync(transcodeOutputDir, { recursive: true });
 }
-console.log(`📁 Transcode output directory: ${transcodeOutputDir}`);
+console.log(`ðŸ“ Transcode output directory: ${transcodeOutputDir}`);
 
 // IPC Handler to check if a file requires transcoding
 ipcMain.handle(
   'transcode:requires-transcoding',
   async (event, filePath: string) => {
     console.log(
-      '🔍 MAIN PROCESS: transcode:requires-transcoding handler called',
+      'ðŸ” MAIN PROCESS: transcode:requires-transcoding handler called',
     );
     console.log('   File path:', filePath);
 
@@ -3851,13 +3973,13 @@ ipcMain.handle(
 
     // Check if extension requires transcoding
     if (FORMATS_REQUIRING_TRANSCODE.includes(ext)) {
-      console.log(`   ✅ File requires transcoding (${ext} format)`);
+      console.log(`   âœ… File requires transcoding (${ext} format)`);
       return { requiresTranscoding: true, reason: `${ext} format` };
     }
 
     // For other formats, check the actual codec
     if (!ffprobePath?.path) {
-      console.log('   ⚠️ FFprobe not available, cannot check codec');
+      console.log('   âš ï¸ FFprobe not available, cannot check codec');
       return { requiresTranscoding: false, reason: 'Cannot detect codec' };
     }
 
@@ -3895,16 +4017,16 @@ ipcMain.handle(
         codecResult &&
         UNSUPPORTED_CODECS.some((c) => codecResult.includes(c))
       ) {
-        console.log(`   ✅ File requires transcoding (${codecResult} codec)`);
+        console.log(`   âœ… File requires transcoding (${codecResult} codec)`);
         return { requiresTranscoding: true, reason: `${codecResult} codec` };
       }
 
       console.log(
-        `   ❌ File does not require transcoding (codec: ${codecResult || 'unknown'})`,
+        `   âŒ File does not require transcoding (codec: ${codecResult || 'unknown'})`,
       );
       return { requiresTranscoding: false, reason: 'Supported format' };
     } catch (error) {
-      console.warn('   ⚠️ Could not detect codec:', error);
+      console.warn('   âš ï¸ Could not detect codec:', error);
       return { requiresTranscoding: false, reason: 'Cannot detect codec' };
     }
   },
@@ -3923,7 +4045,7 @@ ipcMain.handle(
       crf?: number;
     },
   ) => {
-    console.log('🎬 MAIN PROCESS: transcode:start handler called');
+    console.log('ðŸŽ¬ MAIN PROCESS: transcode:start handler called');
     console.log('   Media ID:', options.mediaId);
     console.log('   Input path:', options.inputPath);
 
@@ -4084,7 +4206,7 @@ ipcMain.handle(
           const processingTime =
             job.completedAt - (job.startedAt || job.completedAt);
           console.log(
-            `✅ Transcode completed: ${jobId} in ${(processingTime / 1000).toFixed(1)}s`,
+            `âœ… Transcode completed: ${jobId} in ${(processingTime / 1000).toFixed(1)}s`,
           );
 
           // Create preview URL for the transcoded file
@@ -4103,7 +4225,7 @@ ipcMain.handle(
         }
 
         if (job.status === 'cancelled') {
-          console.log(`🚫 Transcode cancelled: ${jobId}`);
+          console.log(`ðŸš« Transcode cancelled: ${jobId}`);
 
           // Clean up output file
           if (fs.existsSync(outputPath)) {
@@ -4126,7 +4248,7 @@ ipcMain.handle(
             stderrOutput.slice(-500) ||
             `FFmpeg exited with code ${result.code}`;
 
-          console.error(`❌ Transcode failed: ${jobId}`);
+          console.error(`âŒ Transcode failed: ${jobId}`);
           console.error(`   Error: ${job.error}`);
 
           mainWindow?.webContents.send('transcode:completed', {
@@ -4143,7 +4265,7 @@ ipcMain.handle(
         job.status = 'failed';
         job.error = error instanceof Error ? error.message : 'Unknown error';
 
-        console.error(`❌ Transcode process error: ${jobId}`);
+        console.error(`âŒ Transcode process error: ${jobId}`);
         console.error(`   Error: ${job.error}`);
 
         mainWindow?.webContents.send('transcode:completed', {
@@ -4185,7 +4307,7 @@ ipcMain.handle('transcode:status', async (event, jobId: string) => {
 
 // IPC Handler to cancel transcode job
 ipcMain.handle('transcode:cancel', async (event, jobId: string) => {
-  console.log('🛑 MAIN PROCESS: transcode:cancel handler called');
+  console.log('ðŸ›‘ MAIN PROCESS: transcode:cancel handler called');
   console.log('   Job ID:', jobId);
 
   const job = activeTranscodeJobs.get(jobId);
@@ -4206,7 +4328,7 @@ ipcMain.handle('transcode:cancel', async (event, jobId: string) => {
 
 // IPC Handler to cancel all transcode jobs for a media ID
 ipcMain.handle('transcode:cancel-for-media', async (event, mediaId: string) => {
-  console.log('🛑 MAIN PROCESS: transcode:cancel-for-media handler called');
+  console.log('ðŸ›‘ MAIN PROCESS: transcode:cancel-for-media handler called');
   console.log('   Media ID:', mediaId);
 
   let cancelled = 0;
@@ -4247,7 +4369,7 @@ ipcMain.handle('transcode:get-active-jobs', async () => {
 ipcMain.handle(
   'transcode:cleanup',
   async (event, maxAgeMs: number = 24 * 60 * 60 * 1000) => {
-    console.log('🧹 MAIN PROCESS: transcode:cleanup handler called');
+    console.log('ðŸ§¹ MAIN PROCESS: transcode:cleanup handler called');
 
     try {
       // Read directory with retry for EMFILE protection
@@ -4258,7 +4380,7 @@ ipcMain.handle(
           break;
         } catch (err) {
           if (isEMFILEError(err) && attempt < 3) {
-            console.warn(`⚠️ EMFILE reading transcode dir, retry ${attempt}/3`);
+            console.warn(`âš ï¸ EMFILE reading transcode dir, retry ${attempt}/3`);
             await new Promise((r) => setTimeout(r, 500 * attempt));
           } else {
             throw err;
@@ -4285,7 +4407,7 @@ ipcMain.handle(
           }
         } catch (statErr) {
           // Skip files we can't stat
-          console.warn(`⚠️ Could not stat ${file}:`, statErr);
+          console.warn(`âš ï¸ Could not stat ${file}:`, statErr);
         }
       }
 
@@ -4422,10 +4544,10 @@ const createWindow = () => {
       );
 
       if (!allowDevTools) {
-        // 🚫 Remove all default menus so "View → Toggle Developer Tools" disappears
+        // ðŸš« Remove all default menus so "View â†’ Toggle Developer Tools" disappears
         // Menu.setApplicationMenu(null);
 
-        // 🚫 Block DevTools shortcuts, but allow clipboard shortcuts
+        // ðŸš« Block DevTools shortcuts, but allow clipboard shortcuts
         mainWindow.webContents.on('before-input-event', (event, input) => {
           const ctrl = input.control || input.meta;
           // Allow clipboard: Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+A, Ctrl+Z, Ctrl+Y
@@ -4439,14 +4561,14 @@ const createWindow = () => {
           }
         });
 
-        // 🚫 If DevTools somehow open, force-close them
+        // ðŸš« If DevTools somehow open, force-close them
         mainWindow.webContents.on('devtools-opened', () => {
           mainWindow?.webContents.closeDevTools();
         });
 
       }
 
-      // Right-click context menu — always show, Copy enabled when text is selected
+      // Right-click context menu â€” always show, Copy enabled when text is selected
       mainWindow.webContents.on('context-menu', (e, params) => {
         e.preventDefault();
         const { Menu } = require('electron');
@@ -4569,7 +4691,7 @@ async function getRunInBackgroundSetting(): Promise<boolean> {
   return false;
 }
 
-// ── yt-dlp download handlers ─────────────────────────────────────────────────
+// â”€â”€ yt-dlp download handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const ytdlpProcesses = new Map<string, ReturnType<typeof spawn>>();
 
@@ -4596,16 +4718,12 @@ ipcMain.handle('media:initDownloadDir', async () => {
   }
 });
 
-async function frameVerify(
+async function extractPreviewFrame(
   filePath: string,
   ffmpegBin: string,
-  geminiApiKey: string,
-  verify: string,
-  isStockFootage: boolean,
-  topic: string | undefined,
-): Promise<{ passed: boolean; reason: string }> {
+): Promise<string | null> {
   const os2 = await import('os');
-  const tmpFrame = path.join(os2.tmpdir(), `dividr_verify_${Date.now()}.jpg`);
+  const tmpFrame = path.join(os2.tmpdir(), `dividr_preview_${Date.now()}.jpg`);
   try {
     await new Promise<void>((resolve) => {
       const p = spawn(ffmpegBin, [
@@ -4618,32 +4736,276 @@ async function frameVerify(
       p.on('close', () => resolve());
       p.on('error', () => resolve());
     });
-    if (!fs.existsSync(tmpFrame)) return { passed: true, reason: 'no frame' };
-
-    const frameBuf = fs.readFileSync(tmpFrame);
-    const { spotCheckImageInline } = await import('./backend/mycelium/geminiAnalyzer');
-
-    const prompt = isStockFootage
-      ? `Analyze this video frame. Return ONLY a JSON array, no markdown:
-[
-  {"check": "No watermarks or logos visible", "passed": true/false, "reason": "brief"},
-  {"check": "No person talking directly to camera", "passed": true/false, "reason": "brief"},
-  {"check": "Content matches: ${topic || verify}", "passed": true/false, "reason": "brief"}
-]`
-      : `Analyze this video frame. Return ONLY a JSON array, no markdown:
-[
-  {"check": "Frame shows: ${verify}", "passed": true/false, "reason": "brief"}
-]`;
-
-    const checks = await spotCheckImageInline(frameBuf, 'image/jpeg', prompt, geminiApiKey);
-    const failed = checks.filter((c) => !c.passed);
-    return failed.length > 0
-      ? { passed: false, reason: failed.map((c) => `${c.check} — ${c.reason}`).join('; ') }
-      : { passed: true, reason: 'ok' };
+    if (!fs.existsSync(tmpFrame)) return null;
+    return fs.readFileSync(tmpFrame).toString('base64');
   } catch {
-    return { passed: true, reason: 'skipped' };
+    return null;
   } finally {
     try { fs.unlinkSync(tmpFrame); } catch {}
+  }
+}
+
+async function verifyClipContent(
+  filePath: string,
+  ffmpegBin: string,
+  anthropicApiKey: string,
+  verify: string,
+  sendMsg: (text: string) => void,
+): Promise<{ passed: boolean; reason: string; frameBase64: string | null }> {
+  try {
+    const durationSeconds = await getVideoDuration(filePath, ffmpegBin);
+    const count = Math.min(6, Math.max(2, Math.ceil(durationSeconds / 4)));
+    const timestamps = Array.from({ length: count }, (_, i) =>
+      Math.max(1, Math.floor(durationSeconds * (i + 0.5) / count)),
+    );
+
+    const validFrames: { index: number; ts: number; b64: string }[] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const tmpFrame = path.join(os.tmpdir(), `dividr_cv_${Date.now()}_${i}.jpg`);
+      await new Promise<void>((resolve) => {
+        const p = spawn(ffmpegBin, ['-ss', String(timestamps[i]), '-i', filePath, '-frames:v', '1', '-q:v', '3', '-y', tmpFrame], { shell: false });
+        p.on('close', () => resolve());
+        p.on('error', () => resolve());
+      });
+      if (fs.existsSync(tmpFrame)) {
+        validFrames.push({ index: i + 1, ts: timestamps[i], b64: fs.readFileSync(tmpFrame).toString('base64') });
+        try { fs.unlinkSync(tmpFrame); } catch {}
+      }
+    }
+
+    if (!validFrames.length) return { passed: false, reason: 'no frames extracted', frameBase64: null };
+
+    const content: any[] = [];
+    for (const f of validFrames) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
+      content.push({ type: 'text', text: `Frame ${f.index} (${f.ts}s):` });
+    }
+    content.push({
+      type: 'text',
+      text: `These ${validFrames.length} frames are from a downloaded clip.\n\nRequirement: "${verify}"\n\nFind the BEST frame that satisfies ALL of:\n1. Shows the required content\n2. No visible people or faces\n3. No watermarks, logos, or unrelated text overlays\n\nReply ONLY with JSON:\n{"best": <frame 1-${validFrames.length} or null if none qualify>, "passed": true or false, "reason": "one sentence"}`,
+    });
+
+    sendMsg('↳ Verifying clip content…');
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': anthropicApiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 150, messages: [{ role: 'user', content }] }),
+    });
+
+    if (!resp.ok) return { passed: true, reason: 'verify skipped (api error)', frameBase64: validFrames[0]?.b64 ?? null };
+
+    const data = await resp.json() as any;
+    const text: string = data.content?.[0]?.text?.trim() ?? '';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { passed: true, reason: 'verify skipped (parse error)', frameBase64: validFrames[0]?.b64 ?? null };
+
+    const result = JSON.parse(m[0]);
+    const bestIdx = result.best != null ? Math.max(0, Math.min(result.best - 1, validFrames.length - 1)) : 0;
+    return {
+      passed: !!result.passed,
+      reason: result.reason ?? '',
+      frameBase64: validFrames[bestIdx]?.b64 ?? null,
+    };
+  } catch {
+    return { passed: true, reason: 'verify skipped', frameBase64: null };
+  }
+}
+
+async function verifyBrollQuality(
+  filePath: string,
+  anthropicApiKey: string,
+): Promise<{ passed: boolean; reason: string }> {
+  const os2 = await import('os');
+  const tmpFramePaths: string[] = [];
+
+  try {
+    // Get duration so we can spread 5 frames across the clip
+    const duration = await getVideoDuration(filePath, ffmpegPath!);
+    const clampedDuration = Math.max(duration, 1);
+
+    // Sample at 10%, 25%, 50%, 75%, 90% of the clip
+    const timestamps = [0.1, 0.25, 0.5, 0.75, 0.9]
+      .map((f) => Math.max(0.5, clampedDuration * f));
+
+    const frames: { index: number; ts: number; b64: string }[] = [];
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const tmpPath = path.join(os2.tmpdir(), `broll_check_${Date.now()}_${i}.jpg`);
+      tmpFramePaths.push(tmpPath);
+
+      await new Promise<void>((resolve) => {
+        const p = spawn(ffmpegPath!, ['-ss', String(timestamps[i]), '-i', filePath, '-frames:v', '1', '-q:v', '3', '-y', tmpPath], { shell: false });
+        p.on('close', () => resolve());
+        p.on('error', () => resolve());
+      });
+
+      if (fs.existsSync(tmpPath)) {
+        frames.push({ index: i + 1, ts: timestamps[i], b64: fs.readFileSync(tmpPath).toString('base64') });
+      }
+    }
+
+    if (frames.length === 0) return { passed: true, reason: 'no frames extracted' };
+
+    // Build multi-frame content array for the vision request
+    const content: any[] = [];
+    for (const f of frames) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
+      content.push({ type: 'text', text: `Frame ${f.index} at ${f.ts.toFixed(1)}s:` });
+    }
+    content.push({
+      type: 'text',
+      text: `These are ${frames.length} frames sampled evenly across a downloaded B-roll clip. Reply ONLY with JSON: {"passed": true/false, "reason": "one short sentence"}\n\nREJECT if ANY of these are true:\n- STILL IMAGE: all frames look identical or nearly identical — no motion, no scene change, same static composition throughout. This means the clip is just a photo exported as video. REJECT IT.\n- Visible text, captions, watermarks, or branded logos\n- Person looking directly at the camera (interview or talking-head style)\n- Visibly low quality, heavily compressed, or blurry footage\n\nALLOW if:\n- Frames show clear visual variation (lighting changes, motion blur, subject movement, camera movement) indicating real video footage\n- People appear but are doing a task (farming, typing, cooking, etc.) and NOT looking at camera\n- Cinematic footage with natural motion\n\nRespond ONLY with the JSON object, no markdown.`,
+    });
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': anthropicApiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 150,
+        messages: [{ role: 'user', content }],
+      }),
+    });
+
+    const data = await resp.json() as any;
+    const text: string = data.content?.[0]?.text?.trim() ?? '{"passed":true}';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { passed: true, reason: 'parse error' };
+    const result = JSON.parse(m[0]);
+    return { passed: !!result.passed, reason: result.reason ?? '' };
+  } catch {
+    return { passed: true, reason: 'check skipped' };
+  } finally {
+    for (const p of tmpFramePaths) {
+      try { fs.unlinkSync(p); } catch {}
+    }
+  }
+}
+async function getVideoDuration(filePath: string, ffmpegBin: string): Promise<number> {
+  return new Promise<number>((resolve) => {
+    // Try ffprobe first (more reliable), fall back to ffmpeg -i stderr parsing
+    const ffprobeBin = ffmpegBin.replace(/ffmpeg(\.exe)?$/i, (_, ext) => `ffprobe${ext ?? ''}`);
+    const useFFprobe = fs.existsSync(ffprobeBin);
+    if (useFFprobe) {
+      let out = '';
+      const p = spawn(ffprobeBin, ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath], { shell: false });
+      p.stdout?.on('data', (c: Buffer) => { out += c.toString(); });
+      p.on('close', () => { const d = parseFloat(out.trim()); resolve(isNaN(d) ? 0 : d); });
+      p.on('error', () => resolve(0));
+    } else {
+      let stderr = '';
+      const p = spawn(ffmpegBin, ['-i', filePath, '-f', 'null', '-'], { shell: false });
+      p.stderr?.on('data', (c: Buffer) => { stderr += c.toString(); });
+      p.on('close', () => {
+        const m = stderr.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
+        resolve(m ? parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]) : 0);
+      });
+      p.on('error', () => resolve(0));
+    }
+  });
+}
+
+async function findBestYouTubeSegment(
+  filePath: string,
+  ffmpegBin: string,
+  anthropicApiKey: string,
+  query: string,
+  sendMsg: (text: string) => void,
+): Promise<string> {
+  try {
+    const durationSeconds = await getVideoDuration(filePath, ffmpegBin);
+    if (durationSeconds < 25) return filePath; // already short enough
+
+    sendMsg('↳ Scanning footage for best segment…');
+
+    // Extract 5 frames evenly spaced across the video
+    const positions = [0.10, 0.25, 0.50, 0.70, 0.90];
+    const timestamps = positions.map((p) => Math.max(1, Math.floor(durationSeconds * p)));
+    const framePaths: string[] = [];
+
+    for (const ts of timestamps) {
+      const tmpFrame = path.join(os.tmpdir(), `yt_seg_${Date.now()}_${ts}.jpg`);
+      await new Promise<void>((resolve) => {
+        const p = spawn(ffmpegBin, ['-ss', String(ts), '-i', filePath, '-frames:v', '1', '-q:v', '3', '-y', tmpFrame], { shell: false });
+        p.on('close', () => resolve());
+        p.on('error', () => resolve());
+      });
+      framePaths.push(tmpFrame);
+    }
+
+    const validFrames: { index: number; path: string; ts: number }[] = [];
+    for (let i = 0; i < framePaths.length; i++) {
+      if (fs.existsSync(framePaths[i])) {
+        validFrames.push({ index: i + 1, path: framePaths[i], ts: timestamps[i] });
+      }
+    }
+
+    if (!validFrames.length) return filePath;
+
+    // Send all frames to Haiku in one call — ask which best shows the target content
+    const content: any[] = [];
+    for (const f of validFrames) {
+      const b64 = fs.readFileSync(f.path).toString('base64');
+      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } });
+      content.push({ type: 'text', text: `Frame ${f.index} (at ${f.ts}s into the video):` });
+    }
+    content.push({
+      type: 'text',
+      text: `These are ${validFrames.length} frames sampled from a downloaded YouTube video. Target content: "${query}".\n\nWhich frame best shows the actual subject footage (not intro cards, title screens, or talking-head interviews)? Prefer frames with clear visual action matching the topic.\n\nReply ONLY with JSON: {"best": <frame_number_1_to_${validFrames.length}>, "reason": "one sentence"}`,
+    });
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': anthropicApiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 120, messages: [{ role: 'user', content }] }),
+    });
+
+    for (const f of validFrames) { try { fs.unlinkSync(f.path); } catch {} }
+
+    if (!resp.ok) return filePath;
+
+    const data = await resp.json() as any;
+    const text: string = data.content?.[0]?.text?.trim() ?? '';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return filePath;
+
+    const result = JSON.parse(m[0]);
+    const bestIdx = Math.max(0, Math.min((result.best ?? 1) - 1, validFrames.length - 1));
+    const bestFrame = validFrames[bestIdx];
+    if (!bestFrame) return filePath;
+
+    sendMsg(`↳ Best segment at ${bestFrame.ts}s — ${result.reason ?? ''}`);
+
+    // Trim a 20s window centered around the best frame's timestamp
+    const trimStart = Math.max(0, bestFrame.ts - 10);
+    const trimEnd = Math.min(durationSeconds, trimStart + 20);
+    const ext = path.extname(filePath);
+    const trimmedPath = filePath.replace(ext, `_segment${ext}`);
+
+    await new Promise<void>((resolve) => {
+      const ff = spawn(ffmpegBin, [
+        '-ss', String(trimStart),
+        '-i', filePath,
+        '-t', String(trimEnd - trimStart),
+        '-c', 'copy',
+        '-y', trimmedPath,
+      ], { shell: false });
+      ff.on('close', () => resolve());
+      ff.on('error', () => resolve());
+    });
+
+    if (fs.existsSync(trimmedPath)) {
+      sendMsg(`↳ Trimmed to ${Math.round(trimEnd - trimStart)}s clip`);
+      return trimmedPath;
+    }
+    return filePath;
+  } catch {
+    return filePath; // non-fatal — return original
   }
 }
 
@@ -4667,7 +5029,7 @@ ipcMain.handle(
       event.sender.send('mycelium:message', { role: 'system', text });
 
 
-    // ── PRE-DOWNLOAD SPOT CHECKS ────────────────────────────────────────────
+    // â”€â”€ PRE-DOWNLOAD SPOT CHECKS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     const loadEnvKey = (key: string): string => {
       const envPath = path.join(app.getAppPath(), '.env');
@@ -4682,53 +5044,127 @@ ipcMain.handle(
 
     const geminiApiKey = loadEnvKey('GEMINI_API_KEY');
 
-    // ── PIXABAY SEARCH ───────────────────────────────────────────────────────
+    // â”€â”€ PIXABAY SEARCH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (url.startsWith('pixabaysearch:')) {
       const query = url.slice('pixabaysearch:'.length).trim();
       const pixabayKey = loadEnvKey('PIXABAY_API_KEY');
       if (!pixabayKey) return { success: false, error: 'PIXABAY_API_KEY not set in .env' };
 
-      sendMsg(`↳ Searching Pixabay for: ${query}`);
+      sendMsg(`â†³ Searching Pixabay for: ${query}`);
       const apiUrl = `https://pixabay.com/api/videos/?key=${pixabayKey}&q=${encodeURIComponent(query)}&video_type=film&per_page=10&safesearch=true`;
-      const apiRes = await fetch(apiUrl);
+      const apiRes = await fetch(apiUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://pixabay.com/',
+        }
+      });
+      if (!apiRes.ok) {
+        const errText = await apiRes.text().catch(() => String(apiRes.status));
+        return { success: false, error: `Pixabay API error ${apiRes.status} — check PIXABAY_API_KEY. Details: ${errText.slice(0, 200)}` };
+      }
+      const contentType = apiRes.headers.get('content-type') ?? '';
+      if (!contentType.includes('json')) {
+        const errText = await apiRes.text().catch(() => '');
+        return { success: false, error: `Pixabay returned non-JSON (key may be invalid or rate-limited). Preview: ${errText.slice(0, 150)}` };
+      }
       const apiData = (await apiRes.json()) as any;
       const hits = apiData?.hits as any[];
       if (!hits?.length) return { success: false, error: `No Pixabay results for "${query}"` };
 
-      // Pick first hit with a medium or large video URL
-      const hit = hits[0];
-      const videoUrl: string = hit.videos?.medium?.url || hit.videos?.large?.url || hit.videos?.small?.url;
-      if (!videoUrl) return { success: false, error: 'Pixabay returned no downloadable video URL' };
+      // Score hits by views+downloads; pre-filter sub-720p by metadata, prefer 4-45s clips
+      const scored = hits
+        .filter((h: any) => {
+          const bestRes = h.videos?.large ?? h.videos?.medium ?? h.videos?.small;
+          const minDim = Math.min(bestRes?.width ?? 0, bestRes?.height ?? 0);
+          return minDim >= 720 && h.duration >= 4 && h.duration <= 45;
+        })
+        .map((h: any) => ({
+          hit: h,
+          score: (h.views ?? 0) * 0.6 + (h.downloads ?? 0) * 0.4,
+          url: h.videos?.large?.url || h.videos?.medium?.url || h.videos?.small?.url,
+        }))
+        .filter((s: any) => !!s.url)
+        .sort((a: any, b: any) => b.score - a.score);
+      if (!scored.length) return { success: false, error: `No Pixabay results at 720p+ for "${query}"` };
 
-      sendMsg(`✓ Found: "${hit.tags?.split(',')[0]?.trim() ?? 'clip'}" (${hit.duration}s) — downloading…`);
+      const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
+      let chosenFile: string | null = null;
+      let chosenHit: any = null;
+      const maxAttempts = Math.min(scored.length, 3);
 
-      // Direct fetch download — no yt-dlp needed
-      const videoRes = await fetch(videoUrl);
-      if (!videoRes.ok) return { success: false, error: `Failed to fetch Pixabay video: ${videoRes.status}` };
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const candidate = scored[attempt];
+        const cHit = candidate.hit;
+        const cUrl: string = candidate.url;
+        const label = cHit.tags?.split(',')[0]?.trim() ?? 'clip';
+        sendMsg(`Checking B-roll candidate ${attempt + 1}/${maxAttempts}: "${label}" (${cHit.duration}s)`);
 
-      const ext = 'mp4';
-      const readableName = (hit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
-        .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
-      const basePath = path.join(dlDir, `${readableName}.${ext}`);
-      let filePath = basePath;
-      if (fs.existsSync(filePath)) filePath = path.join(dlDir, `${readableName}-${Date.now()}.${ext}`);
-      const buf = Buffer.from(await videoRes.arrayBuffer());
-      fs.writeFileSync(filePath, buf);
+        const cRes = await fetch(cUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'video/*,*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://pixabay.com/',
+          }
+        });
+        if (!cRes.ok) { sendMsg(`Fetch failed (${cRes.status}) — trying next`); continue; }
 
-      const pixabayTitle = hit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join(', ') ?? 'Pixabay clip';
-      sendMsg('✓ Download complete — review the clip below.');
-      return { success: true, filePath, fileType: 'video', title: pixabayTitle };
+        const readableName = (cHit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
+          .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
+        const basePath = path.join(dlDir, `${readableName}.mp4`);
+        const cFilePath = fs.existsSync(basePath) ? path.join(dlDir, `${readableName}-${Date.now()}.mp4`) : basePath;
+        fs.writeFileSync(cFilePath, Buffer.from(await cRes.arrayBuffer()));
+
+        if (anthropicApiKey && ffmpegPath) {
+          const check = await verifyBrollQuality(cFilePath, anthropicApiKey);
+          event.sender.send('edith:brollCheck', {
+            label,
+            duration: cHit.duration,
+            passed: check.passed,
+            reason: check.reason,
+            frameBase64: check.frameBase64 ?? null,
+          });
+          if (!check.passed) {
+            sendMsg(`Rejected: ${check.reason} — trying next`);
+            try { fs.unlinkSync(cFilePath); } catch {}
+            continue;
+          }
+        }
+
+        chosenFile = cFilePath;
+        chosenHit = cHit;
+        break;
+      }
+
+      if (!chosenFile) {
+        const fallback = scored[0];
+        const fRes = await fetch(fallback.url);
+        if (!fRes.ok) return { success: false, error: `All Pixabay candidates failed quality check for "${query}"` };
+        const readableName = (fallback.hit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
+          .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
+        const basePath = path.join(dlDir, `${readableName}.mp4`);
+        chosenFile = fs.existsSync(basePath) ? path.join(dlDir, `${readableName}-${Date.now()}.mp4`) : basePath;
+        chosenHit = fallback.hit;
+        fs.writeFileSync(chosenFile, Buffer.from(await fRes.arrayBuffer()));
+        sendMsg(`All checks failed — using best available`);
+      }
+
+      const pixabayTitle = chosenHit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join(', ') ?? 'Pixabay clip';
+      sendMsg(`Download complete`);
+      return { success: true, filePath: chosenFile, fileType: 'video', title: pixabayTitle };
     }
 
     const isSearchQuery = url.startsWith('ytsearch') || url.startsWith('ytdl:ytsearch');
-    if (isSearchQuery) sendMsg(`↳ Searching YouTube for: ${url.replace(/^ytsearch\d*:/, '').trim()}`);
+    if (isSearchQuery) sendMsg(`â†³ Searching YouTube for: ${url.replace(/^ytsearch\d*:/, '').trim()}`);
 
     if (!GEMINI_DISABLED && geminiApiKey && (verify || topic || isStockFootage) && !isSearchQuery) {
-      sendMsg('Running spot checks before download…');
+      sendMsg('Running spot checks before downloadâ€¦');
 
       try {
         // Step 1: Fetch metadata via yt-dlp --dump-json (no video download)
-        sendMsg('↳ Fetching video metadata…');
+        sendMsg('â†³ Fetching video metadataâ€¦');
         const metaJson: string = await new Promise((res, rej) => {
           let out = '';
           const p = spawn(ytdlp, [url, '--dump-json', '--no-warnings'], { shell: false });
@@ -4745,7 +5181,7 @@ ipcMain.handle(
         const metaText = titleDesc.toLowerCase();
         const metaMatchScore = searchTerms.filter((t) => metaText.includes(t)).length;
         const metaCheckPassed = searchTerms.length === 0 || metaMatchScore >= Math.ceil(searchTerms.length * 0.4);
-        sendMsg(`${metaCheckPassed ? '✓' : '✗'} Metadata: "${meta.title ?? 'unknown'}" — ${metaMatchScore}/${searchTerms.length} terms matched`);
+        sendMsg(`${metaCheckPassed ? 'âœ“' : 'âœ—'} Metadata: "${meta.title ?? 'unknown'}" â€” ${metaMatchScore}/${searchTerms.length} terms matched`);
 
         if (!metaCheckPassed) {
           return { success: false, error: `Spot check failed: video title/description does not match "${verify || topic}". Try a different URL.` };
@@ -4753,7 +5189,7 @@ ipcMain.handle(
 
         // Step 3: Visual check via Gemini (thumbnail)
         if (meta.thumbnail) {
-          sendMsg('↳ Fetching thumbnail for visual check…');
+          sendMsg('â†³ Fetching thumbnail for visual checkâ€¦');
           const thumbRes = await fetch(meta.thumbnail);
           if (thumbRes.ok) {
             const thumbBuf = Buffer.from(await thumbRes.arrayBuffer());
@@ -4770,7 +5206,7 @@ ipcMain.handle(
   {"check": "Content relevant to topic: ${topic || 'unspecified'}", "passed": true/false, "reason": "brief"},
   {"check": "Real footage (not animated/cartoon)", "passed": true/false, "reason": "brief"}
 ]
-Be strict on watermarks — even faint, semi-transparent watermarks count as failing.`;
+Be strict on watermarks â€” even faint, semi-transparent watermarks count as failing.`;
             } else {
               visualPrompt = `Analyze this video thumbnail and answer each question. Return ONLY a JSON array, no markdown:
 [
@@ -4782,7 +5218,7 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
             const visualChecks = await spotCheckImageInline(thumbBuf, thumbMime, visualPrompt, geminiApiKey);
 
             for (const c of visualChecks) {
-              sendMsg(`${c.passed ? '✓' : '✗'} ${c.check}: ${c.reason}`);
+              sendMsg(`${c.passed ? 'âœ“' : 'âœ—'} ${c.check}: ${c.reason}`);
             }
 
             const failedChecks = visualChecks.filter((c) => !c.passed);
@@ -4793,20 +5229,20 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
           }
         }
 
-        sendMsg('✓ All checks passed — proceeding with download.');
+        sendMsg('âœ“ All checks passed â€” proceeding with download.');
       } catch (spotErr) {
-        // Spot check error is non-fatal — warn but continue
-        sendMsg(`⚠ Spot check skipped (${String(spotErr).slice(0, 80)}) — proceeding anyway.`);
+        // Spot check error is non-fatal â€” warn but continue
+        sendMsg(`âš  Spot check skipped (${String(spotErr).slice(0, 80)}) â€” proceeding anyway.`);
       }
     }
 
-    // ── ACTUAL DOWNLOAD ─────────────────────────────────────────────────────
-    sendMsg('↳ Downloading… this may take a moment.');
+    // â”€â”€ ACTUAL DOWNLOAD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    sendMsg('â†³ Downloadingâ€¦ this may take a moment.');
 
 
     const hasSections = startSeconds !== undefined && endSeconds !== undefined;
 
-    // YouTube authentication — scan Downloads for any YouTube cookies file the extension may have saved
+    // YouTube authentication â€” scan Downloads for any YouTube cookies file the extension may have saved
     const cookieArgs: string[] = [];
     const dlDir2 = app.getPath('downloads');
     const cookiesFilePath = (() => {
@@ -4832,10 +5268,32 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
     })();
 
     if (cookiesFilePath) {
-      sendMsg(`↳ Using cookies file: ${path.basename(cookiesFilePath)}`);
+      sendMsg(`â†³ Using cookies file: ${path.basename(cookiesFilePath)}`);
       cookieArgs.push('--cookies', cookiesFilePath);
     } else {
-      sendMsg('↳ No cookies file found in Downloads — export from youtube.com using the extension');
+      // No manual cookies file — try auto-extracting from installed browsers (Chrome → Edge → Firefox)
+      const { execSync: _execSync } = require('child_process') as typeof import('child_process');
+      const browserOrder = process.platform === 'win32'
+        ? ['chrome', 'edge', 'firefox']
+        : ['chrome', 'firefox', 'chromium'];
+      let browserFound = false;
+      for (const browser of browserOrder) {
+        try {
+          const testResult = _execSync(
+            `”${ytdlp}” --cookies-from-browser ${browser} --simulate --quiet “https://www.youtube.com” 2>&1`,
+            { timeout: 8000, encoding: 'utf8' },
+          );
+          if (!testResult.toLowerCase().includes('error')) {
+            cookieArgs.push('--cookies-from-browser', browser);
+            sendMsg(`â†³ Using cookies from ${browser}`);
+            browserFound = true;
+            break;
+          }
+        } catch { /* browser not installed or locked — try next */ }
+      }
+      if (!browserFound) {
+        sendMsg('â†³ No browser cookies available — downloading without auth (may fail for age-restricted videos)');
+      }
     }
 
     const args: string[] = [
@@ -4878,7 +5336,7 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
 
       const timer = setTimeout(() => {
         proc.kill();
-        sendMsg('✗ Download timed out after 3 minutes — try a shorter clip or different URL.');
+        sendMsg('âœ— Download timed out after 3 minutes â€” try a shorter clip or different URL.');
         settle({ success: false, error: 'Download timed out' });
       }, DOWNLOAD_TIMEOUT_MS);
 
@@ -4893,7 +5351,7 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
             const p = Math.floor(parseFloat(pct[1]) / 10) * 10;
             if (p !== lastReportedPct && p > 0) {
               lastReportedPct = p;
-              sendMsg(`↳ Downloading… ${p}%`);
+              sendMsg(`â†³ Downloadingâ€¦ ${p}%`);
             }
           } else if (!trimmed.startsWith('[') && (trimmed.includes('\\') || trimmed.includes('/')) && /\.\w{2,4}$/.test(trimmed)) {
             finalPath = trimmed;
@@ -4905,7 +5363,7 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
         const text = chunk.toString();
         stderrBuf += text;
         const errorLine = text.split('\n').find((l) => l.includes('ERROR') || l.includes('error'));
-        if (errorLine) sendMsg(`⚠ ${errorLine.trim().slice(0, 100)}`);
+        if (errorLine) sendMsg(`âš  ${errorLine.trim().slice(0, 100)}`);
       });
 
       proc.on('close', (code) => {
@@ -4923,19 +5381,38 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
         }
         if (code === 0 && finalPath) {
           const runFrameCheck = async (checkPath: string) => {
-            if (!GEMINI_DISABLED && geminiApiKey && ffmpegPath && (verify || isStockFootage)) {
-              const result = await frameVerify(checkPath, ffmpegPath, geminiApiKey, verify || topic || '', !!isStockFootage, topic);
+            const anthropicApiKey2 = loadEnvKey('ANTHROPIC_API_KEY');
+            if (ffmpegPath && anthropicApiKey2 && verify) {
+              // Multi-frame content verify — Claude Haiku scans the clip against the requirement
+              const result = await verifyClipContent(checkPath, ffmpegPath, anthropicApiKey2, verify, sendMsg);
+              event.sender.send('edith:brollCheck', {
+                label: topic || verify,
+                duration: 0,
+                passed: result.passed,
+                reason: result.reason,
+                frameBase64: result.frameBase64 ?? null,
+              });
               if (!result.passed) {
                 try { fs.unlinkSync(checkPath); } catch {}
-                settle({ success: false, error: `Downloaded clip failed verification: ${result.reason}` });
+                settle({ success: false, error: `Clip rejected — doesn't match "${verify}": ${result.reason}` });
                 return false;
               }
+            } else if (ffmpegPath) {
+              // No verify string — just show a preview frame
+              const frameBase64 = await extractPreviewFrame(checkPath, ffmpegPath);
+              event.sender.send('edith:brollCheck', {
+                label: topic || 'downloaded clip',
+                duration: 0,
+                passed: true,
+                reason: 'review clip',
+                frameBase64: frameBase64 ?? null,
+              });
             }
             return true;
           };
 
           if (hasSections && ffmpegPath) {
-            sendMsg('↳ Trimming clip…');
+            sendMsg('â†³ Trimming clipâ€¦');
             const ext = path.extname(finalPath);
             const trimmedPath = finalPath.replace(ext, `_trim${ext}`);
             const ffArgs = [
@@ -4953,14 +5430,23 @@ Be strict on watermarks — even faint, semi-transparent watermarks count as fai
               }
               const ok = await runFrameCheck(usePath);
               if (!ok) return;
-              sendMsg('✓ Download complete — review the clip below.');
+              sendMsg('âœ“ Download complete â€” review the clip below.');
               settle({ success: true, filePath: usePath, fileType: inferFileType(usePath), title: topic });
             });
           } else {
             (async () => {
+              // For YouTube downloads, scan frames and trim to the best 20s segment
+              const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
+              if (!isStockFootage && anthropicApiKey && ffmpegPath) {
+                const segmentPath = await findBestYouTubeSegment(finalPath, ffmpegPath, anthropicApiKey, topic || verify || '', sendMsg);
+                if (segmentPath !== finalPath) {
+                  try { fs.unlinkSync(finalPath); } catch {}
+                  finalPath = segmentPath;
+                }
+              }
               const ok = await runFrameCheck(finalPath);
               if (!ok) return;
-              sendMsg('✓ Download complete — review the clip below.');
+              sendMsg('âœ” Download complete â€” review the clip below.');
               settle({ success: true, filePath: finalPath, fileType: inferFileType(finalPath), title: topic });
             })();
           }
@@ -4991,7 +5477,7 @@ ipcMain.handle(
     _event,
     { filePath, noiseDb = -30, minDuration = 0.4 }: { filePath: string; noiseDb?: number; minDuration?: number },
   ): Promise<{ success: boolean; filePath?: string; error?: string }> => {
-    console.log('✂️ MAIN PROCESS: media:cutSilence called', { filePath, noiseDb, minDuration });
+    console.log('âœ‚ï¸ MAIN PROCESS: media:cutSilence called', { filePath, noiseDb, minDuration });
 
     if (!ffmpegPath) {
       return { success: false, error: 'FFmpeg binary not available' };
@@ -5022,12 +5508,12 @@ ipcMain.handle(
       const silences: Array<{ start: number; end: number }> = [];
       for (let i = 0; i < silenceStartMatches.length; i++) {
         const start = parseFloat(silenceStartMatches[i][1]);
-        // silence_end may not exist for trailing silence — use a large number
+        // silence_end may not exist for trailing silence â€” use a large number
         const end = silenceEndMatches[i] ? parseFloat(silenceEndMatches[i][1]) : 1e9;
         silences.push({ start, end });
       }
 
-      console.log(`✂️ Found ${silences.length} silence region(s)`);
+      console.log(`âœ‚ï¸ Found ${silences.length} silence region(s)`);
 
       // Step 3: Get total duration of input
       const durationRaw = await new Promise<string>((resolve, reject) => {
@@ -5058,15 +5544,15 @@ ipcMain.handle(
         speechSegments.push({ start: cursor, end: totalDuration });
       }
 
-      console.log(`✂️ Speech segments: ${JSON.stringify(speechSegments)}`);
+      console.log(`âœ‚ï¸ Speech segments: ${JSON.stringify(speechSegments)}`);
 
       if (speechSegments.length === 0) {
-        return { success: false, error: 'No speech found — file appears to be entirely silence' };
+        return { success: false, error: 'No speech found â€” file appears to be entirely silence' };
       }
 
-      // No silence found — return original file unchanged
+      // No silence found â€” return original file unchanged
       if (speechSegments.length === 1 && speechSegments[0].start < 0.05 && silences.length === 0) {
-        console.log('✂️ No silence detected — returning original file');
+        console.log('âœ‚ï¸ No silence detected â€” returning original file');
         return { success: true, filePath };
       }
 
@@ -5113,7 +5599,7 @@ ipcMain.handle(
 
       if (segmentFiles.length === 1) {
         fs.renameSync(segmentFiles[0], outputFile);
-        console.log('✂️ Single segment — output:', outputFile);
+        console.log('âœ‚ï¸ Single segment â€” output:', outputFile);
         return { success: true, filePath: outputFile };
       }
 
@@ -5147,10 +5633,317 @@ ipcMain.handle(
       }
       try { fs.unlinkSync(concatListFile); } catch { /* ignore */ }
 
-      console.log(`✂️ Silence cut complete → ${outputFile}`);
+      console.log(`âœ‚ï¸ Silence cut complete â†’ ${outputFile}`);
       return { success: true, filePath: outputFile };
     } catch (err: any) {
-      console.error('✂️ media:cutSilence error:', err);
+      console.error('âœ‚ï¸ media:cutSilence error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:setSpeed — change playback speed of a clip via ffmpeg
+ipcMain.handle(
+  'media:setSpeed',
+  async (
+    _event,
+    { filePath, speed, startSeconds, endSeconds }: { filePath: string; speed: number; startSeconds?: number; endSeconds?: number },
+  ): Promise<{ success: boolean; filePath?: string; duration?: number; error?: string }> => {
+    if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available' };
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    if (speed <= 0) return { success: false, error: 'Speed must be greater than 0' };
+
+    try {
+      const ext = path.extname(filePath) || '.mp4';
+      const outputFile = path.join(path.dirname(filePath), `speed_${Date.now()}${ext}`);
+      const pts = (1 / speed).toFixed(6);
+
+      function buildAtempo(s: number): string {
+        const filters: string[] = [];
+        if (s <= 0.5) {
+          let rem = s;
+          while (rem < 0.5) { filters.push('atempo=0.5'); rem *= 2; }
+          if (Math.abs(rem - 1) > 0.001) filters.push(`atempo=${rem.toFixed(4)}`);
+        } else if (s >= 2.0) {
+          let rem = s;
+          while (rem > 2.0) { filters.push('atempo=2.0'); rem /= 2; }
+          if (Math.abs(rem - 1) > 0.001) filters.push(`atempo=${rem.toFixed(4)}`);
+        } else {
+          filters.push(`atempo=${s.toFixed(4)}`);
+        }
+        return filters.length ? filters.join(',') : 'atempo=1.0';
+      }
+
+      // Get original duration from input file
+      const origDuration = await new Promise<number>((resolve) => {
+        let out = '';
+        const p = spawn(ffprobePath!.path, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath]);
+        p.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+        p.on('close', () => resolve(parseFloat(out.trim()) || 0));
+        p.on('error', () => resolve(0));
+      });
+
+      const hasTrimRange = startSeconds !== undefined && endSeconds !== undefined;
+
+      const runSeg = (a: string[]) => new Promise<void>((resolve, reject) => {
+        const p = spawn(ffmpegPath!, a);
+        let errOut = '';
+        p.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+        p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${errOut.slice(-300)}`))));
+        p.on('error', reject);
+      });
+
+      const commonEnc = ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', '-b:a', '192k', '-ar', '44100'];
+
+      if (hasTrimRange) {
+        const clampedEnd = Math.min(endSeconds!, origDuration);
+        const tmpDir = path.dirname(filePath);
+        const ts = Date.now();
+        const segBefore = path.join(tmpDir, `seg_before_${ts}.mp4`);
+        const segMiddle = path.join(tmpDir, `seg_mid_${ts}.mp4`);
+        const segAfter  = path.join(tmpDir, `seg_after_${ts}.mp4`);
+        const concatList = path.join(tmpDir, `concat_speed_${ts}.txt`);
+
+        // Before: 0 → startSeconds at normal speed
+        if (startSeconds! > 0.01) {
+          await runSeg(['-y', '-i', filePath, '-t', String(startSeconds), '-map', '0:v', '-map', '0:a?', ...commonEnc, segBefore]);
+        }
+
+        // Middle: startSeconds → endSeconds at new speed (video + audio both retime)
+        // -ss/-to MUST be input options (before -i) so the trim happens before the PTS filter.
+        // As output options, -to=3 with setpts=2*PTS stops at output ts 3s (= only 1.5s of input).
+        await runSeg([
+          '-y',
+          '-ss', String(startSeconds),
+          '-to', String(clampedEnd),
+          '-i', filePath,
+          '-map', '0:v', '-map', '0:a?',
+          '-vf', `setpts=${pts}*PTS`,
+          '-af', buildAtempo(speed),
+          ...commonEnc, segMiddle,
+        ]);
+
+        // After: endSeconds → end at normal speed
+        const afterDur = origDuration - clampedEnd;
+        if (afterDur > 0.01) {
+          await runSeg(['-y', '-ss', String(clampedEnd), '-i', filePath, '-map', '0:v', '-map', '0:a?', ...commonEnc, segAfter]);
+        }
+
+        let concatContent = '';
+        if (startSeconds! > 0.01 && fs.existsSync(segBefore)) concatContent += `file '${segBefore.replace(/\\/g, '/')}'\n`;
+        if (fs.existsSync(segMiddle)) concatContent += `file '${segMiddle.replace(/\\/g, '/')}'\n`;
+        if (afterDur > 0.01 && fs.existsSync(segAfter)) concatContent += `file '${segAfter.replace(/\\/g, '/')}'\n`;
+        fs.writeFileSync(concatList, concatContent);
+
+        await runSeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-map', '0:v', '-map', '0:a?', ...commonEnc, '-movflags', '+faststart', outputFile]);
+
+        for (const f of [segBefore, segMiddle, segAfter, concatList]) {
+          try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+        }
+      } else {
+        await runSeg([
+          '-y', '-i', filePath,
+          '-map', '0:v', '-map', '0:a?',
+          '-vf', `setpts=${pts}*PTS`,
+          '-af', buildAtempo(speed),
+          '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+          '-c:a', 'aac', '-b:a', '192k',
+          '-movflags', '+faststart',
+          outputFile,
+        ]);
+      }
+
+      // Compute expected duration mathematically from the input — reliable regardless of output probe
+      let duration: number;
+      if (hasTrimRange && origDuration > 0) {
+        const clampedEnd = Math.min(endSeconds!, origDuration);
+        const slowedSeg = (clampedEnd - startSeconds!) / speed;
+        duration = startSeconds! + slowedSeg + Math.max(0, origDuration - clampedEnd);
+      } else if (origDuration > 0) {
+        duration = origDuration / speed;
+      } else {
+        // fallback: probe output file
+        duration = await new Promise<number>((resolve) => {
+          let out = '';
+          const p = spawn(ffprobePath!.path, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', outputFile]);
+          p.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+          p.on('close', () => resolve(parseFloat(out.trim()) || 0));
+          p.on('error', () => resolve(0));
+        });
+      }
+
+      return { success: true, filePath: outputFile, duration };
+    } catch (err: any) {
+      console.error('media:setSpeed error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:faceZoom — face-tracked smooth zoom via MediaPipe + FFmpeg zoompan
+ipcMain.handle(
+  'media:faceZoom',
+  async (
+    _event,
+    { filePath, startSeconds, endSeconds, zoomLevel = 2.5, easeSeconds = 0.4, target = 'face' }:
+    { filePath: string; startSeconds: number; endSeconds: number; zoomLevel?: number; easeSeconds?: number; target?: string },
+  ): Promise<{ success: boolean; filePath?: string; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+
+    try {
+      const ext = path.extname(filePath) || '.mp4';
+      const outputFile = path.join(path.dirname(filePath), `facezoom_${Date.now()}${ext}`);
+
+      // Resolve Python executable + main.py via the same logic as mediaToolsRunner
+      const isWindows = process.platform === 'win32';
+      const venvPython = isWindows
+        ? path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'Scripts', 'python.exe')
+        : path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'bin', 'python');
+      const mainPy = path.join(process.cwd(), 'src', 'backend', 'python', 'main.py');
+
+      const pythonExe = fs.existsSync(venvPython) ? venvPython : (isWindows ? 'python' : 'python3');
+
+      await new Promise<void>((resolve, reject) => {
+        const args = [
+          mainPy, 'face-zoom',
+          '--input',  filePath,
+          '--output', outputFile,
+          '--start',  String(startSeconds),
+          '--end',    String(endSeconds),
+          '--zoom',   String(zoomLevel),
+          '--ease',   String(easeSeconds),
+          '--target', target,
+        ];
+        const proc = spawn(pythonExe, args);
+        let errOut = '';
+        proc.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+        proc.stdout?.on('data', (d: Buffer) => {
+          const lines = d.toString().split('\n');
+          for (const line of lines) {
+            if (line.startsWith('PROGRESS|')) {
+              console.log('[faceZoom]', line);
+            }
+          }
+        });
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`face-zoom exit ${code}: ${errOut.slice(-500)}`)));
+        proc.on('error', reject);
+      });
+
+      if (!fs.existsSync(outputFile) || fs.statSync(outputFile).size < 1000) {
+        return { success: false, error: 'face-zoom produced no output file' };
+      }
+      return { success: true, filePath: outputFile };
+    } catch (err: any) {
+      console.error('media:faceZoom error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:analyzeMotion — body pose detection via MediaPipe, returns motion events
+ipcMain.handle(
+  'media:analyzeMotion',
+  async (
+    _event,
+    { filePath, detect = 'punch,jump,energy,speaker', sampleEvery = 3 }:
+    { filePath: string; detect?: string; sampleEvery?: number },
+  ): Promise<{ success: boolean; events?: any[]; energyTimeline?: any[]; speakerTrack?: any[]; fps?: number; totalFrames?: number; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+
+    try {
+      const isWindows = process.platform === 'win32';
+      const venvPython = isWindows
+        ? path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'Scripts', 'python.exe')
+        : path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'bin', 'python');
+      const mainPy = path.join(process.cwd(), 'src', 'backend', 'python', 'main.py');
+      const pythonExe = fs.existsSync(venvPython) ? venvPython : (isWindows ? 'python' : 'python3');
+
+      const result = await new Promise<any>((resolve, reject) => {
+        const args = [
+          mainPy, 'motion-analyze',
+          '--input',        filePath,
+          '--detect',       detect,
+          '--sample-every', String(sampleEvery),
+        ];
+        const proc = spawn(pythonExe, args);
+        let stdoutBuf = '';
+        let errOut = '';
+
+        proc.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+        proc.stdout?.on('data', (d: Buffer) => { stdoutBuf += d.toString(); });
+        proc.on('close', (code) => {
+          if (code !== 0) return reject(new Error(`motion-analyze exit ${code}: ${errOut.slice(-500)}`));
+          // Process lines only after all stdout is collected — avoids chunk-split truncation
+          let resultJson: string | null = null;
+          for (const line of stdoutBuf.split('\n')) {
+            if (line.startsWith('PROGRESS|')) {
+              console.log('[analyzeMotion]', line);
+            } else if (line.startsWith('RESULT|')) {
+              resultJson = line.slice(7);
+            }
+          }
+          if (!resultJson) return reject(new Error('motion-analyze produced no RESULT line'));
+          try { resolve(JSON.parse(resultJson)); } catch (e) { reject(e); }
+        });
+        proc.on('error', reject);
+      });
+
+      return { success: true, ...result };
+    } catch (err: any) {
+      console.error('media:analyzeMotion error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:renderSkeleton — draw MediaPipe skeleton overlay onto every frame
+ipcMain.handle(
+  'media:renderSkeleton',
+  async (
+    _event,
+    { filePath }: { filePath: string },
+  ): Promise<{ success: boolean; outputPath?: string; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+    try {
+      const isWindows = process.platform === 'win32';
+      const venvPython = isWindows
+        ? path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'Scripts', 'python.exe')
+        : path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'bin', 'python');
+      const mainPy = path.join(process.cwd(), 'src', 'backend', 'python', 'main.py');
+      const pythonExe = fs.existsSync(venvPython) ? venvPython : (isWindows ? 'python' : 'python3');
+
+      const ext = path.extname(filePath) || '.mp4';
+      const outputPath = path.join(path.dirname(filePath), `skeleton_${Date.now()}${ext}`);
+
+      const result = await new Promise<{ outputPath: string }>((resolve, reject) => {
+        const proc = spawn(pythonExe, [mainPy, 'skeleton-render', '--input', filePath, '--output', outputPath]);
+        let resultJson: string | null = null;
+        let errOut = '';
+        proc.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+        proc.stdout?.on('data', (d: Buffer) => {
+          const lines = d.toString().split('\n');
+          for (const line of lines) {
+            if (line.startsWith('PROGRESS|')) console.log('[renderSkeleton]', line);
+            else if (line.startsWith('RESULT|')) resultJson = line.slice(7);
+          }
+        });
+        proc.on('close', (code) => {
+          if (code !== 0) return reject(new Error(`skeleton-render exit ${code}: ${errOut.slice(-400)}`));
+          if (!resultJson) return reject(new Error('skeleton-render produced no RESULT line'));
+          try { resolve(JSON.parse(resultJson)); } catch (e) { reject(e); }
+        });
+        proc.on('error', reject);
+      });
+
+      return { success: true, outputPath: result.outputPath };
+    } catch (err: any) {
+      console.error('media:renderSkeleton error:', err);
       return { success: false, error: err.message ?? String(err) };
     }
   },
@@ -5179,7 +5972,7 @@ ipcMain.handle('save-temp-image', async (_event, base64Data: string, ext: string
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Register Mycelium agent IPC handlers
 registerMyceliumIPC(ipcMain, () => mainWindow);
@@ -5193,7 +5986,7 @@ app.on('ready', async () => {
 app.on('window-all-closed', () => {
   if (mediaServer) {
     mediaServer.close();
-    console.log('📁 Media server stopped');
+    console.log('ðŸ“ Media server stopped');
   }
 
   if (process.platform !== 'darwin') {
@@ -5210,7 +6003,7 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   if (mediaServer) {
     mediaServer.close();
-    console.log('📁 Media server stopped');
+    console.log('ðŸ“ Media server stopped');
   }
 
   if (mediaCacheCleanupTimer) {
@@ -5223,19 +6016,21 @@ app.on('before-quit', () => {
     killCurrentFfmpegProcess('app-quit');
     ffmpegTaskQueue.length = 0;
   } catch (error) {
-    console.warn('⚠️ Failed to cleanup FFmpeg before quit:', error);
+    console.warn('âš ï¸ Failed to cleanup FFmpeg before quit:', error);
   }
 
   // Cleanup noise reduction temp directory
   if (fs.existsSync(NOISE_REDUCTION_TEMP_DIR)) {
     try {
       fs.rmSync(NOISE_REDUCTION_TEMP_DIR, { recursive: true, force: true });
-      console.log('🗑️ Cleaned up noise reduction temp directory');
+      console.log('ðŸ—‘ï¸ Cleaned up noise reduction temp directory');
     } catch (error) {
       console.warn(
-        '⚠️ Failed to cleanup noise reduction temp directory:',
+        'âš ï¸ Failed to cleanup noise reduction temp directory:',
         error,
       );
     }
   }
 });
+
+

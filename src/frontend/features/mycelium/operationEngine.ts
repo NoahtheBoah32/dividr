@@ -93,7 +93,14 @@ class OperationEngine {
   // Ops that are already slow (async work) — no artificial delay needed
   private static readonly INSTANT_OPS = new Set([
     'cutSilence', 'runWhisper', 'analyzeReference', 'downloadMedia', 'geminiEdit', 'renderGraphic',
+    'cursorMoveTo', 'cursorClick', 'cursorStartDrag', 'cursorDrop', 'cursorHide',
+    'highlightClipSegment', 'clearClipHighlight',
   ]);
+
+  // Background ops: start execution but don't hold the processing lock.
+  // runWhisper/analyzeReference: lets downloadMedia run during transcription.
+  // cutSilence: runs ffmpeg on original file, writes new file — safe to parallelize with runWhisper.
+  private static readonly BACKGROUND_OPS = new Set(['runWhisper', 'analyzeReference', 'cutSilence']);
 
   private async processNext() {
     if (this.paused || this.processing) return;
@@ -108,8 +115,37 @@ class OperationEngine {
       return;
     }
 
-    this.processing = true;
+    const isBackground = OperationEngine.BACKGROUND_OPS.has((next.op as any).type);
     next.status = 'running';
+
+    if (isBackground) {
+      // Run playhead animation (await it for UX), then fire the real op as a background promise
+      try {
+        if (this.preApplyFn) await this.preApplyFn(next.op);
+      } catch { /* ignore animation errors */ }
+
+      this.applyFn(next.op).then(() => {
+        next.status = 'applied';
+        next.appliedAt = Date.now();
+        this.emit('opApplied', next.id, next.op);
+        const hasRemaining = this.queue.some(
+          (q) => q.id !== next.id && (q.status === 'pending' || q.status === 'running'),
+        );
+        if (!hasRemaining) this.emit('queueDrained');
+        this.processNext(); // drain any ops queued while this was running
+      }).catch((err: unknown) => {
+        next.status = 'failed';
+        next.error = String(err);
+        this.emit('opFailed', next.id, next.op);
+        this.processNext();
+      });
+
+      // Don't hold the lock — let subsequent ops run immediately
+      this.processNext();
+      return;
+    }
+
+    this.processing = true;
 
     try {
       if (this.preApplyFn) {

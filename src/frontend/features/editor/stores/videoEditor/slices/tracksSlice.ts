@@ -323,6 +323,18 @@ export interface TracksSlice {
       noiseReductionEngine?: 'ffmpeg' | 'deepfilter';
     },
   ) => void;
+  /**
+   * Update audio ducking settings for a track.
+   */
+  updateTrackDucking: (
+    trackId: string,
+    updates: {
+      duckingEnabled?: boolean;
+      duckingTargetDb?: number;
+      duckingFadeDuration?: number;
+      duckingPrimary?: boolean;
+    },
+  ) => void;
 
   // ==========================================================================
   // Generic Property Updates (Batch-Safe for Slider Drag)
@@ -427,7 +439,7 @@ export const createTracksSlice: StateCreator<
         sourceStartTime: trackData.sourceStartTime || 0,
         sourceDuration: duration, // Store original duration for trimming boundaries
         color: getTrackColor(state.tracks.length),
-        muted: false,
+        muted: trackData.muted ?? false,
         linkedTrackId: audioId,
         isLinked: true,
         trackRowIndex: videoRowIndex,
@@ -446,7 +458,7 @@ export const createTracksSlice: StateCreator<
         sourceStartTime: trackData.sourceStartTime || 0,
         sourceDuration: duration, // Store original duration for trimming boundaries
         color: getTrackColor(state.tracks.length + 1),
-        muted: false,
+        muted: trackData.muted ?? false,
         linkedTrackId: id,
         isLinked: true,
         source: extractedAudio?.audioPath || trackData.source,
@@ -1454,7 +1466,7 @@ export const createTracksSlice: StateCreator<
     }
 
     const currentRowIndex = trackToMove.trackRowIndex ?? 0;
-    const normalizedTargetIndex = Math.round(targetRowIndex);
+    const normalizedTargetIndex = Math.max(0, Math.round(targetRowIndex));
 
     // Check if actually changing rows or just horizontal movement
     const isChangingRows = currentRowIndex !== normalizedTargetIndex;
@@ -1463,7 +1475,7 @@ export const createTracksSlice: StateCreator<
       return;
     }
 
-    const finalTargetRowIndex = targetRowIndex;
+    const finalTargetRowIndex = Math.max(0, targetRowIndex);
     const duration = trackToMove.endFrame - trackToMove.startFrame;
 
     // Build exclude list
@@ -2317,6 +2329,33 @@ export const createTracksSlice: StateCreator<
               }),
               ...(updates.noiseReductionEngine !== undefined && {
                 noiseReductionEngine: updates.noiseReductionEngine,
+              }),
+            }
+          : track,
+      ),
+    }));
+
+    const state = get() as any;
+    state.markUnsavedChanges?.();
+  },
+
+  updateTrackDucking: (trackId, updates) => {
+    set((state: any) => ({
+      tracks: state.tracks.map((track: VideoTrack) =>
+        track.id === trackId
+          ? {
+              ...track,
+              ...(updates.duckingEnabled !== undefined && {
+                duckingEnabled: updates.duckingEnabled,
+              }),
+              ...(updates.duckingTargetDb !== undefined && {
+                duckingTargetDb: updates.duckingTargetDb,
+              }),
+              ...(updates.duckingFadeDuration !== undefined && {
+                duckingFadeDuration: updates.duckingFadeDuration,
+              }),
+              ...(updates.duckingPrimary !== undefined && {
+                duckingPrimary: updates.duckingPrimary,
               }),
             }
           : track,

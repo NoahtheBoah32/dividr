@@ -173,6 +173,49 @@ export function applyFadeFilter(
 }
 
 /**
+ * Build a piecewise-linear FFmpeg volume expression that ducks a track
+ * in time ranges where primary (narration) tracks are active.
+ *
+ * @param primaryRanges - Absolute timeline time ranges of primary tracks
+ * @param segmentStartTime - Absolute start time of the ducking segment
+ * @param fadeDuration - Attack and release ramp time in seconds
+ * @param targetGain - Linear gain to duck to (e.g. 0.25 for -12dB)
+ */
+function buildDuckingVolumeExpression(
+  primaryRanges: Array<{ start: number; end: number }>,
+  segmentStartTime: number,
+  fadeDuration: number,
+  targetGain: number,
+): string {
+  if (primaryRanges.length === 0) return '1.0';
+
+  const f = Math.max(0.01, fadeDuration);
+  const g = Math.max(0.001, Math.min(1.0, targetGain));
+
+  // Each region produces a gain curve: 1.0 outside, ramping down/up through the fade zones
+  const regionExprs = primaryRanges.map(({ start, end }) => {
+    const rs = start - segmentStartTime; // region start in local time
+    const re = end - segmentStartTime;   // region end in local time
+    const fadeStart = Math.max(0, rs - f);
+    const fadeEnd = re + f;
+    const downSlope = (g - 1.0).toFixed(6);
+    const upSlope = (1.0 - g).toFixed(6);
+
+    // Piecewise: before-fade | ramp-down | held | ramp-up | after
+    return (
+      `if(lt(t,${fadeStart.toFixed(4)}),1.0,` +
+      `if(lt(t,${rs.toFixed(4)}),1.0+${downSlope}*(t-${fadeStart.toFixed(4)})/${f.toFixed(4)},` +
+      `if(lt(t,${re.toFixed(4)}),${g.toFixed(4)},` +
+      `if(lt(t,${fadeEnd.toFixed(4)}),${g.toFixed(4)}+${upSlope}*(t-${re.toFixed(4)})/${f.toFixed(4)},` +
+      `1.0))))`
+    );
+  });
+
+  // Take the minimum across all regions (most ducked wins when regions overlap)
+  return regionExprs.reduce((acc, expr) => `min(${acc},${expr})`);
+}
+
+/**
  * Optional function to get volume in decibels for a segment
  * Returns a float value in decibels (defaults to 0dB if not provided)
  * 0dB means no volume change, positive values increase volume, negative values decrease volume
@@ -413,6 +456,58 @@ export function processAudioTimeline(
       );
     }
   });
+
+  // ── Audio Ducking ──────────────────────────────────────────────────────────
+  // For segments with duckingEnabled, reduce volume during primary-track time ranges.
+  // Primary = any non-ducking segment (or segments explicitly marked duckingPrimary).
+  {
+    const anyExplicitPrimary = audioSegmentsWithTiming.some(
+      (s) => s.segment.input.duckingPrimary,
+    );
+    const primarySegments = audioSegmentsWithTiming.filter((s) =>
+      anyExplicitPrimary
+        ? s.segment.input.duckingPrimary
+        : !s.segment.input.duckingEnabled,
+    );
+
+    for (let i = 0; i < audioSegmentsWithTiming.length; i++) {
+      const duckSeg = audioSegmentsWithTiming[i];
+      if (!duckSeg.segment.input.duckingEnabled) continue;
+
+      const segStart = duckSeg.segment.startTime;
+      const segEnd = duckSeg.segment.endTime;
+
+      // Prefer explicit speech intervals (Whisper-derived) over primary-track presence
+      const speechIntervals = duckSeg.segment.input.duckingSpeechIntervals;
+      const overlaps = speechIntervals && speechIntervals.length > 0
+        ? speechIntervals.filter((iv) => iv.start < segEnd && iv.end > segStart)
+        : primarySegments
+            .filter(
+              (ps) =>
+                ps.segment.startTime < segEnd && ps.segment.endTime > segStart,
+            )
+            .map((ps) => ({
+              start: ps.segment.startTime,
+              end: ps.segment.endTime,
+            }));
+
+      if (overlaps.length === 0) continue;
+
+      const targetDb = duckSeg.segment.input.duckingTargetDb ?? -18;
+      const fadeDuration = duckSeg.segment.input.duckingFadeDuration ?? 0.3;
+      const targetGain = Math.pow(10, targetDb / 20);
+
+      const expr = buildDuckingVolumeExpression(overlaps, segStart, fadeDuration, targetGain);
+      const duckRef = `[a${duckSeg.segmentIndex}_ducked]`;
+
+      audioFilters.push(`${duckSeg.filterRef}volume='${expr}':eval=frame${duckRef}`);
+      audioSegmentsWithTiming[i] = { ...duckSeg, filterRef: duckRef };
+
+      console.log(
+        `🦆 Audio ducking applied to segment ${duckSeg.segmentIndex}: ${overlaps.length} region(s), target=${targetDb}dB, fade=${fadeDuration}s`,
+      );
+    }
+  }
 
   // Mix overlapping audio streams using amix
   if (audioSegmentsWithTiming.length > 0) {

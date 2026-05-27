@@ -254,6 +254,23 @@ export const FrameDrivenCompositor = forwardRef<
         const drawX = centerX + offsetX - drawWidth / 2;
         const drawY = centerY + offsetY - drawHeight / 2;
 
+        // Letterbox blur — draw blurred cover-scaled background before the main layer
+        if (request.track.proxyBlockedMessage === 'letterbox-blur' && video.readyState >= 2) {
+          const natW = video.videoWidth || baseVideoWidth;
+          const natH = video.videoHeight || baseVideoHeight;
+          const coverScaleX = canvasWidth / natW;
+          const coverScaleY = canvasHeight / natH;
+          const coverS = Math.max(coverScaleX, coverScaleY);
+          const bgW = natW * coverS;
+          const bgH = natH * coverS;
+          const bgX = (canvasWidth - bgW) / 2;
+          const bgY = (canvasHeight - bgH) / 2;
+          ctx.save();
+          ctx.filter = 'blur(24px) brightness(0.65)';
+          ctx.drawImage(video, bgX, bgY, bgW, bgH);
+          ctx.restore();
+        }
+
         ctx.save();
         ctx.globalAlpha = safeOpacity;
         if (filter) ctx.filter = filter;
@@ -504,7 +521,7 @@ export const FrameDrivenCompositor = forwardRef<
           const y = transform?.y ?? 0;
           const scale = transform?.scale ?? 1;
           const rotation = transform?.rotation ?? 0;
-          return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''}`;
+          return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''},${t.proxyBlockedMessage ?? ''}`;
         })
         .join('|');
 
@@ -560,6 +577,7 @@ export const FrameDrivenCompositor = forwardRef<
       <canvas
         ref={canvasRef}
         className={className}
+        data-testid="preview-canvas"
         style={{
           width: '100%',
           height: '100%',

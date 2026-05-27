@@ -161,6 +161,17 @@ src/backend/scripts/dist/
 # FFmpeg binaries (bundled via npm packages)
 ffmpeg-bin/
 
+# Visual test output (frames + generated fixtures)
+tests/visual/frames/
+tests/visual/fixtures/
+
 # Python binaries (built via PyInstaller)
 dividr-tools-bin/*
 !dividr-tools-bin/.gitkeep
+
+# ML model weights (download separately)
+*.pt
+*.task
+
+# Test output
+test-results/

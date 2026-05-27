@@ -43,6 +43,18 @@ export interface TimelineSlice {
   triggerDuplicationFeedback: (trackId: string) => void;
   clearDuplicationFeedback: (trackId: string) => void;
 
+  // Cut segment animation (EDITH deleteSegment visual feedback)
+  cutAnimation: { fromFrame: number; toFrame: number; phase: 'highlighting' | 'pulse' | 'cutting' | 'closing' } | null;
+  clipTransitionsEnabled: boolean;
+  setCutAnimation: (anim: { fromFrame: number; toFrame: number; phase: 'highlighting' | 'pulse' | 'cutting' | 'closing' } | null) => void;
+  setClipTransitions: (enabled: boolean) => void;
+
+  // Restore segment animation (EDITH trim/restore visual feedback — right-to-left green sweep)
+  restoreAnimation: { fromFrame: number; toFrame: number; phase: 'highlighting' | 'pulse' | 'restoring' | 'closing' } | null;
+  restoreTransitionsEnabled: boolean;
+  setRestoreAnimation: (anim: { fromFrame: number; toFrame: number; phase: 'highlighting' | 'pulse' | 'restoring' | 'closing' } | null) => void;
+  setRestoreTransitions: (enabled: boolean) => void;
+
   // State management helpers
   markUnsavedChanges?: () => void;
 }
@@ -64,9 +76,13 @@ export const createTimelineSlice: StateCreator<
     playheadVisible: true,
     snapEnabled: true,
     isSplitModeActive: false,
-    visibleTrackRows: ['video', 'audio'], // Default: only Media and Audio tracks visible
+    visibleTrackRows: ['video', 'audio', 'subtitle', 'text', 'image'],
   },
   duplicationFeedbackTrackIds: new Set(),
+  cutAnimation: null,
+  clipTransitionsEnabled: false,
+  restoreAnimation: null,
+  restoreTransitionsEnabled: false,
 
   setCurrentFrame: (frame) =>
     set((state: any) => {
@@ -319,4 +335,9 @@ export const createTimelineSlice: StateCreator<
       return { duplicationFeedbackTrackIds: newSet };
     });
   },
+
+  setCutAnimation: (anim) => set({ cutAnimation: anim }),
+  setClipTransitions: (enabled) => set({ clipTransitionsEnabled: enabled }),
+  setRestoreAnimation: (anim) => set({ restoreAnimation: anim }),
+  setRestoreTransitions: (enabled) => set({ restoreTransitionsEnabled: enabled }),
 });

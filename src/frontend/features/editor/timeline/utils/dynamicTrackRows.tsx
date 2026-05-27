@@ -163,22 +163,26 @@ export function generateDynamicRows(
   }
 
   // Convert to array and sort by rowIndex (descending - higher rows first)
+  // Tiebreaker: TRACK_TYPE_ORDER ascending (text < subtitle < image < video)
+  // so captions/subtitle always render above video at the same rowIndex
   const nonAudioRowEntries = Array.from(nonAudioRowMap.entries()).sort(
     (a, b) => {
-      // Handle empty rows (base tracks) - use rowId to extract type and index
       const aRowId = parseRowId(a[0]);
       const bRowId = parseRowId(b[0]);
 
       if (!aRowId || !bRowId) return 0;
 
-      // If rows have tracks, use first track's rowIndex
-      // Otherwise, use the rowIndex from the parsed rowId
       const aIndex =
         a[1].length > 0 ? (a[1][0].trackRowIndex ?? 0) : aRowId.rowIndex;
       const bIndex =
         b[1].length > 0 ? (b[1][0].trackRowIndex ?? 0) : bRowId.rowIndex;
 
-      return bIndex - aIndex;
+      if (bIndex !== aIndex) return bIndex - aIndex;
+
+      // Same rowIndex: sort by TRACK_TYPE_ORDER so subtitle appears before video
+      const aTypeOrder = TRACK_TYPE_ORDER.indexOf(aRowId.type as VideoTrack['type']);
+      const bTypeOrder = TRACK_TYPE_ORDER.indexOf(bRowId.type as VideoTrack['type']);
+      return aTypeOrder - bTypeOrder;
     },
   );
 
@@ -409,17 +413,15 @@ export function getExistingRowIds(tracks: VideoTrack[]): Set<string> {
  */
 export function migrateTracksWithRowIndex(tracks: VideoTrack[]): VideoTrack[] {
   return tracks.map((track) => {
-    if (track.trackRowIndex !== undefined) {
-      return track; // Already has row index
+    const rowIndex = track.trackRowIndex ?? 0;
+    // Clamp negative row indices — tracks can't live above row 0
+    if (rowIndex < 0) {
+      return { ...track, trackRowIndex: 0 };
     }
-
-    // Assign default row index based on media type
-    // Video tracks default to row 0 (base track)
-    // Other types also default to row 0
-    return {
-      ...track,
-      trackRowIndex: 0,
-    };
+    if (track.trackRowIndex !== undefined) {
+      return track;
+    }
+    return { ...track, trackRowIndex: 0 };
   });
 }
 

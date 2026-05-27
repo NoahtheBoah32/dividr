@@ -27,6 +27,7 @@ import {
   useZoomPan,
 } from './hooks';
 import { CanvasOverlay, UnifiedOverlayRenderer } from './overlays';
+import { SkeletonOverlay } from './overlays/SkeletonOverlay';
 import { TransformBoundaryLayer } from './overlays/TransformBoundaryLayer';
 import {
   calculateContentScale,
@@ -80,9 +81,15 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     removeTrack,
     beginGroup,
     endGroup,
+    skeletonOverlayEnabled,
+    toggleSkeletonOverlay,
   } = useVideoEditorStore();
 
   const hasTracks = tracks.length > 0;
+
+  const hasSkeletonData = tracks.some(
+    (t) => t.type === 'video' && (t as any).poseLandmarks?.length > 0,
+  );
 
   const {
     activeVideoTrack,
@@ -927,6 +934,16 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
             />
           )}
 
+          {/* Skeleton overlay — real-time joint tracking visualization */}
+          {skeletonOverlayEnabled && actualWidth > 0 && actualHeight > 0 && (
+            <SkeletonOverlay
+              actualWidth={actualWidth}
+              actualHeight={actualHeight}
+              panX={preview.panX}
+              panY={preview.panY}
+            />
+          )}
+
           {/* Selection Hit Test Layer - spatial hit-testing for ALL element types */}
           {/* CRITICAL: This layer performs spatial hit-testing to prevent higher z-index */}
           {/* elements from blocking selection of visible, non-overlapping elements below */}
@@ -1050,6 +1067,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
           progress={transcriptionProgress.progress}
         />
       )}
+
 
       {/* Rotation Badge */}
       {isRotating && selectedTextTrack && (

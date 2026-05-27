@@ -254,6 +254,42 @@ export interface VideoTrack {
    */
   muted?: boolean;
   /**
+   * Audio fade in duration in seconds (applied at the start of the clip during export).
+   * Max recommended: 3.0s. Undefined = no fade.
+   */
+  fadeInDuration?: number;
+  /**
+   * Audio fade out duration in seconds (applied at the end of the clip during export).
+   * Max recommended: 3.0s. Undefined = no fade.
+   */
+  fadeOutDuration?: number;
+  /**
+   * When true, this track's volume is automatically reduced when a primary (narration)
+   * audio track is active in the same time range. Use on background music tracks.
+   */
+  duckingEnabled?: boolean;
+  /**
+   * Target volume in dB when ducked. Default: -18 dB (quiet but audible).
+   * Range: -60 to 0 dB.
+   */
+  duckingTargetDb?: number;
+  /**
+   * Attack and release fade duration in seconds for smooth ducking transitions.
+   * Default: 0.3 seconds.
+   */
+  duckingFadeDuration?: number;
+  /**
+   * When true, this track acts as a ducking trigger — its active time ranges cause
+   * duckingEnabled tracks to reduce volume. Set on narration/voice tracks.
+   * If no tracks have duckingPrimary set, all non-ducking audio tracks act as triggers.
+   */
+  duckingPrimary?: boolean;
+  /**
+   * Explicit speech intervals (in seconds) derived from Whisper transcription.
+   * When present, ducking uses these precise windows instead of primary-track presence.
+   */
+  duckingSpeechIntervals?: { start: number; end: number }[];
+  /**
    * Whether noise reduction is enabled for this track.
    * Boolean flag only - signals processing intent for export.
    * No parameters or model selection.
@@ -274,6 +310,14 @@ export interface VideoTrack {
   color: string;
   subtitleText?: string;
   subtitleType?: 'karaoke' | 'regular'; // Distinguish between karaoke (generated) and regular (imported) subtitles
+  // When present, this track is a merged caption stream. The renderer displays the active segment
+  // based on the current frame; subtitleText is a fallback label only.
+  subtitleSegments?: Array<{
+    text: string;
+    startFrame: number;
+    endFrame: number;
+    highlightWordIndex?: number;
+  }>;
   linkedTrackId?: string;
   isLinked?: boolean;
   layer?: number; // Layer index for video/image tracks (0 = base layer, higher = overlay priority)
@@ -372,4 +416,7 @@ export interface VideoTrack {
 
   /** CSS filter string applied during compositing (e.g. "brightness(1.1) contrast(1.2) saturate(1.3)") */
   filter?: string;
+
+  /** Per-frame pose landmark data from analyzeMotion. [x, y, visibility] per landmark (33 points). */
+  poseLandmarks?: Array<{ frame: number; lm: [number, number, number][] }>;
 }

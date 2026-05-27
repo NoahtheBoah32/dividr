@@ -124,6 +124,12 @@
   }
 }
 
+/* EDITH thinking wave dots */
+@keyframes edithDotWave {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
 /* Split Mode Cursor Styles */
 .cursor-split {
   cursor:

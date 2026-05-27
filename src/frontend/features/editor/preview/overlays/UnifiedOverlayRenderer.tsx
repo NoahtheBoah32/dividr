@@ -277,8 +277,23 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
 
   const activeSubtitles = useMemo(
     () =>
-      sortedVisualTracks.filter((t) => t.type === 'subtitle' && t.subtitleText),
-    [sortedVisualTracks],
+      sortedVisualTracks
+        .filter((t) => t.type === 'subtitle' && (t.subtitleText || (t as any).subtitleSegments?.length))
+        .map((t): VideoTrack | null => {
+          const segs = (t as any).subtitleSegments as Array<{
+            text: string; startFrame: number; endFrame: number; highlightWordIndex?: number;
+          }> | undefined;
+          if (!segs?.length) return t;
+          const seg = segs.find((s) => currentFrame >= s.startFrame && currentFrame < s.endFrame);
+          if (!seg) return null; // silence gap inside merged stream — render nothing
+          return {
+            ...t,
+            subtitleText: seg.text,
+            subtitleStyle: { ...(t.subtitleStyle ?? {}), highlightWordIndex: seg.highlightWordIndex ?? 0 },
+          } as VideoTrack;
+        })
+        .filter((t): t is VideoTrack => t !== null),
+    [sortedVisualTracks, currentFrame],
   );
   const subtitleTracks = useMemo(
     () => allTracks.filter((t) => t.type === 'subtitle' && t.subtitleText),

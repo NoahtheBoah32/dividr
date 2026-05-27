@@ -10,7 +10,10 @@
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "eslint --ext .ts,.tsx .",
-    "test": "vitest"
+    "test": "vitest",
+    "test:visual": "node tests/visual/run.mjs",
+    "test:visual:server": "node tests/visual/run.mjs --start-server",
+    "vite:test": "vite --config vite.renderer.config.ts --port 5174 --strictPort"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.6.0",

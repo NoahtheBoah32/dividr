@@ -58,7 +58,16 @@ export type WhisperModel =
   | 'medium'
   | 'large'
   | 'large-v2'
-  | 'large-v3';
+  | 'large-v3'
+  | 'distil-large-v3';
+
+export interface TranscriptChunk {
+  chunkIndex: number;
+  startTime: number;
+  endTime: number;
+  segments: WhisperSegment[];
+  text: string;
+}
 
 export interface TranscriptionOptions {
   model?: WhisperModel;
@@ -69,6 +78,7 @@ export interface TranscriptionOptions {
   beamSize?: number;
   vad?: boolean;
   onProgress?: (progress: MediaToolsProgress) => void;
+  onChunk?: (chunk: TranscriptChunk) => void;
 }
 
 export interface NoiseReductionOptions {
@@ -432,6 +442,7 @@ const runMediaToolsCommand = async <T>(
   command: MediaToolsCommand,
   args: string[],
   onProgress?: (progress: MediaToolsProgress) => void,
+  onChunk?: (chunk: TranscriptChunk) => void,
 ): Promise<T> => {
   const isStandalone = mediaToolsPath !== null;
 
@@ -499,6 +510,15 @@ const runMediaToolsCommand = async <T>(
             );
           } catch (err) {
             console.warn('Failed to parse progress:', line);
+          }
+        }
+        // Parse transcript chunks: CHUNK|{json}
+        else if (line.startsWith('CHUNK|')) {
+          try {
+            const chunkData = JSON.parse(line.substring(6));
+            if (onChunk) onChunk(chunkData);
+          } catch (err) {
+            console.warn('Failed to parse chunk:', line);
           }
         }
         // Parse result: RESULT|{json}
@@ -617,6 +637,7 @@ export const transcribeAudio = async (
     beamSize = 5,
     vad = true,
     onProgress,
+    onChunk,
   } = options;
 
   // Build command arguments
@@ -655,7 +676,7 @@ export const transcribeAudio = async (
     });
   }
 
-  return runMediaToolsCommand<WhisperResult>('transcribe', args, onProgress);
+  return runMediaToolsCommand<WhisperResult>('transcribe', args, onProgress, onChunk);
 };
 
 // ============================================================================

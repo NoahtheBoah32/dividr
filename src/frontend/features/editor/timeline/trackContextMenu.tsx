@@ -9,13 +9,11 @@ import {
 import { ShortcutKbdStack } from '@/frontend/features/editor/shortcuts/ShortcutKbdStack';
 import { useShortcutKeys } from '@/frontend/features/editor/shortcuts/shortcutHooks';
 import {
+  Clipboard,
   Copy,
-  Eye,
-  EyeOff,
+  Files,
   Scissors,
   Trash2,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
 import React, { memo, useCallback, useMemo } from 'react';
 import { useVideoEditorStore, VideoTrack } from '../stores/videoEditor/index';
@@ -36,24 +34,26 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
     const selectedCount = useVideoEditorStore(
       (state) => state.timeline.selectedTrackIds.length,
     );
-    const duplicateKeys = useShortcutKeys('track-duplicate', [
-      'ctrl+d',
-      'cmd+d',
-    ]);
+    const hasClipboard = useVideoEditorStore(
+      (state) => !!(state as any).clipboard,
+    );
+
+    const duplicateKeys = useShortcutKeys('track-duplicate', ['ctrl+d', 'cmd+d']);
+    const copyKeys = useShortcutKeys('track-copy', ['ctrl+c', 'cmd+c']);
+    const pasteKeys = useShortcutKeys('track-paste', ['ctrl+v', 'cmd+v']);
     const splitKeys = useShortcutKeys('track-slice-playhead', ['k']);
-    const muteKeys = useShortcutKeys('track-toggle-mute', ['m']);
     const deleteKeys = useShortcutKeys('track-delete', ['del', 'backspace']);
 
     const storeActions = useMemo(() => {
-      const state = useVideoEditorStore.getState();
+      const state = useVideoEditorStore.getState() as any;
       return {
         removeTrack: state.removeTrack,
         duplicateTrack: state.duplicateTrack,
         splitTrack: state.splitTrack,
-        toggleTrackVisibility: state.toggleTrackVisibility,
-        toggleTrackMute: state.toggleTrackMute,
         setSelectedTracks: state.setSelectedTracks,
         removeSelectedTracks: state.removeSelectedTracks,
+        copyTracks: state.copyTracks,
+        pasteTracks: state.pasteTracks,
       };
     }, []);
 
@@ -67,23 +67,55 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
       [currentFrame, track.startFrame, track.endFrame, track.locked],
     );
 
-    // Only audio tracks get mute option
-    const hasAudio = track.type === 'audio';
-    // Video, image, and subtitle tracks get visibility option
-    const hasVisibility =
-      track.type === 'video' ||
-      track.type === 'image' ||
-      track.type === 'subtitle';
-
-    const handleSelectTrack = useCallback(
+    const handleContextMenu = useCallback(
       (e: React.MouseEvent) => {
-        e.preventDefault();
         e.stopPropagation();
         if (!isSelected) {
+          e.preventDefault();
           storeActions.setSelectedTracks([track.id]);
         }
       },
       [track.id, isSelected, storeActions],
+    );
+
+    const handleDuplicateTrack = useCallback(
+      (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        storeActions.duplicateTrack(track.id);
+      },
+      [track.id, storeActions],
+    );
+
+    const handleCopyTrack = useCallback(
+      (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const selectedIds = useVideoEditorStore.getState().timeline.selectedTrackIds;
+        const ids = selectedIds.includes(track.id) ? selectedIds : [track.id];
+        storeActions.copyTracks(ids);
+      },
+      [track.id, storeActions],
+    );
+
+    const handlePasteTrack = useCallback(
+      (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        storeActions.pasteTracks();
+      },
+      [storeActions],
+    );
+
+    const handleSplitTrack = useCallback(
+      (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (canSplit) {
+          storeActions.splitTrack(track.id, currentFrame);
+        }
+      },
+      [track.id, currentFrame, canSplit, storeActions],
     );
 
     const handleDeleteTrack = useCallback(
@@ -99,122 +131,70 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
       [track.id, hasMultipleSelected, storeActions],
     );
 
-    const handleDuplicateTrack = useCallback(
-      (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        storeActions.duplicateTrack(track.id);
-      },
-      [track.id, storeActions],
-    );
-
-    const handleSplitTrack = useCallback(
-      (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (canSplit) {
-          storeActions.splitTrack(track.id, currentFrame);
-        }
-      },
-      [track.id, currentFrame, canSplit, storeActions],
-    );
-
-    const handleToggleVisibility = useCallback(
-      (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        storeActions.toggleTrackVisibility(track.id);
-      },
-      [track.id, storeActions],
-    );
-
-    const handleToggleMute = useCallback(
-      (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        storeActions.toggleTrackMute(track.id);
-      },
-      [track.id, storeActions],
-    );
-
     return (
       <ContextMenu>
-        <ContextMenuTrigger asChild onContextMenu={(e) => e.stopPropagation()}>
+        <ContextMenuTrigger asChild onContextMenu={handleContextMenu}>
           {children}
         </ContextMenuTrigger>
         <ContextMenuContent
-          className="w-56"
+          className="w-52"
           onCloseAutoFocus={(e) => e.preventDefault()}
         >
-          {!isSelected && (
-            <>
-              <ContextMenuItem onClick={handleSelectTrack}>
-                Select Track
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-            </>
-          )}
-
           <ContextMenuItem
             onClick={handleDuplicateTrack}
             disabled={track.locked}
           >
-            <Copy className="mr-2" />
-            Duplicate Track
+            <Files className="mr-2 h-4 w-4" />
+            Duplicate
             <ContextMenuShortcut>
               <ShortcutKbdStack combos={duplicateKeys} />
             </ContextMenuShortcut>
           </ContextMenuItem>
 
           <ContextMenuItem
+            onClick={handleCopyTrack}
+            disabled={track.locked}
+          >
+            <Copy className="mr-2 h-4 w-4" />
+            Copy
+            <ContextMenuShortcut>
+              <ShortcutKbdStack combos={copyKeys} />
+            </ContextMenuShortcut>
+          </ContextMenuItem>
+
+          <ContextMenuItem
+            onClick={handlePasteTrack}
+            disabled={!hasClipboard}
+          >
+            <Clipboard className="mr-2 h-4 w-4" />
+            Paste
+            <ContextMenuShortcut>
+              <ShortcutKbdStack combos={pasteKeys} />
+            </ContextMenuShortcut>
+          </ContextMenuItem>
+
+          <ContextMenuSeparator />
+
+          <ContextMenuItem
             onClick={handleSplitTrack}
             disabled={!canSplit || track.locked}
           >
-            <Scissors className="mr-2" />
-            Split at Playhead
+            <Scissors className="mr-2 h-4 w-4" />
+            Split
             <ContextMenuShortcut>
               <ShortcutKbdStack combos={splitKeys} />
             </ContextMenuShortcut>
           </ContextMenuItem>
 
-          {(hasVisibility || hasAudio) && <ContextMenuSeparator />}
-
-          {hasVisibility && (
-            <ContextMenuItem onClick={handleToggleVisibility}>
-              {track.visible ? (
-                <EyeOff className="mr-2" />
-              ) : (
-                <Eye className="mr-2" />
-              )}
-              {track.visible ? 'Hide Track' : 'Show Track'}
-            </ContextMenuItem>
-          )}
-
-          {hasAudio && (
-            <ContextMenuItem onClick={handleToggleMute}>
-              {track.muted ? (
-                <Volume2 className="mr-2" />
-              ) : (
-                <VolumeX className="mr-2" />
-              )}
-              {track.muted ? 'Unmute Track' : 'Mute Track'}
-              <ContextMenuShortcut>
-                <ShortcutKbdStack combos={muteKeys} />
-              </ContextMenuShortcut>
-            </ContextMenuItem>
-          )}
-
-          {(hasVisibility || hasAudio) && <ContextMenuSeparator />}
+          <ContextMenuSeparator />
 
           <ContextMenuItem
             onClick={handleDeleteTrack}
             variant="destructive"
             disabled={track.locked}
           >
-            <Trash2 className="mr-2" />
-            {hasMultipleSelected
-              ? `Delete ${selectedCount} Tracks`
-              : 'Delete Track'}
+            <Trash2 className="mr-2 h-4 w-4" />
+            {hasMultipleSelected ? `Delete ${selectedCount} clips` : 'Delete'}
             <ContextMenuShortcut>
               <ShortcutKbdStack combos={deleteKeys} />
             </ContextMenuShortcut>
@@ -224,17 +204,16 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
     );
   },
   (prevProps, nextProps) => {
-    const prevTrack = prevProps.track;
-    const nextTrack = nextProps.track;
-
+    const p = prevProps.track;
+    const n = nextProps.track;
     return (
-      prevTrack.id === nextTrack.id &&
-      prevTrack.startFrame === nextTrack.startFrame &&
-      prevTrack.endFrame === nextTrack.endFrame &&
-      prevTrack.locked === nextTrack.locked &&
-      prevTrack.visible === nextTrack.visible &&
-      prevTrack.muted === nextTrack.muted &&
-      prevTrack.type === nextTrack.type &&
+      p.id === n.id &&
+      p.startFrame === n.startFrame &&
+      p.endFrame === n.endFrame &&
+      p.locked === n.locked &&
+      p.visible === n.visible &&
+      p.muted === n.muted &&
+      p.type === n.type &&
       prevProps.children === nextProps.children
     );
   },

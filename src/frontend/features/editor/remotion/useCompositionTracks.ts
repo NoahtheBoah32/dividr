@@ -34,6 +34,7 @@ export function useCompositionTracks(): CompositionTrack[] {
           visible: t.visible !== false,
           filter: (t as any).filter ?? undefined,
           subtitleText: (t as any).subtitleText ?? undefined,
+          subtitleSegments: (t as any).subtitleSegments ?? undefined,
           subtitleStyle: (t as any).subtitleStyle ?? undefined,
           subtitleTransform: (t as any).subtitleTransform ?? undefined,
         })),

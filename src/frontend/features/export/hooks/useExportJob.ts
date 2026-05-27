@@ -538,6 +538,13 @@ function convertTracksToFFmpegInputs(
       timelineEndFrame: track.endFrame, // Timeline position where track ends
       muted: track.type === 'video' ? true : false, // Video tracks are "muted" (no audio from video file)
       volumeDb: track.volumeDb ?? 0, // Volume in decibels (-60 to +12 dB, or -Infinity for mute)
+      fadeInDuration: track.fadeInDuration,
+      fadeOutDuration: track.fadeOutDuration,
+      duckingEnabled: track.duckingEnabled,
+      duckingTargetDb: track.duckingTargetDb,
+      duckingFadeDuration: track.duckingFadeDuration,
+      duckingPrimary: track.duckingPrimary,
+      duckingSpeechIntervals: track.duckingSpeechIntervals,
       trackType: track.type,
       visible: track.visible,
       width: track.width,

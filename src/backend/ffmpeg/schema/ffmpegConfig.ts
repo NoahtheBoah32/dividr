@@ -21,6 +21,11 @@ export interface TrackInfo {
   volumeDb?: number; // Volume in decibels (-60 to +12 dB). Use -Infinity for complete silence (mute). 0 dB = unity gain (no change).
   fadeInDuration?: number; // Fade in duration in seconds (applied at the start of the audio segment)
   fadeOutDuration?: number; // Fade out duration in seconds (applied at the end of the audio segment)
+  duckingEnabled?: boolean; // Reduce this track's volume when primary audio is active
+  duckingTargetDb?: number; // Target dB when ducked (default: -18)
+  duckingFadeDuration?: number; // Attack/release ramp in seconds (default: 0.3)
+  duckingPrimary?: boolean; // This track triggers ducking on duckingEnabled tracks
+  duckingSpeechIntervals?: { start: number; end: number }[]; // Explicit speech intervals (seconds) — overrides primary-track detection
   trackType?: 'video' | 'audio' | 'image' | 'subtitle' | 'text' | 'both'; // Type of the track
   visible?: boolean; // Whether this track's video should be visible (if false, show black)
   gapType?: 'video' | 'audio' | 'both';

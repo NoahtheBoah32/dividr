@@ -8,6 +8,8 @@ import {
 } from '@/shared/types/project.types';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
+import { useEdithEditingStore } from '../../mycelium/stores/edithEditingStore';
+import { useDownloadApprovalStore } from '../../mycelium/stores/downloadApprovalStore';
 import { useVideoEditorStore } from '../../editor/stores/videoEditor/index';
 
 // Current project state
@@ -179,6 +181,14 @@ export const useProjectStore = create<ProjectStore>()(
         // and ensures clean state rehydration (similar to createNewProject)
         const videoEditorStore = useVideoEditorStore.getState();
         videoEditorStore.reset();
+
+        // Reset EDITH state so transcription/editing progress from the previous
+        // project doesn't bleed into the newly opened project
+        useEdithEditingStore.getState().stopEditing();
+
+        // Clear any pending EDITH downloads and reset auto-approve — these are
+        // scoped to the previous project's session and must not bleed into the new one
+        useDownloadApprovalStore.getState().resetForProjectSwitch();
 
         // Now load the project data into the clean state
         await videoEditorStore.loadProjectData(id);

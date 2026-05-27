@@ -53,6 +53,49 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
     // Use waveform-specific readiness (independent of sprite sheet generation)
     const isWaveformReady = useWaveformReadiness(track.mediaId);
 
+    // Per-bar duck gain array — bars in speech zones shrink to the target level.
+    // If duckingEnabled but no intervals, duck for the full track duration.
+    const duckGains = useMemo((): Float32Array | null => {
+      if (!track.duckingEnabled) return null;
+      const fps = getDisplayFps(useVideoEditorStore.getState().tracks);
+      const trackStartSec = track.startFrame / fps;
+      const trackDurSec = (track.endFrame - track.startFrame) / fps;
+      if (trackDurSec <= 0) return null;
+
+      const intervals: { start: number; end: number }[] =
+        track.duckingSpeechIntervals?.length
+          ? track.duckingSpeechIntervals
+          : [{ start: trackStartSec, end: trackStartSec + trackDurSec }];
+
+      const totalBars = Math.max(1, Math.ceil((width / BAR_STEP)));
+      const gains = new Float32Array(totalBars).fill(1);
+
+      const targetDb = track.duckingTargetDb ?? -12;
+      const targetGain = Math.pow(10, targetDb / 20);
+      const fadeSec = track.duckingFadeDuration ?? 0.3;
+      const secPerBar = trackDurSec / totalBars;
+
+      for (let b = 0; b < totalBars; b++) {
+        const barSec = trackStartSec + b * secPerBar;
+        let gain = 1;
+        for (const iv of intervals) {
+          const fadeInStart = iv.start - fadeSec;
+          const fadeOutEnd = iv.end + fadeSec;
+          if (barSec >= fadeInStart && barSec < iv.start) {
+            const t = (barSec - fadeInStart) / fadeSec;
+            gain = Math.min(gain, 1 + t * (targetGain - 1));
+          } else if (barSec >= iv.start && barSec <= iv.end) {
+            gain = Math.min(gain, targetGain);
+          } else if (barSec > iv.end && barSec <= fadeOutEnd) {
+            const t = (barSec - iv.end) / fadeSec;
+            gain = Math.min(gain, targetGain + t * (1 - targetGain));
+          }
+        }
+        gains[b] = gain;
+      }
+      return gains;
+    }, [track.duckingEnabled, track.duckingSpeechIntervals, track.duckingTargetDb, track.duckingFadeDuration, track.startFrame, track.endFrame, width]);
+
     // Calculate volume gain from dB for waveform visual scaling
     // This is a visual-only transformation - no re-analysis of audio data
     const volumeGain = useMemo(() => {
@@ -760,6 +803,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         canvasHeight: number,
         isProgress: boolean,
         gainMultiplier = 1, // Volume gain for visual scaling
+        duckGains?: Float32Array, // Per-bar duck gain (0-1), undefined = no ducking
       ) => {
         const ctx = canvas.getContext('2d', { alpha: true });
         if (!ctx) return;
@@ -802,9 +846,11 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         const maxBarHeight = canvasHeight - 4;
 
         // Render bars with CONSTANT pixel width
-        // Apply volume gain for visual scaling (clamp to 0-1 to prevent overflow)
+        // Apply volume gain + per-bar duck gain for visual scaling
         for (let i = 0; i < barPeaks.length; i++) {
-          const scaledPeak = barPeaks[i] * gainMultiplier;
+          const globalBar = tile.startBar + i;
+          const perBarGain = duckGains ? (duckGains[globalBar] ?? 1) : 1;
+          const scaledPeak = barPeaks[i] * gainMultiplier * perBarGain;
           const peak = Math.max(0, Math.min(1, scaledPeak));
           const barHeight = Math.round(peak * maxBarHeight);
 
@@ -862,7 +908,10 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
         track.volumeDb === -Infinity
           ? 'muted'
           : (track.volumeDb ?? 0).toFixed(1);
-      const renderKey = `${track.id}_${waveformData.cacheKey}_${peaks.length}_${startTime}_${endTime}_${width}_${zoomLevel}_${nrState}_${nrWaveformVersion}_vol${volumeDbKey}`;
+      const duckKey = track.duckingEnabled
+        ? `duck_${track.duckingTargetDb ?? -12}_${track.duckingSpeechIntervals?.length ?? 0}_${track.duckingSpeechIntervals?.[0]?.start?.toFixed(1) ?? 'full'}`
+        : 'noduck';
+      const renderKey = `${track.id}_${waveformData.cacheKey}_${peaks.length}_${startTime}_${endTime}_${width}_${zoomLevel}_${nrState}_${nrWaveformVersion}_vol${volumeDbKey}_${duckKey}`;
 
       if (lastRenderedKeyRef.current === renderKey) return;
 
@@ -901,6 +950,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
           canvasHeight,
           false,
           volumeGain,
+          duckGains ?? undefined,
         );
 
         // Progress canvas (brighter, for playback progress)
@@ -926,6 +976,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
               canvasHeight,
               true,
               volumeGain,
+              duckGains ?? undefined,
             );
           }
         }
@@ -942,6 +993,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
       track.noiseReductionEnabled,
       track.volumeDb,
       volumeGain,
+      duckGains,
       nrWaveformVersion,
       renderTile,
     ]);
@@ -1013,35 +1065,25 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
     if (isLoading || isGeneratingNrWaveform || !isWaveformReady) {
       return (
         <div
-          className="relative flex items-center justify-center bg-gray-100/10 border border-gray-300/20 rounded overflow-hidden pointer-events-none"
+          className="relative flex items-center justify-start bg-emerald-900/60 border border-emerald-600/40 rounded overflow-hidden pointer-events-none"
           style={{ width, height }}
         >
-          {/* Silent loading state - no visual indicator */}
+          <span className="pl-2 text-[10px] text-emerald-300/80 font-medium truncate select-none">
+            {track.name.replace(/\.[^/.]+$/, '')}
+          </span>
         </div>
       );
     }
 
     if (!waveformData) {
-      // If waveform exists in media library but waveformData is null,
-      // show a brief loading state instead of "Generating waveform..."
-      // This handles the race condition on initial mount
-      if (hasExistingWaveform) {
-        return (
-          <div
-            className="relative flex items-center justify-center bg-gray-100/10 border border-gray-300/20 rounded overflow-hidden pointer-events-none"
-            style={{ width, height }}
-          >
-            {/* Silent loading state - no visual indicator */}
-          </div>
-        );
-      }
-
       return (
         <div
-          className="relative flex items-center justify-center bg-gray-100/10 border border-gray-300/20 rounded overflow-hidden pointer-events-none"
+          className="relative flex items-center justify-start bg-emerald-900/60 border border-emerald-600/40 rounded overflow-hidden pointer-events-none"
           style={{ width, height }}
         >
-          {/* Silent generation state - no visual indicator */}
+          <span className="pl-2 text-[10px] text-emerald-300/80 font-medium truncate select-none">
+            {track.name.replace(/\.[^/.]+$/, '')}
+          </span>
         </div>
       );
     }
@@ -1085,6 +1127,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
             {track.name.replace(/\.[^/.]+$/, '').substring(0, 12)}
           </div>
         )}
+
       </div>
     );
   },
@@ -1125,10 +1168,13 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = React.memo(
 
     // Re-render when volume changes to scale waveform visually
     const volumeChanged = prevProps.track.volumeDb !== nextProps.track.volumeDb;
+    if (volumeChanged) return false;
 
-    if (volumeChanged) {
-      return false;
-    }
+    // Re-render when ducking envelope changes
+    const duckingChanged =
+      prevProps.track.duckingEnabled !== nextProps.track.duckingEnabled ||
+      prevProps.track.duckingSpeechIntervals !== nextProps.track.duckingSpeechIntervals;
+    if (duckingChanged) return false;
 
     const dimensionsChanged =
       prevProps.frameWidth !== nextProps.frameWidth ||

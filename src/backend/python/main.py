@@ -12,7 +12,6 @@ Usage:
 import argparse
 import json
 import sys
-from scripts import transcribe, noisereduction
 
 __version__ = "1.0.0"
 
@@ -34,6 +33,37 @@ def main():
         description="Available commands",
         help="Run 'dividr-tools <command> --help' for more info"
     )
+
+    # =========================================================================
+    # Face-zoom subcommand (args registered statically — module loaded lazily)
+    # =========================================================================
+    fz = subparsers.add_parser('face-zoom', help='Face-tracking smooth zoom')
+    fz.add_argument('--input',        required=True)
+    fz.add_argument('--output',       required=True)
+    fz.add_argument('--start',        type=float, required=True)
+    fz.add_argument('--end',          type=float, required=True)
+    fz.add_argument('--zoom',         type=float, default=2.5)
+    fz.add_argument('--ease',         type=float, default=0.4)
+    fz.add_argument('--sample-every', type=int,   default=6)
+    fz.add_argument('--target',       type=str,   default='face',
+                    help='Subject to zoom: face (default), ball, vase, bottle, money, etc.')
+
+    # =========================================================================
+    # Motion-analyze subcommand
+    # =========================================================================
+    # Skeleton-render subcommand
+    # =========================================================================
+    sr = subparsers.add_parser('skeleton-render', help='Render skeleton overlay on video')
+    sr.add_argument('--input',  required=True)
+    sr.add_argument('--output', required=True)
+
+    # =========================================================================
+    ma = subparsers.add_parser('motion-analyze', help='Detect motion events from body pose')
+    ma.add_argument('--input',        required=True)
+    ma.add_argument('--detect',       type=str, default='punch,jump,energy,speaker',
+                    help='Comma-separated list of detectors to run')
+    ma.add_argument('--sample-every', type=int, default=3,
+                    help='Process every Nth frame (default: 3)')
 
     # =========================================================================
     # Transcribe subcommand
@@ -141,10 +171,11 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Route to appropriate handler
+    # Route to appropriate handler — all imports are lazy so unrelated heavy
+    # dependencies (faster-whisper, torch, etc.) don't load for other commands.
     try:
         if args.command == "transcribe":
-            # Build kwargs for transcribe
+            from scripts import transcribe
             transcribe_kwargs = {
                 "model_size": args.model,
                 "device": args.device,
@@ -157,21 +188,29 @@ def main():
             if args.translate:
                 transcribe_kwargs["translate"] = True
 
-            # Handle stdout output (--output -)
             if args.output == "-":
-                # Call transcribe_audio directly and print RESULT| to stdout
                 result = transcribe.transcribe_audio(args.input, **transcribe_kwargs)
                 result_json = json.dumps(result)
                 print(f"RESULT|{result_json}", flush=True)
             else:
-                # Save to file using run()
                 transcribe.run(args.input, args.output, **transcribe_kwargs)
 
         elif args.command == "noise-reduce":
-            noisereduction.run(
-                args.input,
-                args.output
-            )
+            from scripts import noisereduction
+            noisereduction.run(args.input, args.output)
+
+        elif args.command == "face-zoom":
+            from scripts import facezoom
+            facezoom.handle_args(args)
+
+        elif args.command == "skeleton-render":
+            from scripts import skeletonrender
+            skeletonrender.handle_args(args)
+
+        elif args.command == "motion-analyze":
+            from scripts import motionanalyze
+            motionanalyze.handle_args(args)
+
         else:
             print(f"Unknown command: {args.command}", file=sys.stderr)
             sys.exit(1)

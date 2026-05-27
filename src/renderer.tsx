@@ -14,9 +14,13 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import './frontend/styles/index.css';
 import { startupManager } from './frontend/utils/startupManager';
+import { initTestBridge } from './frontend/features/mycelium/testBridge';
 
 // Log renderer mount start
 startupManager.logStage('renderer-mount');
+
+// Register visual test bridge (DEV only — no-op in production)
+initTestBridge();
 
 // Get root container (already exists from index.html)
 const container = document.getElementById('root');

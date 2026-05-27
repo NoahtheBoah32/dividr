@@ -4,6 +4,7 @@ import { PropertiesPanel } from './components/properties-panel';
 import { VideoPreviewWrapper } from './preview/VideoPreviewWrapper';
 import { useVideoEditorStore } from './stores/videoEditor/index';
 import { EdithLiveTracker } from '@/frontend/features/mycelium/components/EdithLiveTracker';
+import { EdithCursor } from '@/frontend/features/mycelium/components/EdithCursor';
 
 import { NavigationBlockerDialog } from '@/frontend/components/custom/NavigationAlertDialog';
 import { useTranscodeListener } from '@/frontend/hooks/useTranscodeListener';
@@ -62,6 +63,8 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
             />
             {/* EDITH live op feed — ghost editor overlay */}
             <EdithLiveTracker />
+            {/* EDITH cursor navigation overlay */}
+            <EdithCursor />
           </div>
         </div>
         {/* Properties Panel - Dynamically renders based on selected track type */}

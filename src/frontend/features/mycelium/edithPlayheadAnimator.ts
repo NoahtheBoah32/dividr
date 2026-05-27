@@ -30,6 +30,8 @@ function opToFrame(op: Op, fps: number): number | null {
       return null; // sweep
     case 'renderGraphic':
       return null; // sweep — render takes time, no single target frame
+    case 'renameProject':
+      return null; // no playhead movement
     default:
       return null;
   }
@@ -54,6 +56,11 @@ function opLabel(op: Op): string {
     case 'deleteClip':    return `deleteClip`;
     case 'saveStyle':     return `saveStyle — "${(op as any).name}"`;
     case 'renderGraphic': return `renderGraphic — ${(op as any).durationSeconds}s graphic`;
+    case 'renameProject': return `renameProject — "${(op as any).title}"`;
+    case 'zoomToFace': {
+      const target = (op as any).target ?? 'face';
+      return `zoomTo${target.charAt(0).toUpperCase() + target.slice(1)} — ${(op as any).startSeconds?.toFixed(1)}s–${(op as any).endSeconds?.toFixed(1)}s`;
+    }
     default:              return op.type;
   }
 }
@@ -63,9 +70,17 @@ function setPlayhead(frame: number) {
   useEdithEditingStore.getState().setHeadFrame(frame); // keep store in sync for label positioning
 }
 
+const CURSOR_OPS = new Set([
+  'cursorMoveTo', 'cursorClick', 'cursorStartDrag', 'cursorDrop', 'cursorHide',
+  'highlightClipSegment', 'clearClipHighlight',
+]);
+
 // Animate the playhead for a single op before it applies.
 // Mimics the 3D-printer feel: jump to target, micro-nudge back, confirm.
 export async function animateForOp(op: Op, fps: number, totalFrames: number): Promise<void> {
+  // Cursor ops are self-timed via sleep() in storeAdapter — skip playhead animation entirely
+  if (CURSOR_OPS.has(op.type)) return;
+
   const edithStore = useEdithEditingStore.getState();
   const current = edithStore.headFrame;
 
@@ -79,21 +94,27 @@ export async function animateForOp(op: Op, fps: number, totalFrames: number): Pr
     return;
   }
 
+  // Captions and SFX are high-volume ops — use tighter timing (1.3x faster)
+  const isFastOp = op.type === 'addCaption' || op.type === 'addSfx';
+  const t = isFastOp
+    ? { arrive: 385, nudge: 292, confirm: 262, settle: 369 }
+    : { arrive: 500, nudge: 380, confirm: 340, settle: 480 };
+
   // Micro back-and-forth around target
   const jitter = Math.max(2, Math.round(fps * 0.06)); // ~1.5 frames at 24fps
 
   // Jump to target — EDITH has arrived at the edit point
   setPlayhead(targetFrame);
-  await sleep(500);
+  await sleep(t.arrive);
   // Nudge back slightly — reconsidering
   setPlayhead(Math.max(0, targetFrame - jitter));
-  await sleep(380);
+  await sleep(t.nudge);
   // Confirm forward — committing
   setPlayhead(targetFrame + Math.round(jitter * 0.5));
-  await sleep(340);
+  await sleep(t.confirm);
   // Settle on target
   setPlayhead(targetFrame);
-  await sleep(480);
+  await sleep(t.settle);
 }
 
 // Sweep from current frame to end (for colorGrade, cutSilence etc.)

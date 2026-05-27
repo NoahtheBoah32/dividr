@@ -32,7 +32,7 @@ export const createUtilitySlice: StateCreator<
         isSplitModeActive: false,
         inPoint: undefined,
         outPoint: undefined,
-        visibleTrackRows: ['video', 'audio'], // Reset to default visible tracks
+        visibleTrackRows: ['video', 'audio', 'subtitle', 'text', 'image'],
       },
       playback: {
         isPlaying: false,
@@ -58,5 +58,13 @@ export const createUtilitySlice: StateCreator<
       isAutoSaveEnabled: true,
       lastSavedAt: null,
       hasUnsavedChanges: false,
+      restoreAnimation: null,
+      restoreTransitionsEnabled: false,
+      // Transcription state — must be cleared on project switch
+      isTranscribing: false,
+      currentTranscribingMediaId: null,
+      currentTranscribingTrackId: null,
+      transcribingSubtitleRowIndex: null,
+      transcriptionProgress: null,
     } as any),
 });

@@ -9,6 +9,7 @@ interface TimelinePlayheadProps {
   timelineScrollElement?: HTMLElement | null;
   onStartDrag?: (e: React.MouseEvent) => void;
   magneticSnapFrame?: number | null;
+  playheadAnimating?: boolean;
 }
 
 export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
@@ -20,6 +21,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
     timelineScrollElement,
     onStartDrag,
     magneticSnapFrame,
+    playheadAnimating,
   }) => {
     if (!visible) return null;
 
@@ -34,12 +36,15 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
       [currentFrame, frameWidth, scrollX, timelineScrollElement],
     );
 
+    const jumpTransition = playheadAnimating ? 'left 0.55s cubic-bezier(0.4, 0, 0.2, 1)' : undefined;
+
     const styles = useMemo(
       () => ({
         hitbox: {
           left: left - 9, // Centers 20px touch target on the playhead center (approx left+1)
           width: 20,
           transform: 'translate3d(0, 0, 0)',
+          transition: jumpTransition,
         },
         handleContainer: {
           left: left - 19, // Centers 40px touch target on the playhead center
@@ -48,6 +53,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
           top: -32, // Position to align the 24px visual handle correctly (-24px top visual)
           transform: 'translate3d(0, 0, 0)',
           filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
+          transition: jumpTransition,
         },
         // Keeping for reference if needed
         indicator: {
@@ -55,7 +61,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
           transform: 'translate3d(0, 0, 0)',
         },
       }),
-      [left],
+      [left, jumpTransition],
     );
 
     const handleMouseDown = useCallback(
@@ -131,7 +137,8 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(
       prevProps.visible === nextProps.visible &&
       prevProps.timelineScrollElement === nextProps.timelineScrollElement &&
       prevProps.onStartDrag === nextProps.onStartDrag &&
-      prevProps.magneticSnapFrame === nextProps.magneticSnapFrame
+      prevProps.magneticSnapFrame === nextProps.magneticSnapFrame &&
+      prevProps.playheadAnimating === nextProps.playheadAnimating
     );
   },
 );

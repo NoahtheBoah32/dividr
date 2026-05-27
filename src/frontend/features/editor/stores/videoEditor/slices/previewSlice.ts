@@ -20,6 +20,8 @@ export interface PreviewSlice {
   setBackgroundColor: (color: string) => void;
   toggleFullscreen: () => void;
   setFullscreen: (isFullscreen: boolean) => void;
+  skeletonOverlayEnabled: boolean;
+  toggleSkeletonOverlay: () => void;
 
   // State management helpers
   markUnsavedChanges?: () => void;
@@ -31,6 +33,8 @@ export const createPreviewSlice: StateCreator<
   [],
   PreviewSlice
 > = (set, get) => ({
+  skeletonOverlayEnabled: false,
+
   preview: {
     ...DEFAULT_PREVIEW_CONFIG,
     showGrid: false,
@@ -142,4 +146,7 @@ export const createPreviewSlice: StateCreator<
     set((state: any) => ({
       preview: { ...state.preview, isFullscreen },
     })),
+
+  toggleSkeletonOverlay: () =>
+    set((state: any) => ({ skeletonOverlayEnabled: !state.skeletonOverlayEnabled })),
 });

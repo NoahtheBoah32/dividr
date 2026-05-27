@@ -17,6 +17,12 @@ export interface CompositionTrack {
   visible: boolean;
   filter?: string;         // CSS filter string for color grade
   subtitleText?: string;
+  subtitleSegments?: Array<{
+    text: string;
+    startFrame: number;
+    endFrame: number;
+    highlightWordIndex?: number;
+  }>;
   subtitleStyle?: {
     fontFamily?: string;
     fontSize?: number;
@@ -47,12 +53,23 @@ const KaraokeCaption: React.FC<{
   const style = track.subtitleStyle ?? {};
   const transform = track.subtitleTransform ?? { x: 0, y: 0.3 };
 
+  // Resolve active text from merged stream segments, or fall back to the clip's own text
+  let displayText = track.subtitleText ?? '';
+  let hlIdx = style.highlightWordIndex ?? -1;
+  if (track.subtitleSegments && track.subtitleSegments.length > 0) {
+    const active = track.subtitleSegments.find(
+      (s) => frame >= s.startFrame && frame < s.endFrame,
+    );
+    if (!active) return null; // silence gap inside the stream — render nothing
+    displayText = active.text;
+    hlIdx = active.highlightWordIndex ?? -1;
+  }
+
   // Vertical position: transform.y is -1 to 1 where 0 = center
   // Convert to a percentage of canvas height from top
   const topPct = 50 + transform.y * 50;
 
-  const words = (track.subtitleText ?? '').split(' ');
-  const hlIdx = style.highlightWordIndex ?? -1;
+  const words = displayText.split(' ');
 
   return (
     <AbsoluteFill

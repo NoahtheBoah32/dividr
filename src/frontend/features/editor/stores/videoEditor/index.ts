@@ -114,11 +114,17 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
           timeline: {
             ...currentState.timeline,
             ...(persistedState?.timeline || {}),
-            // Ensure visibleTrackRows has a fallback
-            visibleTrackRows: persistedState?.timeline?.visibleTrackRows || [
-              'video',
-              'audio',
-            ],
+            // Ensure visibleTrackRows always includes all required rows (migration from old ['video','audio'] default)
+            visibleTrackRows: (() => {
+              const required = ['video', 'audio', 'subtitle', 'text', 'image'];
+              const persisted = persistedState?.timeline?.visibleTrackRows;
+              if (!persisted) return required;
+              const merged = [...persisted];
+              for (const row of required) {
+                if (!merged.includes(row)) merged.push(row);
+              }
+              return merged;
+            })(),
           },
           preview: {
             ...currentState.preview,

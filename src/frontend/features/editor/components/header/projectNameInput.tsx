@@ -31,16 +31,48 @@ const ProjectNameInput: React.FC<ProjectNameInputProps> = ({
 
   const [localTitle, setLocalTitle] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const animFrameRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Update local title when current project changes
+  // Update local title when current project changes (skip during animation)
   useEffect(() => {
+    if (isAnimating) return;
     if (currentProject) {
       setLocalTitle(currentProject.metadata.title);
     } else {
       setLocalTitle('');
     }
-  }, [currentProject]);
+  }, [currentProject, isAnimating]);
+
+  // EDITH typewriter rename animation
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { title } = (e as CustomEvent<{ title: string }>).detail;
+      if (!title?.trim()) return;
+      if (animFrameRef.current) clearTimeout(animFrameRef.current);
+      setIsAnimating(true);
+      setLocalTitle('');
+      let i = 0;
+      const tick = () => {
+        i += 1;
+        setLocalTitle(title.slice(0, i));
+        if (i < title.length) {
+          animFrameRef.current = setTimeout(tick, 65);
+        } else {
+          setIsAnimating(false);
+          updateCurrentProjectMetadata({ title });
+          saveCurrentProject().catch(() => {});
+        }
+      };
+      animFrameRef.current = setTimeout(tick, 120);
+    };
+    window.addEventListener('edith:renameProject', handler);
+    return () => {
+      window.removeEventListener('edith:renameProject', handler);
+      if (animFrameRef.current) clearTimeout(animFrameRef.current);
+    };
+  }, [updateCurrentProjectMetadata, saveCurrentProject]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTitle = e.target.value;
@@ -101,24 +133,28 @@ const ProjectNameInput: React.FC<ProjectNameInputProps> = ({
           className={cn(
             'border-none text-sm !pl-0 h-6 pe-9 !bg-transparent focus-visible:ring-0 min-w-[114px] max-w-[135px] focus-visible:ring-offset-0 focus-visible:outline-none ring-0 rounded-md',
             isSaving && 'text-secondary',
+            isAnimating && 'caret-transparent select-none',
             className,
           )}
-          // style={{ fieldSizing: 'content' } as any}
           placeholder={placeholder}
           value={localTitle}
           onChange={handleChange}
-          disabled={isLoading || isSaving}
+          disabled={isLoading || isSaving || isAnimating}
+          readOnly={isAnimating}
         />
-        <ChevronDown
-          className="absolute right-2 top-1/2 -translate-y-1/2"
-          size={12}
-        />
+        {isAnimating ? (
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 inline-block w-[1.5px] h-[11px] bg-zinc-300 animate-pulse rounded-sm" />
+        ) : (
+          <ChevronDown
+            className="absolute right-2 top-1/2 -translate-y-1/2"
+            size={12}
+          />
+        )}
       </div>
 
-      {isSaving ||
-        (isVideoEditorSaving && (
-          <div className="text-xs text-secondary px-2">Saving...</div>
-        ))}
+      {!isAnimating && (isSaving || isVideoEditorSaving) && (
+        <div className="text-xs text-secondary px-2">Saving...</div>
+      )}
     </div>
   );
 };

@@ -33,6 +33,11 @@ export const ProjectGuard: React.FC<ProjectGuardProps> = ({ children }) => {
     );
   }
 
+  // Allow visual test runner to bypass the guard
+  if ((window as any).__dividrTestMode) {
+    return <>{children}</>;
+  }
+
   // Redirect to projects page if no project is loaded
   if (!currentProject) {
     return <Navigate to="/" replace />;
