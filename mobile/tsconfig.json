@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../src/*"],
+      "@app/*": ["../src/*"],
+      "@frontend/*": ["../src/frontend/*"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": ["src", "../src/frontend", "../src/App.tsx"]
+}
