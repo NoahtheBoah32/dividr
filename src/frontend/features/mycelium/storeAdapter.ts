@@ -300,6 +300,55 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'addTrackedCaption': {
+      const fps = store.fps ?? 30;
+      const startFrame = Math.round(op.startSeconds * fps);
+      const duration = Math.round((op.endSeconds - op.startSeconds) * fps);
+      const endFrame = startFrame + duration;
+
+      // Find the video track that has poseLandmarks and covers this time range
+      const videoTrack =
+        (store.tracks as any[]).find(
+          (t: any) =>
+            t.type === 'video' &&
+            t.poseLandmarks?.length > 0 &&
+            t.startFrame <= startFrame &&
+            t.endFrame >= endFrame,
+        ) ??
+        (store.tracks as any[]).find(
+          (t: any) => t.type === 'video' && t.poseLandmarks?.length > 0,
+        );
+
+      const subtitleTracks = (store.tracks as any[]).filter((t: any) => t.type === 'subtitle');
+      const targetRow = pickSubtitleRow(subtitleTracks, startFrame, endFrame);
+
+      await store.addTrack({
+        type: 'subtitle',
+        name: `[tracked] ${op.text.slice(0, 35)}`,
+        source: '',
+        subtitleText: op.text,
+        subtitleType: 'karaoke',
+        subtitleTracked: true,
+        trackedLinkedVideoTrackId: videoTrack?.id,
+        duration,
+        startFrame,
+        endFrame,
+        visible: true,
+        locked: false,
+        color: '#E040FB',
+        trackRowIndex: targetRow,
+        subtitleStyle: {
+          fontFamily: op.style?.fontFamily ?? 'Impact',
+          fontSize: op.style?.fontSize ?? 80,
+          fillColor: op.style?.fillColor ?? '#FFFFFF',
+          isBold: op.style?.isBold ?? false,
+          textTransform: 'uppercase',
+        },
+        subtitleTransform: { x: 0, y: 0 },
+      } as any);
+      break;
+    }
+
     case 'setVolume': {
       store.updateTrackAudio(op.clipId, { volumeDb: op.volumeDb });
       break;
@@ -557,61 +606,72 @@ async function applyOp(op: Op): Promise<void> {
             } : {}),
           };
 
+          // Build the same source→timeline mapper as buildCaptions so trim offsets
+          // and non-zero clip start positions are accounted for correctly.
+          const layer0 = (store.tracks as any[])
+            .filter((t: any) => (t.trackRowIndex ?? 0) === 0 && t.type === 'video')
+            .sort((a: any, b: any) => a.startFrame - b.startFrame);
+          const srcToTimeline = (s: number): number | null => {
+            if (!layer0.length) return s;
+            for (const clip of layer0) {
+              const clipSrcStart: number = clip.sourceStartTime ?? 0;
+              const clipSrcEnd: number = clipSrcStart + (clip.endFrame - clip.startFrame) / fps;
+              if (s >= clipSrcStart && s < clipSrcEnd) {
+                return clip.startFrame / fps + (s - clipSrcStart);
+              }
+            }
+            return null;
+          };
+
+          // Collect all words across ALL segments in this chunk.
+          // Mark the first word of each segment as a boundary — Whisper segment boundaries
+          // are always real speech pauses, so we use them as hard phrase breaks even when
+          // word end times butt up against next word's start with no detectable gap.
+          const allChunkWords: Array<{ word: string; start: number; end: number; segBoundary?: boolean }> = [];
+          let fallbackSegs: Array<{ start: number; end: number; text: string }> = [];
+
           for (const seg of chunk.segments) {
             if (!seg.text?.trim()) continue;
-            const segText = seg.text.trim();
-            const words: Array<{ word: string; start: number; end: number }> = seg.words ?? [];
-
+            const words: Array<{ word: string; start: number; end: number }> = (seg as any).words ?? [];
             if (words.length >= 1) {
-              // Word-level karaoke: one subtitle track per word, all displaying the full sentence.
-              // highlightWordIndex increments so the yellow follows each word as it's spoken —
-              // identical to CapCut's auto-caption highlight behavior.
-              for (let wi = 0; wi < words.length; wi++) {
-                const w = words[wi];
-                if (!w?.word?.trim()) continue;
-                const wordStart = Math.round(w.start * fps);
-                const wordEnd = Math.round(w.end * fps);
-                const wordDur = Math.max(1, wordEnd - wordStart);
-                const subtitleTracks = (store.tracks as any[]).filter((t: any) => t.type === 'subtitle');
-                const targetRow = pickSubtitleRow(subtitleTracks, wordStart, wordStart + wordDur);
-                store.addTrack({
-                  type: 'subtitle',
-                  name: segText.slice(0, 40),
-                  source: '',
-                  subtitleText: segText,
-                  subtitleType: 'karaoke',
-                  duration: wordDur,
-                  startFrame: wordStart,
-                  endFrame: wordStart + wordDur,
-                  visible: true,
-                  locked: false,
-                  color: '#F5A623',
-                  trackRowIndex: targetRow,
-                  subtitleStyle: {
-                    fontFamily: style.fontFamily,
-                    fontSize: style.fontSize,
-                    fillColor: style.fillColor,
-                    isBold: style.isBold,
-                    textTransform: style.isUppercase ? 'uppercase' : 'none',
-                    highlightColor: style.highlightColor,
-                    highlightWordIndex: wi,
-                  },
-                  subtitleTransform: { x: 0, y: style.position * 2 - 1 },
-                });
-              }
+              const validWords = words.filter((w) => w?.word?.trim());
+              validWords.forEach((w, i) => allChunkWords.push({ ...w, segBoundary: i === 0 }));
             } else {
-              // Fallback: no word timestamps — per-segment with halved duration
-              const startFrame = Math.round(seg.start * fps);
-              const rawDuration = Math.max(1, Math.round(seg.end * fps) - startFrame);
-              const duration = Math.max(1, Math.round(rawDuration / 2));
-              const endFrame = startFrame + duration;
+              fallbackSegs.push(seg);
+            }
+          }
+
+          if (allChunkWords.length > 0) {
+            const PHRASE_MAX = 6;
+            // Gaps wider than this between consecutive words force a phrase break.
+            // Whisper word timestamps are accurate to ~50ms — 250ms safely catches real pauses.
+            const PAUSE_BREAK_SECS = 0.25;
+            let phraseWords: Array<{ word: string; start: number; end: number }> = [];
+
+            const flushPhrase = () => {
+              if (!phraseWords.length) return;
+              const phraseText = phraseWords
+                .map((w) => (style.isUppercase !== false ? w.word.trim().toUpperCase() : w.word.trim()))
+                .join(' ');
+              if (!phraseText) { phraseWords = []; return; }
+              const tStart = srcToTimeline(phraseWords[0].start);
+              const tEnd = srcToTimeline(phraseWords[phraseWords.length - 1].end);
+              if (tStart === null) { phraseWords = []; return; }
+              const startFrame = Math.round(tStart * fps);
+              const endFrame = Math.max(
+                startFrame + 1,
+                tEnd !== null
+                  ? Math.round(tEnd * fps)
+                  : startFrame + Math.max(1, Math.round((phraseWords[phraseWords.length - 1].end - phraseWords[phraseWords.length - 1].start) * fps)),
+              );
+              const duration = endFrame - startFrame;
               const subtitleTracks = (store.tracks as any[]).filter((t: any) => t.type === 'subtitle');
               const targetRow = pickSubtitleRow(subtitleTracks, startFrame, endFrame);
               store.addTrack({
                 type: 'subtitle',
-                name: segText.slice(0, 40),
+                name: phraseText.slice(0, 40),
                 source: '',
-                subtitleText: segText,
+                subtitleText: phraseText,
                 subtitleType: 'karaoke',
                 duration,
                 startFrame,
@@ -627,11 +687,62 @@ async function applyOp(op: Op): Promise<void> {
                   isBold: style.isBold,
                   textTransform: style.isUppercase ? 'uppercase' : 'none',
                   highlightColor: style.highlightColor,
-                  highlightWordIndex: 0,
+                  highlightWordIndex: -1,
                 },
                 subtitleTransform: { x: 0, y: style.position * 2 - 1 },
               });
+              phraseWords = [];
+            };
+
+            for (const w of allChunkWords) {
+              if (phraseWords.length > 0) {
+                const lastWord = phraseWords[phraseWords.length - 1];
+                const isSegBoundary = w.segBoundary === true;
+                const isGap = w.start - lastWord.end > PAUSE_BREAK_SECS;
+                if (isSegBoundary || isGap) flushPhrase();
+              }
+              phraseWords.push({ word: w.word, start: w.start, end: w.end });
+              const isSentenceEnd = /[.,!?;:]$/.test(w.word);
+              if (phraseWords.length >= PHRASE_MAX || isSentenceEnd) flushPhrase();
             }
+            flushPhrase();
+          }
+
+          // Fallback for segments with no word timestamps
+          for (const seg of fallbackSegs) {
+            const segText = seg.text.trim();
+            const tStart = srcToTimeline(seg.start);
+            const tEnd = srcToTimeline(seg.end);
+            if (tStart === null) continue;
+            const startFrame = Math.round(tStart * fps);
+            const rawEndFrame = tEnd !== null ? Math.round(tEnd * fps) : startFrame + Math.max(1, Math.round((seg.end - seg.start) * fps));
+            const endFrame = Math.max(startFrame + 1, rawEndFrame);
+            const subtitleTracks = (store.tracks as any[]).filter((t: any) => t.type === 'subtitle');
+            const targetRow = pickSubtitleRow(subtitleTracks, startFrame, endFrame);
+            store.addTrack({
+              type: 'subtitle',
+              name: segText.slice(0, 40),
+              source: '',
+              subtitleText: segText,
+              subtitleType: 'karaoke',
+              duration,
+              startFrame,
+              endFrame,
+              visible: true,
+              locked: false,
+              color: '#F5A623',
+              trackRowIndex: targetRow,
+              subtitleStyle: {
+                fontFamily: style.fontFamily,
+                fontSize: style.fontSize,
+                fillColor: style.fillColor,
+                isBold: style.isBold,
+                textTransform: style.isUppercase ? 'uppercase' : 'none',
+                highlightColor: style.highlightColor,
+                highlightWordIndex: -1,
+              },
+              subtitleTransform: { x: 0, y: style.position * 2 - 1 },
+            });
           }
         }
       };
@@ -652,6 +763,25 @@ async function applyOp(op: Op): Promise<void> {
         },
       });
       useEdithEditingStore.getState().setOpLabel('Transcription complete');
+
+      // Silently run speaker diarization in the background — stores result on the media item
+      // so EDITH can reference it as context, but does NOT announce it unless asked.
+      ;(async () => {
+        try {
+          useEdithEditingStore.getState().setOpLabel('Identifying speakers…');
+          const spkResult = await (window.electronAPI as any).invoke('analyze:speakers', {
+            clipPath: filePath,
+            maxSpeakers: 5,
+          });
+          if (spkResult.success) {
+            useVideoEditorStore.getState().updateMediaLibraryItem(mediaId, {
+              speakerSegments: spkResult.segments,
+            });
+          }
+        } catch { /* silent — speaker analysis is best-effort */ }
+        useEdithEditingStore.getState().setOpLabel('');
+      })();
+
       break;
     }
 
@@ -1214,6 +1344,25 @@ async function applyOp(op: Op): Promise<void> {
         trackRowIndex: 1,
         ...computeBrollOverlayProps(store, canvasW, canvasH),
       });
+
+      // Auto-enable PiP on the main (layer-0) video track if not already set
+      const mainTrack = (store.tracks as any[]).find(
+        (t: any) => t.type === 'video' && (t.trackRowIndex ?? 0) === 0 && (t.layer ?? 0) === 0,
+      );
+      if (mainTrack && !(mainTrack as any).pipFrame?.style || (mainTrack as any).pipFrame?.style === 'none') {
+        if (mainTrack) {
+          store.updateTrack(mainTrack.id, {
+            pipFrame: {
+              style: 'circle',
+              x: 0.17,
+              y: 0.86,
+              size: 0.16,
+              borderColor: '#FFB800',
+              borderWidth: 4,
+            },
+          } as any);
+        }
+      }
       break;
     }
 
@@ -1277,6 +1426,12 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'trackedCaption': {
+      // V2: {“type”:”trackedCaption”,”text”:”GOTCHU!!!”,”from”:3.0,”to”:6.0}
+      await applyOp({ type: 'addTrackedCaption', text: (op as any).text, startSeconds: (op as any).from, endSeconds: (op as any).to, style: (op as any).style } as any);
+      break;
+    }
+
     case 'deleteCaption': {
       // V2: {“type”:”deleteCaption”,”atSeconds”:45.0}
       // Removes ALL subtitle clips active at the given timestamp (clears stacked duplicates too)
@@ -1296,6 +1451,13 @@ async function applyOp(op: Op): Promise<void> {
         .filter((t: any) => t.type === 'subtitle')
         .map((t: any) => t.id);
       for (const id of allSubtitleIds) store.removeTrack(id);
+      break;
+    }
+
+    case 'buildTrackedCaptions': {
+      // V2: {“type”:”buildTrackedCaptions”,”src”:”/path/to/footage.mp4”}
+      // Alias for buildCaptions with tracked:true — one head-tracked phrase per subtitle track
+      await applyOp({ ...(op as any), type: 'buildCaptions', tracked: true });
       break;
     }
 
@@ -1339,16 +1501,18 @@ async function applyOp(op: Op): Promise<void> {
       };
 
       // Step 1: Flatten all words from every Whisper segment into a single list.
-      // If a segment has word-level timestamps, use them directly.
-      // Otherwise divide the segment duration evenly across its words.
-      interface _WordEntry { word: string; start: number; end: number; }
+      // segBoundary = true on the first word of each segment — Whisper always places
+      // a segment boundary at a real speech pause, so we use it as a hard phrase break
+      // even when word-level end times butt up against next word's start (no detectable gap).
+      interface _WordEntry { word: string; start: number; end: number; segBoundary?: boolean; }
       const allWords: _WordEntry[] = [];
       for (const seg of transcriptSegs) {
         const segWords: any[] = seg.words ?? [];
         if (segWords.length > 0) {
-          for (const w of segWords) {
+          for (let wi = 0; wi < segWords.length; wi++) {
+            const w = segWords[wi];
             const wText = (w.word ?? '').trim();
-            if (wText) allWords.push({ word: wText, start: w.start, end: w.end });
+            if (wText) allWords.push({ word: wText, start: w.start, end: w.end, segBoundary: wi === 0 });
           }
         } else {
           const wordList = (seg.text ?? '').trim().split(/\s+/).filter(Boolean);
@@ -1359,17 +1523,31 @@ async function applyOp(op: Op): Promise<void> {
               word: wordList[wi],
               start: seg.start + wi * wordDur,
               end: seg.start + (wi + 1) * wordDur,
+              segBoundary: wi === 0,
             });
           }
         }
       }
 
-      // Step 2: Group words into phrases of up to 4 words.
-      // Break earlier on sentence-ending punctuation so captions align with natural speech rhythm.
-      const PHRASE_MAX = 4;
+      // Step 2: Group words into phrases of up to 6 words.
+      // Force a phrase break at:
+      //   1. Whisper segment boundaries (always a real speech pause)
+      //   2. Inter-word gaps > 250ms (intra-segment pauses)
+      //   3. Sentence-ending punctuation
+      const PHRASE_MAX = 6;
+      const PAUSE_BREAK_SECS = 0.25;
       const wordPhrases: _WordEntry[][] = [];
       let currentPhrase: _WordEntry[] = [];
       for (const w of allWords) {
+        if (currentPhrase.length > 0) {
+          const prev = currentPhrase[currentPhrase.length - 1];
+          const isSegBoundary = w.segBoundary === true;
+          const isGap = w.start - prev.end > PAUSE_BREAK_SECS;
+          if (isSegBoundary || isGap) {
+            wordPhrases.push(currentPhrase);
+            currentPhrase = [];
+          }
+        }
         currentPhrase.push(w);
         const isSentenceEnd = /[.,!?;:]$/.test(w.word);
         if (currentPhrase.length >= PHRASE_MAX || isSentenceEnd) {
@@ -1378,6 +1556,59 @@ async function applyOp(op: Op): Promise<void> {
         }
       }
       if (currentPhrase.length) wordPhrases.push(currentPhrase);
+
+      // Tracked mode — one subtitle track per phrase, anchored to pose skeleton
+      if ((op as any).tracked) {
+        const videoTrackWithPose =
+          (store.tracks as any[]).find(
+            (t: any) => t.type === 'video' && (t as any).poseLandmarks?.length > 0,
+          );
+
+        const existingSubsTracked = (store.tracks as any[]).filter((t: any) => t.type === 'subtitle');
+        for (const sub of existingSubsTracked) store.removeTrack(sub.id);
+
+        for (const phrase of wordPhrases) {
+          const phraseText = phrase.map((w) => w.word.toUpperCase()).join(' ');
+          const tStart = srcToTimeline(phrase[0].start);
+          const tEnd = srcToTimeline(phrase[phrase.length - 1].end);
+          if (tStart === null) continue;
+          const startFrame = Math.round(tStart * fps);
+          const endFrame = Math.max(
+            startFrame + 1,
+            tEnd !== null ? Math.round(tEnd * fps) : startFrame + 30,
+          );
+          const duration = endFrame - startFrame;
+          const subtitleTracksNow = (store.tracks as any[]).filter((t: any) => t.type === 'subtitle');
+          const targetRow = pickSubtitleRow(subtitleTracksNow, startFrame, endFrame);
+          await store.addTrack({
+            type: 'subtitle',
+            name: `[tracked] ${phraseText.slice(0, 35)}`,
+            source: '',
+            subtitleText: phraseText,
+            subtitleType: 'karaoke',
+            subtitleTracked: true,
+            trackedLinkedVideoTrackId: videoTrackWithPose?.id,
+            duration,
+            startFrame,
+            endFrame,
+            visible: true,
+            locked: false,
+            color: '#E040FB',
+            trackRowIndex: targetRow,
+            subtitleStyle: {
+              fontFamily: 'Bangers',
+              fontSize: 52,
+              fillColor: '#FFFFFF',
+              isBold: false,
+              textTransform: 'uppercase',
+              highlightColor: '#FFD700',
+              highlightWordIndex: -1,
+            },
+            subtitleTransform: { x: 0, y: 0 },
+          } as any);
+        }
+        break;
+      }
 
       // Step 3: Build subtitle segments — one per word, but carrying the FULL phrase text.
       // highlightWordIndex points to the active word. The renderer (renderCaptionWords) splits
@@ -1610,6 +1841,34 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'matchBrollPace': {
+      // V2: {"type":"matchBrollPace","clipId":"abc123","sourceMarkers":[0,2.1,5.4,14.2],"targetMarkers":[0,4.2,9.8,24.0]}
+      const paceClip = store.tracks.find((t: any) => t.id === (op as any).clipId);
+      if (!paceClip) throw new Error(`matchBrollPace: clip ${(op as any).clipId} not found`);
+      if (!paceClip.source) throw new Error(`matchBrollPace: clip has no source file`);
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Matching B-roll pace to speech…' } }));
+      const paceResult = await (window.electronAPI as any).invoke('media:matchBrollPace', {
+        filePath: paceClip.source,
+        sourceMarkers: (op as any).sourceMarkers,
+        targetMarkers: (op as any).targetMarkers,
+      });
+      if (!paceResult.success || !paceResult.filePath) throw new Error(paceResult.error ?? 'matchBrollPace failed');
+      let pacePreviewUrl = paceResult.filePath;
+      try {
+        const pr = await window.electronAPI.createPreviewUrl(paceResult.filePath);
+        if (pr && typeof pr === 'object' && (pr as any).url) pacePreviewUrl = (pr as any).url;
+        else if (typeof pr === 'string') pacePreviewUrl = pr;
+      } catch {}
+      const fps: number = (store as any).fps ?? 30;
+      const paceUpdates: Record<string, unknown> = { source: paceResult.filePath, previewUrl: pacePreviewUrl };
+      if (paceResult.duration && paceResult.duration > 0) {
+        paceUpdates.endFrame = paceClip.startFrame + Math.round(paceResult.duration * fps);
+      }
+      store.updateTrack((op as any).clipId, paceUpdates);
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'B-roll pace matched' } }));
+      break;
+    }
+
     case 'zoomToFace': {
       // {"type":"zoomToFace","clipId":"abc123","startSeconds":2.0,"endSeconds":6.0,"zoomLevel":1.5}
       const zoomClip = store.tracks.find((t: any) => t.id === op.clipId);
@@ -1712,6 +1971,7 @@ async function applyOp(op: Op): Promise<void> {
         .map((e: any) => e.type)
         .reduce((acc: Record<string, number>, t: string) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {});
       const summaryStr = Object.entries(eventSummary).map(([k, v]) => `${v} ${k}`).join(', ') || 'no events';
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `Motion analysis: ${summaryStr}` } }));
 
       // autoIsolate: cut the clip down to only the detected event windows
       if ((op as any).autoIsolate && (motionResult.events ?? []).length > 0) {
@@ -1719,20 +1979,15 @@ async function applyOp(op: Op): Promise<void> {
         const sourceDuration: number = motionResult.totalFrames / analysisFps;
         const windowSec: number = (op as any).windowSeconds ?? 1.5;
 
-        // Build one window around each frame-based event
-        const rawWindows = (motionResult.events as any[])
-          .filter((e) => e.frame !== undefined)
-          .map((e) => ({
-            inSec: Math.max(0, e.frame / analysisFps - windowSec),
-            outSec: Math.min(sourceDuration, e.frame / analysisFps + windowSec),
-          }));
-
-        // Also include startFrame/endFrame events (jumps, high_energy)
+        // For isolation, only use sustained high_energy windows.
+        // Individual punch/jump events are too noisy — a fast hand gesture
+        // during an interview registers as a punch and pulls in interview content.
+        const rawWindows: { inSec: number; outSec: number }[] = [];
         for (const e of (motionResult.events as any[])) {
-          if (e.startFrame !== undefined && e.endFrame !== undefined) {
+          if (e.type === 'high_energy' && e.startFrame !== undefined && e.endFrame !== undefined) {
             rawWindows.push({
-              inSec: Math.max(0, e.startFrame / analysisFps - 0.5),
-              outSec: Math.min(sourceDuration, e.endFrame / analysisFps + 0.5),
+              inSec: Math.max(0, e.startFrame / analysisFps - windowSec),
+              outSec: Math.min(sourceDuration, e.endFrame / analysisFps + windowSec),
             });
           }
         }
@@ -1789,7 +2044,6 @@ async function applyOp(op: Op): Promise<void> {
               visible: true,
               locked: false,
               color: motionClip.color ?? '#4A90D9',
-              poseLandmarks: capturedLandmarks,
             } as any);
             timelineCursor += segFrames;
           }
@@ -1890,6 +2144,51 @@ async function applyOp(op: Op): Promise<void> {
 
       window.dispatchEvent(new CustomEvent('edith:scanVideoResult', {
         detail: { description: desc, foundAtSec: foundSec, frameBase64, allMatchesSec, clipName: (op as any).clipName },
+      }));
+      break;
+    }
+
+    case 'analyzeSpeakers': {
+      // V2: {"type":"analyzeSpeakers","clipName":"footage.mp4","numSpeakers":2}
+      const spkClip = findClipByName(store, (op as any).clipName) ?? findMainVideoTrack(store);
+      if (!spkClip?.source) throw new Error('analyzeSpeakers: clip not found');
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Identifying speakers…' } }));
+      const spkResult = await (window.electronAPI as any).invoke('analyze:speakers', {
+        clipPath: spkClip.source,
+        numSpeakers: (op as any).numSpeakers ?? null,
+        maxSpeakers: (op as any).maxSpeakers ?? 5,
+      });
+      if (!spkResult.success) throw new Error(spkResult.error ?? 'Speaker analysis failed');
+      // Store on the media library item so the transcript context can reference it
+      const spkMedia = (store as any).mediaLibrary?.find(
+        (m: any) => m.source === spkClip.source || m.tempFilePath === spkClip.source,
+      );
+      if (spkMedia) {
+        store.updateMediaLibraryItem(spkMedia.id, { speakerSegments: spkResult.segments });
+      }
+      const speakerCount: number = spkResult.speakerCount ?? new Set(spkResult.segments.map((s: any) => s.speaker)).size;
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `${speakerCount} speaker${speakerCount !== 1 ? 's' : ''} identified` },
+      }));
+      // Result is stored on the media item — EDITH sees it as silent context, not an announcement.
+      // FridayPanel injects speakerSegments into ## Available Project Media on every turn.
+      break;
+    }
+
+    case 'detectTransients': {
+      // V2: {“type”:”detectTransients”,”clipName”:”footage.mp4”,”sensitivity”:3,”minGapSec”:0.1}
+      const targetClip = findClipByName(store, (op as any).clipName) ?? findMainVideoTrack(store);
+      if (!targetClip?.source) throw new Error(`detectTransients: clip not found`);
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Detecting audio transients…' } }));
+      const dtResult = await (window.electronAPI as any).invoke('detect:transients', {
+        clipPath: targetClip.source,
+        sensitivity: (op as any).sensitivity ?? 3,
+        minGapSec: (op as any).minGapSec ?? 0.1,
+        maxTransients: (op as any).maxTransients ?? 200,
+      });
+      if (!dtResult.success) throw new Error(dtResult.error ?? 'Transient detection failed');
+      window.dispatchEvent(new CustomEvent('edith:transientsResult', {
+        detail: { transients: dtResult.transients as number[], count: dtResult.count as number },
       }));
       break;
     }

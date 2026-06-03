@@ -328,6 +328,93 @@ export const FrameDrivenCompositor = forwardRef<
       [baseVideoWidth, baseVideoHeight],
     );
 
+    // Draw the main video as a PiP (Picture-in-Picture) with shape mask and gold border
+    const drawPipFrame = useCallback(
+      (
+        ctx: CanvasRenderingContext2D,
+        managed: ManagedVideo,
+        request: FrameRequest,
+        canvasW: number,
+        canvasH: number,
+      ): boolean => {
+        const video = managed.element;
+        if (video.readyState < 2 && !managed.lastDrawnFrame) return false;
+
+        const pip = (request.track as any).pipFrame as {
+          style: 'circle' | 'rounded-square' | 'square';
+          x: number; y: number; size: number;
+          borderColor: string; borderWidth: number;
+        };
+
+        const diameter = pip.size * canvasW;
+        const radius = diameter / 2;
+        const cx = pip.x * canvasW;
+        const cy = pip.y * canvasH;
+        const bw = Math.max(2, pip.borderWidth * (canvasW / 1080));
+
+        ctx.save();
+
+        // Clip path for the mask shape
+        ctx.beginPath();
+        if (pip.style === 'circle') {
+          ctx.arc(cx, cy, radius - bw / 2, 0, Math.PI * 2);
+        } else if (pip.style === 'rounded-square') {
+          const half = radius * 0.92;
+          const rx = cx - half; const ry = cy - half;
+          const rr = half * 0.3; // corner radius
+          ctx.roundRect(rx, ry, half * 2, half * 2, rr);
+        } else {
+          const half = radius * 0.92;
+          ctx.rect(cx - half, cy - half, half * 2, half * 2);
+        }
+        ctx.clip();
+
+        // Draw video inside the clipped region using cover-scaling (preserve aspect ratio)
+        const drawSize = diameter - bw;
+        const src = video.readyState >= 2 ? video : managed.lastDrawnFrame;
+        if (src) {
+          const srcW = (src as HTMLVideoElement).videoWidth || (src as ImageBitmap).width || drawSize;
+          const srcH = (src as HTMLVideoElement).videoHeight || (src as ImageBitmap).height || drawSize;
+          const srcAspect = srcW / srcH;
+          // Cover: scale so the shorter side fills the circle, longer side overflows (gets clipped)
+          let coverW: number, coverH: number;
+          if (srcAspect >= 1) {
+            // Wider than tall (16:9 etc) — match height to circle, width overflows
+            coverH = drawSize;
+            coverW = drawSize * srcAspect;
+          } else {
+            // Taller than wide — match width to circle, height overflows
+            coverW = drawSize;
+            coverH = drawSize / srcAspect;
+          }
+          ctx.drawImage(src as CanvasImageSource, cx - coverW / 2, cy - coverH / 2, coverW, coverH);
+        }
+        ctx.restore();
+
+        // Draw border stroke on top (outside the clip)
+        ctx.save();
+        ctx.beginPath();
+        if (pip.style === 'circle') {
+          ctx.arc(cx, cy, radius - bw / 2, 0, Math.PI * 2);
+        } else if (pip.style === 'rounded-square') {
+          const half = radius * 0.92;
+          const rr = half * 0.3;
+          ctx.roundRect(cx - half, cy - half, half * 2, half * 2, rr);
+        } else {
+          const half = radius * 0.92;
+          ctx.rect(cx - half, cy - half, half * 2, half * 2);
+        }
+        ctx.strokeStyle = pip.borderColor || '#FFB800';
+        ctx.lineWidth = bw;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.restore();
+
+        return true;
+      },
+      [],
+    );
+
     // Main composite function
     const compositeFrame = useCallback(
       (frameNumber: number, forceSync = false): boolean => {
@@ -390,20 +477,47 @@ export const FrameDrivenCompositor = forwardRef<
           }
         });
 
+        // Detect PiP: main track (layer 0) has pipFrame set, and there's an active overlay
+        const overlayRequests = requests.filter(r => ((r.track as any).layer ?? 0) > 0 || ((r.track as any).trackRowIndex ?? 0) > 0);
+        const mainRequests = requests.filter(r => ((r.track as any).layer ?? 0) === 0 && ((r.track as any).trackRowIndex ?? 0) === 0);
+        const pipMainRequest = mainRequests.find(r => {
+          const pf = (r.track as any).pipFrame;
+          return pf && pf.style && pf.style !== 'none';
+        });
+        const pipActive = !!(pipMainRequest && overlayRequests.length > 0);
+
+        // When PiP is active: draw overlays first (they become the background), then main video as PiP on top
+        const drawOrder = pipActive
+          ? [...overlayRequests, ...mainRequests]
+          : requests;
+
         // Clear and composite
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         let renderedAny = false;
-        for (const request of requests) {
+        for (const request of drawOrder) {
           const managed = videosRef.current.get(request.clipId);
           if (!managed) continue;
 
-          if (
-            drawVideoFrame(ctx, managed, request, canvas.width, canvas.height)
-          ) {
-            renderedAny = true;
+          const isPip = pipActive && request === pipMainRequest;
+          let drawn: boolean;
+          if (isPip) {
+            // Apply window drag override for zero-latency dragging (bypasses React re-render)
+            const dragOverride = (window as any).__pipDragOverride;
+            const pipRequest = (dragOverride && dragOverride.trackId === (request.track as any).id)
+              ? { ...request, track: { ...request.track, pipFrame: {
+                  ...(request.track as any).pipFrame,
+                  ...(dragOverride.x !== undefined ? { x: dragOverride.x } : {}),
+                  ...(dragOverride.y !== undefined ? { y: dragOverride.y } : {}),
+                  ...(dragOverride.size !== undefined ? { size: dragOverride.size } : {}),
+                } } }
+              : request;
+            drawn = drawPipFrame(ctx, managed, pipRequest as typeof request, canvas.width, canvas.height);
+          } else {
+            drawn = drawVideoFrame(ctx, managed, request, canvas.width, canvas.height);
           }
+          if (drawn) renderedAny = true;
         }
 
         // Global fallback
@@ -470,6 +584,27 @@ export const FrameDrivenCompositor = forwardRef<
 
       return () => clearTimeout(timeout);
     }, []);
+
+    // Force re-render when PiP style/position changes while paused
+    useEffect(() => {
+      const handler = () => {
+        compositeFrameRef.current(currentFrameRef.current, true);
+      };
+      window.addEventListener('dividr:forceRender', handler);
+      return () => window.removeEventListener('dividr:forceRender', handler);
+    }, []);
+
+    // Re-composite when tracks change (catches pipFrame style/size/position changes).
+    // No isPlaying guard — during playback the rAF loop overrides immediately anyway.
+    useEffect(() => {
+      // Two rAFs: first lets React flush, second lets compositeFrameRef update
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          compositeFrameRef.current(currentFrameRef.current, true);
+        });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tracks]);
 
     // Handle play/pause
     useEffect(() => {

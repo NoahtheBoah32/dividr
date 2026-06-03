@@ -394,7 +394,7 @@ const verifyPythonDependencies = async (): Promise<void> => {
 
   for (const dep of dependencies) {
     try {
-      const checkCmd = `${pythonPath} ${pythonArgs.join(' ')} -c "import ${dep}"`;
+      const checkCmd = `"${pythonPath}" ${pythonArgs.join(' ')} -c "import ${dep}"`;
       execSync(checkCmd, {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -465,6 +465,17 @@ const runMediaToolsCommand = async <T>(
   console.log('   Mode:', isStandalone ? 'Standalone' : 'Python Script');
   console.log('   Command:', [executable, ...fullArgs].join(' '));
 
+  // Kill any previous Python process before spawning a new one.
+  // Without this, a long analyzeMotion run + transcription = two Python processes
+  // with their own models loaded simultaneously, causing OOM on large-v3.
+  if (currentProcess && !currentProcess.killed) {
+    console.log(`🧹 Killing previous media-tools process (pid ${currentProcess.pid}) before starting ${command}`);
+    currentProcess.kill('SIGKILL');
+    currentProcess = null;
+    // Small pause to ensure OS reclaims memory before the new process loads its model
+    await new Promise(r => setTimeout(r, 800));
+  }
+
   return new Promise((resolve, reject) => {
     const proc = spawn(executable, fullArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -472,6 +483,10 @@ const runMediaToolsCommand = async <T>(
       env: {
         ...process.env,
         PYTHONUNBUFFERED: '1',
+        // Prevent Intel MKL from spawning per-thread memory pools — the main cause of
+        // mkl_malloc OOM failures even when total free RAM appears sufficient.
+        MKL_THREADING_LAYER: 'sequential',
+        OMP_NUM_THREADS: '2',
       },
     });
 
@@ -796,7 +811,7 @@ export const checkCapability = async (
   const dep = depMap[capability];
 
   try {
-    const checkCmd = `${pythonPath} ${pythonArgs.join(' ')} -c "import ${dep}"`;
+    const checkCmd = `"${pythonPath}" ${pythonArgs.join(' ')} -c "import ${dep}"`;
     execSync(checkCmd, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],

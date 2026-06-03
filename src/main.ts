@@ -4696,9 +4696,35 @@ async function getRunInBackgroundSetting(): Promise<boolean> {
 const ytdlpProcesses = new Map<string, ReturnType<typeof spawn>>();
 
 function getYtdlpPath(): string {
+  // 1. Bundled alongside the app
   const bundled = path.join(app.getAppPath(), 'yt-dlp.exe');
   if (fs.existsSync(bundled)) return bundled;
-  return 'yt-dlp';
+
+  // 2. Known install locations on Windows
+  const winCandidates = [
+    path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages',
+      'yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe', 'yt-dlp.exe'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'Scripts', 'yt-dlp.exe'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'Scripts', 'yt-dlp.exe'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python310', 'Scripts', 'yt-dlp.exe'),
+    'C:\\ProgramData\\chocolatey\\bin\\yt-dlp.exe',
+    path.join(os.homedir(), 'scoop', 'shims', 'yt-dlp.exe'),
+  ];
+  for (const candidate of winCandidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  // 3. Resolve via `where` (Windows) or `which` (Unix) so spawn gets a full path
+  try {
+    const whereCmd = process.platform === 'win32' ? 'where' : 'which';
+    const result = spawnSync(whereCmd, ['yt-dlp'], { encoding: 'utf8' });
+    if (result.status === 0 && result.stdout) {
+      const found = result.stdout.trim().split('\n')[0].trim();
+      if (found && fs.existsSync(found)) return found;
+    }
+  } catch {}
+
+  return 'yt-dlp'; // last resort — may still fail if not in Electron's PATH
 }
 
 function inferFileType(filePath: string): 'video' | 'audio' | 'image' {
@@ -4782,7 +4808,7 @@ async function verifyClipContent(
     }
     content.push({
       type: 'text',
-      text: `These ${validFrames.length} frames are from a downloaded clip.\n\nRequirement: "${verify}"\n\nFind the BEST frame that satisfies ALL of:\n1. Shows the required content\n2. No visible people or faces\n3. No watermarks, logos, or unrelated text overlays\n\nReply ONLY with JSON:\n{"best": <frame 1-${validFrames.length} or null if none qualify>, "passed": true or false, "reason": "one sentence"}`,
+      text: `These ${validFrames.length} frames are sampled evenly from a downloaded YouTube video.\n\nRequirement: "${verify}"\n\nYou must assess whether THIS VIDEO is genuinely about the required topic — not just whether one frame looks vaguely similar.\n\nREJECT (passed: false) if ANY of these are true:\n- Fewer than half the frames show content that matches the requirement\n- The video appears to be about a completely different topic (e.g. a branding/logo video, wrong subject, unrelated documentary)\n- Any frame shows a title card, channel logo, creator name, or intro screen with visible text — this signals the wrong video was downloaded\n- The frames show only abstract visuals that superficially resemble the topic but don't actually show it\n\nPASS (passed: true) only if:\n- The MAJORITY of frames clearly show the required content\n- The video is genuinely about the described topic, not just one frame that happens to look similar\n\nReply ONLY with JSON:\n{"passed": true or false, "reason": "one sentence explaining the decision", "bestFrameIndex": <1-${validFrames.length}>}`,
     });
 
     sendMsg('↳ Verifying clip content…');
@@ -4801,7 +4827,9 @@ async function verifyClipContent(
     if (!m) return { passed: true, reason: 'verify skipped (parse error)', frameBase64: validFrames[0]?.b64 ?? null };
 
     const result = JSON.parse(m[0]);
-    const bestIdx = result.best != null ? Math.max(0, Math.min(result.best - 1, validFrames.length - 1)) : 0;
+    const bestIdx = result.bestFrameIndex != null
+      ? Math.max(0, Math.min(result.bestFrameIndex - 1, validFrames.length - 1))
+      : (result.best != null ? Math.max(0, Math.min(result.best - 1, validFrames.length - 1)) : 0);
     return {
       passed: !!result.passed,
       reason: result.reason ?? '',
@@ -4815,6 +4843,7 @@ async function verifyClipContent(
 async function verifyBrollQuality(
   filePath: string,
   anthropicApiKey: string,
+  verify?: string,
 ): Promise<{ passed: boolean; reason: string }> {
   const os2 = await import('os');
   const tmpFramePaths: string[] = [];
@@ -4853,9 +4882,12 @@ async function verifyBrollQuality(
       content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
       content.push({ type: 'text', text: `Frame ${f.index} at ${f.ts.toFixed(1)}s:` });
     }
+    const contentRequirement = verify
+      ? `\n\nCONTENT REQUIREMENT — the clip MUST visually show: "${verify}"\nREJECT if the frames do not match this description, even if the clip is high quality.`
+      : '';
     content.push({
       type: 'text',
-      text: `These are ${frames.length} frames sampled evenly across a downloaded B-roll clip. Reply ONLY with JSON: {"passed": true/false, "reason": "one short sentence"}\n\nREJECT if ANY of these are true:\n- STILL IMAGE: all frames look identical or nearly identical — no motion, no scene change, same static composition throughout. This means the clip is just a photo exported as video. REJECT IT.\n- Visible text, captions, watermarks, or branded logos\n- Person looking directly at the camera (interview or talking-head style)\n- Visibly low quality, heavily compressed, or blurry footage\n\nALLOW if:\n- Frames show clear visual variation (lighting changes, motion blur, subject movement, camera movement) indicating real video footage\n- People appear but are doing a task (farming, typing, cooking, etc.) and NOT looking at camera\n- Cinematic footage with natural motion\n\nRespond ONLY with the JSON object, no markdown.`,
+      text: `These are ${frames.length} frames sampled evenly across a downloaded B-roll clip. Reply ONLY with JSON: {"passed": true/false, "reason": "one short sentence"}${contentRequirement}\n\nALSO REJECT if ANY of these quality issues are present:\n- STILL IMAGE: all frames look identical or nearly identical — no motion, no scene change. This is a photo exported as video. REJECT IT.\n- Visible text, captions, watermarks, or branded logos\n- Person looking directly at the camera (interview or talking-head style)\n- Visibly low quality, heavily compressed, or blurry footage\n\nALLOW if:\n- Frames show clear visual variation (motion, lighting changes) indicating real video\n- Content visually matches the requirement above\n- People appear but are doing a task and NOT looking at camera\n\nRespond ONLY with the JSON object, no markdown.`,
     });
 
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -4908,6 +4940,56 @@ async function getVideoDuration(filePath: string, ffmpegBin: string): Promise<nu
       p.on('error', () => resolve(0));
     }
   });
+}
+
+// Scan the first 15s of a video and find where the title card/intro ends.
+// Returns 0 if no intro detected (content starts immediately).
+async function detectIntroEndSec(
+  filePath: string,
+  ffmpegBin: string,
+  anthropicApiKey: string,
+): Promise<number> {
+  const timestamps = [1, 3, 5, 8, 12, 17, 22, 28];
+  const frames: { ts: number; b64: string }[] = [];
+
+  for (const ts of timestamps) {
+    const tmpPath = path.join(os.tmpdir(), `intro_${Date.now()}_${ts}.jpg`);
+    await new Promise<void>((resolve) => {
+      const p = spawn(ffmpegBin, ['-ss', String(ts), '-i', filePath, '-frames:v', '1', '-q:v', '4', '-y', tmpPath], { shell: false });
+      p.on('close', () => resolve());
+      p.on('error', () => resolve());
+    });
+    if (fs.existsSync(tmpPath)) {
+      try { frames.push({ ts, b64: fs.readFileSync(tmpPath).toString('base64') }); fs.unlinkSync(tmpPath); } catch {}
+    }
+  }
+
+  if (!frames.length) return 0;
+
+  const content: any[] = [];
+  for (const f of frames) {
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
+    content.push({ type: 'text', text: `Frame at ${f.ts}s:` });
+  }
+  content.push({
+    type: 'text',
+    text: `These frames are from the opening of a YouTube video. Find the LAST second that still shows any title card, intro screen, or creator branding — even if it is fading out. Title cards include: film/video title text, creator name, channel logo, version numbers, subtitle text, or any graphic/animated intro screen. A frame still counts as "title card" even if text is partially transparent or fading.\n\nIf the video has NO title card, reply: {"introEndSec":0}\nOtherwise reply: {"introEndSec":<last second where title/branding is still visible, then add 3 seconds as a safety buffer>}\n\nReply ONLY with JSON, no markdown.`,
+  });
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': anthropicApiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 60, messages: [{ role: 'user', content }] }),
+    });
+    if (!resp.ok) return 0;
+    const data = await resp.json() as any;
+    const raw: string = data.content?.[0]?.text?.trim() ?? '';
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return 0;
+    const result = JSON.parse(m[0]);
+    return Math.max(0, Number(result.introEndSec ?? 0));
+  } catch { return 0; }
 }
 
 async function findBestYouTubeSegment(
@@ -4981,8 +5063,13 @@ async function findBestYouTubeSegment(
 
     sendMsg(`↳ Best segment at ${bestFrame.ts}s — ${result.reason ?? ''}`);
 
-    // Trim a 20s window centered around the best frame's timestamp
-    const trimStart = Math.max(0, bestFrame.ts - 10);
+    // Detect intro/title card and use its end as the floor for trimStart
+    const introEndSec = await detectIntroEndSec(filePath, ffmpegBin, anthropicApiKey);
+    if (introEndSec > 0) sendMsg(`↳ Skipping ${introEndSec}s intro/title card`);
+
+    // Trim a 20s window centered around the best frame, never starting before intro ends.
+    // introEndSec already includes a +3s buffer from the prompt, so no extra margin needed.
+    let trimStart = Math.max(introEndSec, bestFrame.ts - 10);
     const trimEnd = Math.min(durationSeconds, trimStart + 20);
     const ext = path.extname(filePath);
     const trimmedPath = filePath.replace(ext, `_segment${ext}`);
@@ -5074,7 +5161,7 @@ ipcMain.handle(
       if (!hits?.length) return { success: false, error: `No Pixabay results for "${query}"` };
 
       // Score hits by views+downloads; pre-filter sub-720p by metadata, prefer 4-45s clips
-      const scored = hits
+      const rawScored = hits
         .filter((h: any) => {
           const bestRes = h.videos?.large ?? h.videos?.medium ?? h.videos?.small;
           const minDim = Math.min(bestRes?.width ?? 0, bestRes?.height ?? 0);
@@ -5087,12 +5174,18 @@ ipcMain.handle(
         }))
         .filter((s: any) => !!s.url)
         .sort((a: any, b: any) => b.score - a.score);
-      if (!scored.length) return { success: false, error: `No Pixabay results at 720p+ for "${query}"` };
+      if (!rawScored.length) return { success: false, error: `No Pixabay results at 720p+ for "${query}"` };
+
+      // Shuffle within tiers to avoid always returning the same top video for the same query.
+      // Tier 1: top 3 by score (shuffle among them). Tier 2: remaining (shuffle among them).
+      const tier1 = rawScored.slice(0, 3).sort(() => Math.random() - 0.5);
+      const tier2 = rawScored.slice(3).sort(() => Math.random() - 0.5);
+      const scored = [...tier1, ...tier2];
 
       const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
       let chosenFile: string | null = null;
       let chosenHit: any = null;
-      const maxAttempts = Math.min(scored.length, 3);
+      const maxAttempts = Math.min(scored.length, 5); // try up to 5 instead of 3
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const candidate = scored[attempt];
@@ -5118,7 +5211,7 @@ ipcMain.handle(
         fs.writeFileSync(cFilePath, Buffer.from(await cRes.arrayBuffer()));
 
         if (anthropicApiKey && ffmpegPath) {
-          const check = await verifyBrollQuality(cFilePath, anthropicApiKey);
+          const check = await verifyBrollQuality(cFilePath, anthropicApiKey, verify);
           event.sender.send('edith:brollCheck', {
             label,
             duration: cHit.duration,
@@ -5296,15 +5389,16 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
       }
     }
 
+    // Use %(id)s instead of %(title)s — title can contain colons/quotes/slashes
+    // that Windows mangles into unpredictable filenames the Electron player can't load.
     const args: string[] = [
       url,
-      '--output', path.join(dlDir, '%(title)s.%(ext)s'),
+      '--output', path.join(dlDir, '%(id)s.%(ext)s'),
       '--no-warnings',
       '--newline',
       '--print', 'after_move:filepath',
-      '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+      '--format', 'bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
       '--merge-output-format', 'mp4',
-      '--remote-components', 'ejs:github',
       ...cookieArgs,
     ];
 
@@ -5775,6 +5869,126 @@ ipcMain.handle(
       return { success: true, filePath: outputFile, duration };
     } catch (err: any) {
       console.error('media:setSpeed error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:matchBrollPace — piecewise speed-warp a clip so visual markers align with speech markers
+// sourceMarkers: timestamps in the source clip where each key visual moment occurs
+// targetMarkers: desired timestamps in the output clip (matching when Alex says each zoom level)
+// Both arrays must be equal length. Segments outside the first/last marker play at normal speed.
+ipcMain.handle(
+  'media:matchBrollPace',
+  async (
+    _event,
+    { filePath, sourceMarkers, targetMarkers }: {
+      filePath: string;
+      sourceMarkers: number[];
+      targetMarkers: number[];
+    },
+  ): Promise<{ success: boolean; filePath?: string; duration?: number; error?: string }> => {
+    if (!ffmpegPath || !ffprobePath) return { success: false, error: 'FFmpeg not available' };
+    if (!fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    if (sourceMarkers.length < 2) return { success: false, error: 'Need at least 2 source markers' };
+    if (sourceMarkers.length !== targetMarkers.length) return { success: false, error: 'sourceMarkers and targetMarkers must be the same length' };
+
+    const origDuration = await new Promise<number>((resolve) => {
+      let out = '';
+      const p = spawn(ffprobePath!.path, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath]);
+      p.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+      p.on('close', () => resolve(parseFloat(out.trim()) || 0));
+      p.on('error', () => resolve(0));
+    });
+
+    const runSeg = (args: string[]) => new Promise<void>((resolve, reject) => {
+      const p = spawn(ffmpegPath!, args);
+      let err = '';
+      p.stderr?.on('data', (d: Buffer) => { err += d.toString(); });
+      p.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.slice(-400)}`)));
+      p.on('error', reject);
+    });
+
+    const commonEnc = ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100'];
+
+    function buildAtempo(s: number): string {
+      const filters: string[] = [];
+      if (s <= 0.5) {
+        let rem = s;
+        while (rem < 0.5) { filters.push('atempo=0.5'); rem *= 2; }
+        if (Math.abs(rem - 1) > 0.001) filters.push(`atempo=${rem.toFixed(4)}`);
+      } else if (s >= 2.0) {
+        let rem = s;
+        while (rem > 2.0) { filters.push('atempo=2.0'); rem /= 2; }
+        if (Math.abs(rem - 1) > 0.001) filters.push(`atempo=${rem.toFixed(4)}`);
+      } else {
+        filters.push(`atempo=${s.toFixed(4)}`);
+      }
+      return filters.length ? filters.join(',') : 'atempo=1.0';
+    }
+
+    try {
+      const tmpDir = path.dirname(filePath);
+      const ts = Date.now();
+      const segFiles: string[] = [];
+      let totalDuration = 0;
+
+      // Build segment list: pre-marker segment + each inter-marker segment + post-marker segment
+      type Seg = { srcStart: number; srcEnd: number; speed: number };
+      const segments: Seg[] = [];
+
+      // Before first marker: normal speed
+      if (sourceMarkers[0] > 0.05) {
+        segments.push({ srcStart: 0, srcEnd: sourceMarkers[0], speed: 1.0 });
+      }
+      // Piecewise segments between markers
+      for (let i = 0; i < sourceMarkers.length - 1; i++) {
+        const srcDur = sourceMarkers[i + 1] - sourceMarkers[i];
+        const tgtDur = targetMarkers[i + 1] - targetMarkers[i];
+        const speed = tgtDur > 0.01 ? Math.max(0.1, Math.min(16, srcDur / tgtDur)) : 1.0;
+        segments.push({ srcStart: sourceMarkers[i], srcEnd: sourceMarkers[i + 1], speed });
+      }
+      // After last marker: normal speed
+      const lastSrc = sourceMarkers[sourceMarkers.length - 1];
+      if (origDuration - lastSrc > 0.05) {
+        segments.push({ srcStart: lastSrc, srcEnd: origDuration, speed: 1.0 });
+      }
+
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const segFile = path.join(tmpDir, `mbp_seg_${ts}_${i}.mp4`);
+        const pts = (1 / seg.speed).toFixed(6);
+        const args = [
+          '-y', '-ss', String(seg.srcStart), '-to', String(seg.srcEnd), '-i', filePath,
+          '-map', '0:v', '-map', '0:a?',
+          '-vf', `setpts=${pts}*PTS`,
+          '-af', buildAtempo(seg.speed),
+          ...commonEnc, segFile,
+        ];
+        await runSeg(args);
+        if (fs.existsSync(segFile)) {
+          segFiles.push(segFile);
+          const segDur = (seg.srcEnd - seg.srcStart) / seg.speed;
+          totalDuration += segDur;
+        }
+      }
+
+      if (!segFiles.length) return { success: false, error: 'No segments produced' };
+
+      const outputFile = path.join(tmpDir, `matched_${ts}.mp4`);
+
+      if (segFiles.length === 1) {
+        fs.renameSync(segFiles[0], outputFile);
+      } else {
+        const concatList = path.join(tmpDir, `mbp_concat_${ts}.txt`);
+        fs.writeFileSync(concatList, segFiles.map(f => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'));
+        await runSeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-map', '0:v', '-map', '0:a?', ...commonEnc, '-movflags', '+faststart', outputFile]);
+        for (const f of [...segFiles, concatList]) { try { fs.unlinkSync(f); } catch {} }
+      }
+
+      return { success: true, filePath: outputFile, duration: totalDuration };
+    } catch (err: any) {
+      console.error('media:matchBrollPace error:', err);
       return { success: false, error: err.message ?? String(err) };
     }
   },

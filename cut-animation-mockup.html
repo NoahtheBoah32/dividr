@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DiviDr — Cut Segment Animation Mockup</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0A0A0A;
+  color: #D0D0D0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 48px;
+  gap: 28px;
+}
+
+/* ── Header ─────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  align-self: flex-start;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #fff;
+}
+
+.logo span { color: #6C7AFF; }
+
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #888;
+  background: #1A1A1A;
+  border: 1px solid #2A2A2A;
+  border-radius: 4px;
+  padding: 2px 7px;
+  text-transform: uppercase;
+}
+
+/* ── Card wrapper ───────────────────────────────────── */
+.card {
+  background: #111;
+  border: 1px solid #222;
+  border-radius: 12px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 860px;
+}
+
+/* ── Editor chrome ──────────────────────────────────── */
+.editor-chrome {
+  background: #0E0E0E;
+  border-bottom: 1px solid #1C1C1C;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot.r { background: #FF5F57; }
+.dot.y { background: #FFBD2E; }
+.dot.g { background: #28C840; }
+
+.file-name {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+}
+
+/* ── Preview + Timeline layout ──────────────────────── */
+.editor-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Preview area ───────────────────────────────────── */
+.preview-area {
+  height: 180px;
+  background: #070707;
+  border-bottom: 1px solid #1C1C1C;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.preview-frame {
+  width: 280px;
+  height: 158px;
+  background: #141414;
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Fake talking head silhouette */
+.preview-frame::before {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 70px; height: 110px;
+  background: linear-gradient(to top, #2A2A2A, #1A1A1A);
+  border-radius: 50% 50% 0 0 / 60% 60% 0 0;
+}
+
+.preview-frame::after {
+  content: '';
+  position: absolute;
+  bottom: 72px; left: 50%;
+  transform: translateX(-50%);
+  width: 38px; height: 38px;
+  background: #2A2A2A;
+  border-radius: 50%;
+}
+
+.preview-caption {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: Impact, 'Arial Black', sans-serif;
+  font-size: 22px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+}
+
+.preview-caption span { color: #FFFFFF; transition: color 0.1s; }
+.preview-caption span.active { color: #FFD700; }
+
+.preview-timecode {
+  position: absolute;
+  top: 8px; right: 10px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #555;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+.preview-status-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,50,50,0);
+  pointer-events: none;
+  transition: background 0.15s;
+}
+
+/* ── Timeline ───────────────────────────────────────── */
+.timeline-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-toolbar {
+  height: 34px;
+  background: #0E0E0E;
+  border-bottom: 1px solid #1C1C1C;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 14px;
+}
+
+.toolbar-btn {
+  width: 24px; height: 24px;
+  background: #1A1A1A;
+  border: 1px solid #2A2A2A;
+  border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: #888; cursor: pointer;
+}
+
+.toolbar-time {
+  font-size: 11px;
+  color: #999;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+/* ── Track area ─────────────────────────────────────── */
+.tracks-wrapper {
+  display: flex;
+  position: relative;
+  background: #111;
+}
+
+/* ── Track labels (left col) ────────────────────────── */
+.track-labels {
+  width: 76px;
+  flex-shrink: 0;
+  border-right: 1px solid #1C1C1C;
+  background: #0E0E0E;
+  display: flex;
+  flex-direction: column;
+}
+
+.track-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 10px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #444;
+  border-bottom: 1px solid #1C1C1C;
+  flex-shrink: 0;
+}
+
+.track-label.broll   { height: 40px; color: #5A82C0; }
+.track-label.video   { height: 72px; color: #7E7E7E; }
+.track-label.audio   { height: 32px; color: #4A8A6A; }
+.track-label.caps    { height: 28px; color: #8A6ABE; }
+.track-label.ruler   { height: 28px; color: #333; }
+
+/* ── Timeline scroll area ───────────────────────────── */
+.timeline-scroll {
+  flex: 1;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Ruler */
+.ruler {
+  height: 28px;
+  position: relative;
+  background: #0C0C0C;
+  border-bottom: 1px solid #1C1C1C;
+  overflow: hidden;
+}
+
+.ruler-mark {
+  position: absolute;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ruler-mark .tick {
+  width: 1px;
+  background: #2A2A2A;
+  margin-top: 14px;
+}
+
+.ruler-mark .tick.major { height: 10px; background: #333; }
+.ruler-mark .tick.minor { height: 5px; }
+
+.ruler-mark .label {
+  position: absolute;
+  top: 2px;
+  font-size: 9px;
+  color: #555;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+/* Track rows */
+.track-rows {
+  position: relative;
+}
+
+.track-row {
+  position: relative;
+  border-bottom: 1px solid #161616;
+  overflow: hidden;
+}
+
+.track-row.broll { height: 40px; background: #0F0F0F; }
+.track-row.video { height: 72px; background: #111; }
+.track-row.audio { height: 32px; background: #0F0F0F; }
+.track-row.caps  { height: 28px; background: #0F0F0F; }
+
+/* ── Clips ──────────────────────────────────────────── */
+.clip {
+  position: absolute;
+  top: 4px; bottom: 4px;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  transition: transform 0.45s cubic-bezier(0.4,0,0.2,1),
+              opacity 0.2s ease,
+              left 0.45s cubic-bezier(0.4,0,0.2,1),
+              width 0.45s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* Main video — thumbnail strip illusion */
+.clip.main-video {
+  top: 2px; bottom: 2px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255,255,255,0.015) 0px, rgba(255,255,255,0) 1px,
+      transparent 1px, transparent 39px,
+      rgba(255,255,255,0.012) 39px, rgba(255,255,255,0) 40px
+    ),
+    linear-gradient(180deg, #1E1E1E 0%, #161616 100%);
+  border: 1px solid #2E2E2E;
+}
+
+/* Thumbnail faces inside main video */
+.thumb {
+  position: absolute;
+  top: 3px; bottom: 3px;
+  width: 46px;
+  border-radius: 2px;
+  background: linear-gradient(135deg, #222 0%, #1A1A1A 100%);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.thumb::before {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 26px; height: 42px;
+  background: #2A2A2A;
+  border-radius: 50% 50% 0 0 / 60% 60% 0 0;
+}
+
+.thumb::after {
+  content: '';
+  position: absolute;
+  bottom: 28px; left: 50%;
+  transform: translateX(-50%);
+  width: 14px; height: 14px;
+  background: #2A2A2A;
+  border-radius: 50%;
+}
+
+/* B-roll clips */
+.clip.broll-clip {
+  background: linear-gradient(135deg, #1B3A5C 0%, #152E48 100%);
+  border: 1px solid rgba(92,150,220,0.25);
+}
+
+.clip.broll-clip::after {
+  content: 'B';
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(100,180,255,0.5);
+  margin: auto;
+}
+
+/* Audio clip */
+.clip.audio-clip {
+  top: 5px; bottom: 5px;
+  background: linear-gradient(90deg,
+    #0D2219 0%,
+    #122E22 20%,
+    #0D2219 40%,
+    #102820 60%,
+    #0D2219 80%,
+    #122E22 100%
+  );
+  border: 1px solid rgba(60,160,100,0.2);
+}
+
+/* Waveform bars in audio clip */
+.waveform {
+  position: absolute;
+  inset: 3px 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  overflow: hidden;
+}
+
+.wbar {
+  flex-shrink: 0;
+  width: 2px;
+  background: rgba(60,180,100,0.45);
+  border-radius: 1px;
+}
+
+/* Caption clip */
+.clip.caption-clip {
+  top: 4px; bottom: 4px;
+  background: linear-gradient(90deg, #1A1030, #160C28);
+  border: 1px solid rgba(140,90,220,0.3);
+  border-radius: 3px;
+}
+
+.caption-clip .cap-text {
+  font-size: 7px;
+  color: rgba(180,140,255,0.7);
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* ── Playhead ────────────────────────────────────────── */
+.playhead {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  pointer-events: none;
+  z-index: 30;
+  transition: left 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.playhead-line {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, #FFFFFF, rgba(255,255,255,0.5));
+  box-shadow: 0 0 4px rgba(255,255,255,0.25);
+}
+
+.playhead-head {
+  position: absolute;
+  top: -2px;
+  left: -5px;
+  width: 0; height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid #FFFFFF;
+}
+
+/* ── Cut highlight overlay ──────────────────────────── */
+.cut-highlight {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+  z-index: 20;
+  overflow: hidden;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.2s ease;
+}
+
+.cut-highlight-fill {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 50, 50, 0.18);
+  border-left: 2px solid rgba(255, 60, 60, 0.8);
+  border-right: 2px solid rgba(255, 60, 60, 0.8);
+}
+
+.cut-highlight-label {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: rgba(255,120,120,0.9);
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: 0 0 8px rgba(255,50,50,0.6);
+  opacity: 0;
+  transition: opacity 0.3s ease 0.2s;
+}
+
+.cut-highlight.visible .cut-highlight-label { opacity: 1; }
+
+/* Pulse animation for the cut confirm state */
+@keyframes pulse-red {
+  0%, 100% { background: rgba(255, 50, 50, 0.18); }
+  50%       { background: rgba(255, 50, 50, 0.32); }
+}
+
+.cut-highlight.pulse .cut-highlight-fill {
+  animation: pulse-red 0.5s ease-in-out infinite;
+}
+
+/* Flash white on cut */
+@keyframes flash-cut {
+  0%   { background: rgba(255,50,50,0.18); }
+  30%  { background: rgba(255,255,255,0.55); }
+  100% { background: rgba(255,50,50,0); }
+}
+
+.cut-highlight.flash .cut-highlight-fill {
+  animation: flash-cut 0.25s ease forwards;
+}
+
+/* ── Gap indicator (empty space after cut) ──────────── */
+.gap-indicator {
+  position: absolute;
+  top: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255,50,50,0.04) 0px,
+    rgba(255,50,50,0.04) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  border-left: 1px dashed rgba(255,60,60,0.3);
+  border-right: 1px dashed rgba(255,60,60,0.3);
+  pointer-events: none;
+  z-index: 15;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+/* ── Phase indicator ────────────────────────────────── */
+.phases-section {
+  width: 100%;
+  max-width: 860px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.phase-steps {
+  display: flex;
+  gap: 0;
+  position: relative;
+}
+
+.phase-steps::before {
+  content: '';
+  position: absolute;
+  top: 12px; left: 12px; right: 12px;
+  height: 1px;
+  background: #222;
+  z-index: 0;
+}
+
+.phase-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  z-index: 1;
+}
+
+.step-dot {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: #1A1A1A;
+  border: 1.5px solid #2A2A2A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #444;
+  transition: all 0.3s ease;
+}
+
+.step-dot.active {
+  background: #FF3C3C;
+  border-color: #FF3C3C;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(255,60,60,0.4);
+}
+
+.step-dot.done {
+  background: #2A4A2A;
+  border-color: #3A7A3A;
+  color: #5ACA5A;
+}
+
+.step-label {
+  font-size: 9px;
+  color: #444;
+  text-align: center;
+  letter-spacing: 0.04em;
+  transition: color 0.3s;
+  max-width: 72px;
+}
+
+.phase-step.active .step-label { color: #FF8080; }
+.phase-step.done .step-label   { color: #5A9A5A; }
+
+/* ── Status bar ─────────────────────────────────────── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #0E0E0E;
+  border: 1px solid #1C1C1C;
+  border-radius: 8px;
+}
+
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #3A3A3A;
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.status-dot.active {
+  background: #FF4444;
+  box-shadow: 0 0 6px rgba(255,68,68,0.6);
+  animation: blink 1s ease infinite;
+}
+
+.status-dot.done { background: #44AA44; }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+.status-text {
+  font-size: 12px;
+  color: #888;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  transition: color 0.3s;
+}
+
+.status-text.active { color: #FF8080; }
+.status-text.done   { color: #66BB66; }
+
+/* ── Controls ───────────────────────────────────────── */
+.controls-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.run-btn {
+  padding: 9px 22px;
+  background: #FF3C3C;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: background 0.2s, transform 0.1s, opacity 0.2s;
+}
+
+.run-btn:hover:not(:disabled) { background: #FF5252; transform: translateY(-1px); }
+.run-btn:active:not(:disabled) { transform: translateY(0); }
+.run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.reset-btn {
+  padding: 9px 18px;
+  background: #1A1A1A;
+  color: #888;
+  border: 1px solid #2A2A2A;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.reset-btn:hover { background: #222; color: #AAA; }
+
+.desc {
+  font-size: 11px;
+  color: #444;
+  line-height: 1.5;
+  max-width: 460px;
+}
+
+/* ── Segment labels on ruler ───────────────────────── */
+.seg-marker {
+  position: absolute;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.seg-marker .seg-tick {
+  width: 1px;
+  height: 14px;
+  margin-top: 14px;
+  background: #FF3C3C;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.seg-marker .seg-label-text {
+  position: absolute;
+  top: 2px;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: #FF5050;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  white-space: nowrap;
+}
+
+/* ── Info section ───────────────────────────────────── */
+.info-row {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #444;
+}
+
+.info-pill {
+  background: #141414;
+  border: 1px solid #1E1E1E;
+  border-radius: 20px;
+  padding: 3px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-pill .key {
+  color: #555;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 9.5px;
+}
+
+.info-pill .val { color: #777; }
+
+/* Right-side clips that slide left */
+.slide-group {
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">Divi<span>Dr</span></div>
+  <div class="badge">Design Mockup</div>
+</div>
+
+<!-- Main editor card -->
+<div class="card">
+
+  <!-- Window chrome -->
+  <div class="editor-chrome">
+    <div class="dot r"></div>
+    <div class="dot y"></div>
+    <div class="dot g"></div>
+    <span class="file-name">huberman_sleep_protocol.mp4 — 5:00</span>
+  </div>
+
+  <div class="editor-body">
+
+    <!-- Preview area -->
+    <div class="preview-area">
+      <div class="preview-frame">
+        <div class="preview-caption" id="previewCaption">
+          <span id="cw0" class="active">ALSO</span>
+          <span id="cw1">THE</span>
+          <span id="cw2">LIGHT</span>
+          <span id="cw3">EXPOSURE</span>
+        </div>
+        <div class="preview-status-overlay" id="previewFlash"></div>
+      </div>
+      <div class="preview-timecode" id="previewTimecode">01:15.00</div>
+    </div>
+
+    <!-- Timeline toolbar -->
+    <div class="timeline-toolbar">
+      <div class="toolbar-btn">⏮</div>
+      <div class="toolbar-btn">▶</div>
+      <div class="toolbar-btn">⏭</div>
+      <div class="toolbar-btn">✂</div>
+      <div class="toolbar-btn" style="color:#FF5555">⊘</div>
+      <span class="toolbar-time" id="toolbarTime">1:15 / 5:00</span>
+    </div>
+
+    <!-- Tracks wrapper -->
+    <div class="tracks-wrapper" id="tracksWrapper">
+
+      <!-- Labels -->
+      <div class="track-labels">
+        <div class="track-label ruler">TIME</div>
+        <div class="track-label broll">B-ROLL</div>
+        <div class="track-label video">VIDEO</div>
+        <div class="track-label audio">AUDIO</div>
+        <div class="track-label caps">CAPS</div>
+      </div>
+
+      <!-- Timeline scroll area -->
+      <div class="timeline-scroll" id="timelineScroll">
+
+        <!-- Ruler -->
+        <div class="ruler" id="ruler">
+          <!-- Marks injected by JS -->
+        </div>
+
+        <!-- Track rows -->
+        <div class="track-rows" id="trackRows">
+
+          <!-- B-roll track -->
+          <div class="track-row broll" id="rowBroll">
+            <!-- clips injected by JS -->
+          </div>
+
+          <!-- Main video track -->
+          <div class="track-row video" id="rowVideo">
+            <!-- main clip injected by JS -->
+          </div>
+
+          <!-- Audio track -->
+          <div class="track-row audio" id="rowAudio">
+            <!-- audio clip injected by JS -->
+          </div>
+
+          <!-- Captions track -->
+          <div class="track-row caps" id="rowCaps">
+            <!-- cap clips injected by JS -->
+          </div>
+
+        </div>
+
+        <!-- Playhead (spans ruler + all track rows) -->
+        <div class="playhead" id="playhead">
+          <div class="playhead-head"></div>
+          <div class="playhead-line" id="playheadLine"></div>
+        </div>
+
+        <!-- Cut highlight (spans all track rows) -->
+        <div class="cut-highlight" id="cutHighlight">
+          <div class="cut-highlight-fill"></div>
+          <div class="cut-highlight-label" id="cutHighlightLabel">DELETE 3:00 → 4:00</div>
+        </div>
+
+        <!-- Gap indicator (shows empty space after cut) -->
+        <div class="gap-indicator" id="gapIndicator"></div>
+
+        <!-- Segment markers on ruler -->
+        <div class="seg-marker" id="segStart" style="left: 360px;">
+          <div class="seg-label-text">3:00</div>
+          <div class="seg-tick"></div>
+        </div>
+        <div class="seg-marker" id="segEnd" style="left: 480px;">
+          <div class="seg-label-text">4:00</div>
+          <div class="seg-tick"></div>
+        </div>
+
+      </div><!-- end timeline-scroll -->
+
+    </div><!-- end tracks-wrapper -->
+
+  </div><!-- end editor-body -->
+
+</div><!-- end card -->
+
+<!-- Controls -->
+<div class="controls-bar">
+  <button class="run-btn" id="runBtn" onclick="runAnimation()">▶ Run Animation</button>
+  <button class="reset-btn" id="resetBtn" onclick="resetAnimation()" disabled>Reset</button>
+  <div class="desc">EDITH: "Delete segment from 3:00 to 4:00 — he starts talking about dogs here."</div>
+</div>
+
+<!-- Status bar -->
+<div class="status-bar">
+  <div class="status-dot" id="statusDot"></div>
+  <div class="status-text" id="statusText">Ready — press Run to preview the cut sequence</div>
+</div>
+
+<!-- Phase steps -->
+<div class="phases-section">
+  <div class="phase-steps" id="phaseSteps">
+    <div class="phase-step" data-phase="1">
+      <div class="step-dot">1</div>
+      <div class="step-label">Playhead jumps to 3:00</div>
+    </div>
+    <div class="phase-step" data-phase="2">
+      <div class="step-dot">2</div>
+      <div class="step-label">Highlight segment</div>
+    </div>
+    <div class="phase-step" data-phase="3">
+      <div class="step-dot">3</div>
+      <div class="step-label">Confirm &amp; cut</div>
+    </div>
+    <div class="phase-step" data-phase="4">
+      <div class="step-dot">4</div>
+      <div class="step-label">Segment removed</div>
+    </div>
+    <div class="phase-step" data-phase="5">
+      <div class="step-dot">5</div>
+      <div class="step-label">Gap visible</div>
+    </div>
+    <div class="phase-step" data-phase="6">
+      <div class="step-dot">6</div>
+      <div class="step-label">Close gap</div>
+    </div>
+    <div class="phase-step" data-phase="7">
+      <div class="step-dot">7</div>
+      <div class="step-label">Done ✓</div>
+    </div>
+  </div>
+
+  <div class="info-row" id="infoRow">
+    <div class="info-pill">
+      <span class="key">Before</span>
+      <span class="val" id="infoBefore">5:00 duration</span>
+    </div>
+    <div class="info-pill">
+      <span class="key">Cut</span>
+      <span class="val" id="infoCut">3:00 – 4:00 (60s)</span>
+    </div>
+    <div class="info-pill">
+      <span class="key">After</span>
+      <span class="val" id="infoAfter">4:00 duration</span>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// ── Constants ─────────────────────────────────────────
+const PX_PER_SEC = 2;            // 2px per second
+const TOTAL_SECS = 300;          // 5:00
+const CUT_FROM = 180;            // 3:00 in seconds
+const CUT_TO   = 240;            // 4:00 in seconds
+const CUT_FROM_PX = CUT_FROM * PX_PER_SEC;  // 360
+const CUT_TO_PX   = CUT_TO * PX_PER_SEC;    // 480
+const CUT_WIDTH   = (CUT_TO - CUT_FROM) * PX_PER_SEC;  // 120
+const TOTAL_WIDTH = TOTAL_SECS * PX_PER_SEC;  // 600
+
+const INITIAL_PLAYHEAD_SECS = 75;  // 1:15
+const INITIAL_PLAYHEAD_PX   = INITIAL_PLAYHEAD_SECS * PX_PER_SEC;  // 150
+
+// ── Build ruler ───────────────────────────────────────
+function buildRuler() {
+  const ruler = document.getElementById('ruler');
+  ruler.style.width = TOTAL_WIDTH + 'px';
+  for (let s = 0; s <= TOTAL_SECS; s += 10) {
+    const x = s * PX_PER_SEC;
+    const isMajor = s % 60 === 0;
+    const el = document.createElement('div');
+    el.className = 'ruler-mark';
+    el.style.left = x + 'px';
+    if (isMajor) {
+      const m = Math.floor(s / 60);
+      el.innerHTML = `<span class="label">${m}:00</span><div class="tick major"></div>`;
+    } else {
+      const m = Math.floor(s / 60);
+      const rem = s % 60;
+      const label = rem === 30 ? `${m}:30` : '';
+      el.innerHTML = `${label ? `<span class="label">${label}</span>` : ''}<div class="tick minor"></div>`;
+    }
+    ruler.appendChild(el);
+  }
+}
+
+// ── Build clips ───────────────────────────────────────
+function s2px(sec) { return sec * PX_PER_SEC; }
+
+function makeClip(cls, left, width, extra = '') {
+  const el = document.createElement('div');
+  el.className = `clip ${cls}`;
+  el.style.left = left + 'px';
+  el.style.width = width + 'px';
+  el.innerHTML = extra;
+  return el;
+}
+
+// Generate waveform bars HTML
+function waveform(n) {
+  const heights = [];
+  for (let i = 0; i < n; i++) heights.push(4 + Math.random() * 12);
+  return '<div class="waveform">' + heights.map(h =>
+    `<div class="wbar" style="height:${h}px"></div>`
+  ).join('') + '</div>';
+}
+
+// Thumbnail divs inside main video
+function thumbs(leftPx, widthPx) {
+  let html = '';
+  for (let x = 2; x + 46 < widthPx; x += 50) {
+    html += `<div class="thumb" style="left:${x}px"></div>`;
+  }
+  return html;
+}
+
+// B-roll clips: [startSec, endSec]
+const brollDefs = [
+  [30, 50], [80, 100], [130, 148], [210, 228], [255, 273]
+];
+
+// Caption clips: [startSec, endSec, text]
+const captionDefs = [
+  [5, 28, 'MORNING LIGHT'],
+  [45, 68, 'CORTISOL PEAK'],
+  [95, 118, 'ADENOSINE'],
+  [140, 162, 'SLEEP PRESSURE'],
+  [195, 218, 'DOG DISCUSSION'],
+  [245, 268, 'MELATONIN'],
+  [275, 295, 'DARK ENVIRONMENT'],
+];
+
+// Store right-side elements for gap-close animation
+const rightSideEls = [];
+
+function buildClips() {
+  const rowBroll = document.getElementById('rowBroll');
+  const rowVideo = document.getElementById('rowVideo');
+  const rowAudio = document.getElementById('rowAudio');
+  const rowCaps  = document.getElementById('rowCaps');
+
+  // Set row widths
+  [rowBroll, rowVideo, rowAudio, rowCaps].forEach(r => {
+    r.style.width = TOTAL_WIDTH + 'px';
+  });
+
+  // Main video (full width)
+  const mainClip = makeClip('main-video', 0, TOTAL_WIDTH, thumbs(0, TOTAL_WIDTH));
+  mainClip.id = 'mainVideoClip';
+  rowVideo.appendChild(mainClip);
+
+  // Audio (full width)
+  const audioClip = makeClip('audio-clip', 0, TOTAL_WIDTH, waveform(Math.floor(TOTAL_WIDTH / 4)));
+  audioClip.id = 'mainAudioClip';
+  rowAudio.appendChild(audioClip);
+
+  // B-rolls
+  brollDefs.forEach(([start, end], i) => {
+    const clip = makeClip('broll-clip', s2px(start), s2px(end - start));
+    clip.id = `broll-${i}`;
+    if (start >= CUT_TO) rightSideEls.push(clip);
+    rowBroll.appendChild(clip);
+  });
+
+  // Captions
+  captionDefs.forEach(([start, end, text], i) => {
+    const clip = makeClip('caption-clip', s2px(start), s2px(end - start),
+      `<span class="cap-text">${text}</span>`);
+    clip.id = `cap-${i}`;
+    if (start >= CUT_TO) rightSideEls.push(clip);
+    rowCaps.appendChild(clip);
+  });
+}
+
+// ── Playhead setup ────────────────────────────────────
+function setupPlayhead() {
+  const trackRows = document.getElementById('trackRows');
+  const totalTrackHeight = trackRows.offsetHeight;
+  const ruler = document.getElementById('ruler');
+  const rulerH = ruler.offsetHeight;
+
+  const ph = document.getElementById('playhead');
+  const line = document.getElementById('playheadLine');
+  // Playhead top = ruler top (0), line starts at ruler bottom
+  ph.style.top = '0px';
+  ph.style.height = (rulerH + totalTrackHeight) + 'px';
+  line.style.top = rulerH + 'px';
+  line.style.height = totalTrackHeight + 'px';
+  ph.style.left = INITIAL_PLAYHEAD_PX + 'px';
+
+  // Cut highlight
+  const ch = document.getElementById('cutHighlight');
+  ch.style.top = '0px';
+  ch.style.height = (rulerH + totalTrackHeight) + 'px';
+  ch.style.left = CUT_FROM_PX + 'px';
+  ch.style.width = '0px';
+  ch.style.opacity = '0';
+
+  // Gap indicator
+  const gap = document.getElementById('gapIndicator');
+  gap.style.top = '0px';
+  gap.style.height = (rulerH + totalTrackHeight) + 'px';
+  gap.style.left = CUT_FROM_PX + 'px';
+  gap.style.width = CUT_WIDTH + 'px';
+  gap.style.opacity = '0';
+}
+
+// ── Helpers ───────────────────────────────────────────
+function setPhase(phase) {
+  document.querySelectorAll('.phase-step').forEach(el => {
+    const p = parseInt(el.dataset.phase);
+    const dot = el.querySelector('.step-dot');
+    el.classList.remove('active', 'done');
+    dot.classList.remove('active', 'done');
+    if (p === phase) {
+      el.classList.add('active');
+      dot.classList.add('active');
+    } else if (p < phase) {
+      el.classList.add('done');
+      dot.classList.add('done');
+      dot.textContent = '✓';
+    } else {
+      dot.textContent = p;
+    }
+  });
+}
+
+function setStatus(text, state = 'active') {
+  const dot  = document.getElementById('statusDot');
+  const txt  = document.getElementById('statusText');
+  dot.className = `status-dot ${state}`;
+  txt.className = `status-text ${state}`;
+  txt.textContent = text;
+}
+
+function setTimecode(secs) {
+  const m = Math.floor(secs / 60);
+  const s = (secs % 60).toFixed(0).padStart(2, '0');
+  document.getElementById('previewTimecode').textContent = `0${m}:${s}.00`;
+  document.getElementById('toolbarTime').textContent = `${m}:${s} / 5:00`;
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Animate playhead left position (smooth move)
+function movePlayhead(toPx) {
+  document.getElementById('playhead').style.left = toPx + 'px';
+}
+
+// Preview caption cycling (for visual life)
+let captionInterval = null;
+const captionGroups = [
+  ['ALSO', 'THE', 'LIGHT', 'EXPOSURE'],
+  ['MORNING', 'SUNLIGHT', 'IS', 'CRITICAL'],
+  ['YOUR', 'CORTISOL', 'PEAKS', 'EARLY'],
+  ['ADENOSINE', 'BUILDS', 'UP', 'SLOWLY'],
+];
+let cgIdx = 0, wordIdx = 0;
+
+function startCaptionCycle() {
+  captionInterval = setInterval(() => {
+    const words = captionGroups[cgIdx];
+    for (let i = 0; i < 4; i++) {
+      const el = document.getElementById(`cw${i}`);
+      if (!el) continue;
+      el.className = i === wordIdx ? 'active' : '';
+      el.textContent = words[i] || '';
+    }
+    wordIdx++;
+    if (wordIdx >= words.length) { wordIdx = 0; cgIdx = (cgIdx + 1) % captionGroups.length; }
+  }, 350);
+}
+
+function stopCaptionCycle() { clearInterval(captionInterval); }
+
+// ── Main animation ─────────────────────────────────────
+let running = false;
+
+async function runAnimation() {
+  if (running) return;
+  running = true;
+  document.getElementById('runBtn').disabled = true;
+
+  startCaptionCycle();
+
+  const ph = document.getElementById('playhead');
+  const ch = document.getElementById('cutHighlight');
+  const gap = document.getElementById('gapIndicator');
+  const segStart = document.getElementById('segStart');
+  const segEnd   = document.getElementById('segEnd');
+  const mainClip = document.getElementById('mainVideoClip');
+  const mainAudio = document.getElementById('mainAudioClip');
+  const flash = document.getElementById('previewFlash');
+
+  // ── Phase 1: Playhead jumps to 3:00 ─────────────────
+  setPhase(1);
+  setStatus('Jumping to 3:00 — segment start...', 'active');
+  setTimecode(180);
+  movePlayhead(CUT_FROM_PX);
+
+  // Animate timecode counter
+  const startSec = INITIAL_PLAYHEAD_SECS;
+  const endSec   = 180;
+  const moveMs   = 500;
+  const steps    = 30;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const sec = Math.round(startSec + (endSec - startSec) * t);
+    setTimecode(sec);
+    await delay(moveMs / steps);
+  }
+  await delay(200);
+
+  // ── Phase 2: Highlight segment ────────────────────────
+  setPhase(2);
+  setStatus('Marking segment 3:00 → 4:00 for deletion...', 'active');
+
+  // Show seg markers
+  segStart.querySelectorAll('.seg-tick, .seg-label-text').forEach(e => e.style.opacity = '1');
+  segEnd.querySelectorAll('.seg-tick, .seg-label-text').forEach(e => e.style.opacity = '1');
+
+  // Expand cut highlight width
+  ch.style.opacity = '1';
+  ch.style.transition = 'width 0.35s cubic-bezier(0.4,0,0.2,1), opacity 0.2s ease';
+  ch.style.width = CUT_WIDTH + 'px';
+  ch.classList.add('visible');
+  await delay(450);
+
+  // ── Phase 3: Confirm and cut ─────────────────────────
+  setPhase(3);
+  setStatus('Cutting segment — standby...', 'active');
+  ch.classList.add('pulse');
+  await delay(800);
+
+  // Flash the preview
+  flash.style.transition = 'background 0.1s';
+  flash.style.background = 'rgba(255,50,50,0.35)';
+  await delay(120);
+  flash.style.background = 'rgba(255,255,255,0.5)';
+  await delay(100);
+  flash.style.background = 'rgba(0,0,0,0)';
+
+  // ── Phase 4: Segment removed ─────────────────────────
+  setPhase(4);
+  setStatus('Segment removed — gap open...', 'active');
+
+  ch.classList.remove('pulse');
+  ch.classList.add('flash');
+  await delay(250);
+
+  // Hide the cut highlight
+  ch.style.transition = 'opacity 0.15s ease';
+  ch.style.opacity = '0';
+  ch.classList.remove('flash', 'visible');
+
+  // Trim main video and audio to hide the cut region
+  // (visually: split the clip into two halves with a gap)
+  mainClip.style.width = CUT_FROM_PX + 'px';
+  mainAudio.style.width = CUT_FROM_PX + 'px';
+
+  // Create right-half ghost clips
+  const rightVideoGhost = document.createElement('div');
+  rightVideoGhost.className = 'clip main-video';
+  rightVideoGhost.style.left = CUT_TO_PX + 'px';
+  rightVideoGhost.style.width = (TOTAL_WIDTH - CUT_TO_PX) + 'px';
+  rightVideoGhost.style.top = '2px';
+  rightVideoGhost.style.bottom = '2px';
+  rightVideoGhost.innerHTML = thumbs(0, TOTAL_WIDTH - CUT_TO_PX);
+  rightVideoGhost.id = 'rightVideoGhost';
+  document.getElementById('rowVideo').appendChild(rightVideoGhost);
+
+  const rightAudioGhost = document.createElement('div');
+  rightAudioGhost.className = 'clip audio-clip';
+  rightAudioGhost.style.left = CUT_TO_PX + 'px';
+  rightAudioGhost.style.width = (TOTAL_WIDTH - CUT_TO_PX) + 'px';
+  rightAudioGhost.style.top = '5px';
+  rightAudioGhost.style.bottom = '5px';
+  rightAudioGhost.innerHTML = waveform(Math.floor((TOTAL_WIDTH - CUT_TO_PX) / 4));
+  rightAudioGhost.id = 'rightAudioGhost';
+  document.getElementById('rowAudio').appendChild(rightAudioGhost);
+
+  // Move right-side b-roll/caption clips to their post-cut positions visually but before slide
+  // (they stay at their original position — we'll slide them)
+  await delay(100);
+
+  // ── Phase 5: Gap visible ──────────────────────────────
+  setPhase(5);
+  setStatus('Gap visible — stitching halves together...', 'active');
+  gap.style.opacity = '1';
+  segStart.querySelectorAll('.seg-tick, .seg-label-text').forEach(e => e.style.opacity = '0.3');
+  segEnd.querySelectorAll('.seg-tick, .seg-label-text').forEach(e => e.style.opacity = '0.3');
+  await delay(500);
+
+  // ── Phase 6: Close gap ────────────────────────────────
+  setPhase(6);
+  setStatus('Closing gap — sliding 4:00–5:00 to meet 3:00...', 'active');
+  gap.style.opacity = '0';
+
+  // Slide all right-side clips left by CUT_WIDTH px
+  const shiftPx = CUT_WIDTH;
+
+  // Right-side b-roll and caption clips
+  rightSideEls.forEach(el => {
+    el.style.transition = 'left 0.45s cubic-bezier(0.4,0,0.2,1)';
+    const curLeft = parseFloat(el.style.left);
+    el.style.left = (curLeft - shiftPx) + 'px';
+  });
+
+  // Right ghost video/audio
+  rightVideoGhost.style.transition = 'left 0.45s cubic-bezier(0.4,0,0.2,1)';
+  rightVideoGhost.style.left = CUT_FROM_PX + 'px';
+  rightAudioGhost.style.transition = 'left 0.45s cubic-bezier(0.4,0,0.2,1)';
+  rightAudioGhost.style.left = CUT_FROM_PX + 'px';
+
+  // Playhead follows to the join point
+  movePlayhead(CUT_FROM_PX);
+
+  await delay(500);
+
+  // Merge ghost clips visually: extend main left clip to full post-cut width
+  mainClip.style.transition = 'width 0.01s';
+  mainClip.style.width = (TOTAL_WIDTH - shiftPx) + 'px';
+  mainAudio.style.transition = 'width 0.01s';
+  mainAudio.style.width = (TOTAL_WIDTH - shiftPx) + 'px';
+  rightVideoGhost.style.opacity = '0';
+  rightAudioGhost.style.opacity = '0';
+  await delay(50);
+  rightVideoGhost.remove();
+  rightAudioGhost.remove();
+
+  // Remove seg markers
+  segStart.querySelectorAll('.seg-tick, .seg-label-text').forEach(e => e.style.opacity = '0');
+  segEnd.querySelectorAll('.seg-tick, .seg-label-text').forEach(e => e.style.opacity = '0');
+
+  // ── Phase 7: Done ──────────────────────────────────────
+  setPhase(7);
+  setStatus('Done — timeline is now 4:00. B-roll will be placed at the join point.', 'done');
+  document.getElementById('toolbarTime').textContent = `3:00 / 4:00`;
+  document.getElementById('infoAfter').textContent = '4:00 duration ✓';
+
+  stopCaptionCycle();
+  document.getElementById('resetBtn').disabled = false;
+}
+
+// ── Reset ─────────────────────────────────────────────
+function resetAnimation() {
+  location.reload();
+}
+
+// ── Init ──────────────────────────────────────────────
+buildRuler();
+buildClips();
+// Wait for layout then size playhead
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    setupPlayhead();
+    setTimecode(INITIAL_PLAYHEAD_SECS);
+    setStatus('Ready — press Run to preview the cut sequence', '');
+  });
+});
+</script>
+</body>
+</html>

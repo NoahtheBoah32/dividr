@@ -500,7 +500,7 @@ export function processAudioTimeline(
       const expr = buildDuckingVolumeExpression(overlaps, segStart, fadeDuration, targetGain);
       const duckRef = `[a${duckSeg.segmentIndex}_ducked]`;
 
-      audioFilters.push(`${duckSeg.filterRef}volume='${expr}':eval=frame${duckRef}`);
+      audioFilters.push(`${duckSeg.filterRef}volume='${expr}':eval=sample${duckRef}`);
       audioSegmentsWithTiming[i] = { ...duckSeg, filterRef: duckRef };
 
       console.log(

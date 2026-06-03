@@ -45,6 +45,7 @@ export interface MediaContextItem {
   path: string;
   isReference: boolean;
   transcription?: string;        // formatted "[00:00-00:05] text" lines from Whisper
+  speakerSegments?: Array<{ speaker: string; start: number; end: number }>; // diarization
   referenceAnalysis?: {
     captionStyle: Record<string, unknown>;
     description: string;
@@ -252,6 +253,17 @@ function buildMediaContext(media?: MediaContextItem[], snapshot?: TimelineSnapsh
       });
     } else {
       ctx += `  (no transcription yet)\n`;
+    }
+    if (m.speakerSegments?.length) {
+      // Compact speaker map — EDITH's silent background knowledge, not announced to user
+      const speakers = [...new Set(m.speakerSegments.map(s => s.speaker))];
+      ctx += `  speakers (${speakers.length} identified — use for B-roll context, do not announce unless asked):\n`;
+      for (const spk of speakers) {
+        const segs = m.speakerSegments.filter(s => s.speaker === spk);
+        const windows = segs.map(s => `${s.start.toFixed(1)}–${s.end.toFixed(1)}s`).slice(0, 6).join(', ');
+        const totalSec = segs.reduce((acc, s) => acc + (s.end - s.start), 0);
+        ctx += `    ${spk}: ${windows}${segs.length > 6 ? ' …' : ''} (${Math.round(totalSec)}s total)\n`;
+      }
     }
   });
 
@@ -1010,6 +1022,123 @@ export function registerMyceliumIPC(
     } catch (e) {
       return { success: false, error: String(e) };
     }
+  });
+
+  // Detect audio transients (onset spikes) — returns frame-accurate timestamps for SFX placement
+  ipcMain.handle('detect:transients', async (_event, payload: {
+    clipPath: string;
+    sensitivity?: number;   // 1 (fewest) – 5 (most), default 3
+    minGapSec?: number;     // minimum seconds between reported transients, default 0.1
+    maxTransients?: number; // cap results, default 200
+  }) => {
+    const { clipPath, sensitivity = 3, minGapSec = 0.1, maxTransients = 200 } = payload;
+    if (!fs.existsSync(clipPath)) return { success: false, error: `File not found: ${clipPath}` };
+
+    let ffmpegBin = 'ffmpeg';
+    try { const s = require('ffmpeg-static') as string; if (s) ffmpegBin = s; } catch {}
+
+    const tmpRaw = path.join(os.tmpdir(), `transients_${Date.now()}.raw`);
+    try {
+      // Extract mono audio at 22050 Hz as raw signed-16-bit PCM
+      await execAsync(
+        `"${ffmpegBin}" -y -i "${clipPath}" -ar 22050 -ac 1 -f s16le "${tmpRaw}"`,
+        { timeout: 60000 },
+      );
+
+      const rawBuf = fs.readFileSync(tmpRaw);
+      const sampleRate = 22050;
+      const samples = new Int16Array(rawBuf.buffer, rawBuf.byteOffset, rawBuf.length / 2);
+
+      // Short-time energy: 10ms window, 5ms hop
+      const windowSamples = Math.floor(sampleRate * 0.010);
+      const hopSamples    = Math.floor(sampleRate * 0.005);
+      const nWindows = Math.floor((samples.length - windowSamples) / hopSamples);
+
+      const energy = new Float32Array(nWindows);
+      for (let i = 0; i < nWindows; i++) {
+        const offset = i * hopSamples;
+        let sum = 0;
+        for (let j = 0; j < windowSamples; j++) {
+          const s = samples[offset + j] / 32768.0;
+          sum += s * s;
+        }
+        energy[i] = sum / windowSamples;
+      }
+
+      // Positive-only first difference = onset strength signal
+      const flux = new Float32Array(nWindows - 1);
+      for (let i = 0; i < flux.length; i++) flux[i] = Math.max(0, energy[i + 1] - energy[i]);
+
+      // Mean + sigma-scaled adaptive threshold (sensitivity 1–5 maps to sigma 6.0–2.4)
+      let mean = 0;
+      for (let i = 0; i < flux.length; i++) mean += flux[i];
+      mean /= flux.length;
+      let variance = 0;
+      for (let i = 0; i < flux.length; i++) variance += (flux[i] - mean) ** 2;
+      const std = Math.sqrt(variance / flux.length);
+      const sigma = 6.0 - (sensitivity - 1) * 0.8;
+      const threshold = mean + sigma * std;
+
+      // Collect peaks, merge within minGapSec
+      const transients: number[] = [];
+      let lastTime = -999;
+      for (let i = 0; i < flux.length; i++) {
+        if (flux[i] > threshold) {
+          const t = (i * hopSamples) / sampleRate;
+          if (t - lastTime >= minGapSec) {
+            transients.push(Math.round(t * 1000) / 1000);
+            lastTime = t;
+          }
+        }
+      }
+
+      return { success: true, transients: transients.slice(0, maxTransients), count: transients.length };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    } finally {
+      try { fs.unlinkSync(tmpRaw); } catch {}
+    }
+  });
+
+  // Speaker diarization — identify who speaks when using MFCC clustering (numpy + scipy only)
+  ipcMain.handle('analyze:speakers', async (_event, payload: {
+    clipPath: string;
+    numSpeakers?: number;  // explicit count, or omit to auto-detect
+    maxSpeakers?: number;  // ceiling, default 5
+  }) => {
+    const { clipPath, numSpeakers, maxSpeakers = 5 } = payload;
+    if (!fs.existsSync(clipPath)) return { success: false, error: `File not found: ${clipPath}` };
+
+    const isWin = process.platform === 'win32';
+    const venvPython = path.join(
+      app.getAppPath(), 'src', 'backend', 'python', 'venv',
+      isWin ? 'Scripts\\python.exe' : 'bin/python',
+    );
+    const pythonBin = fs.existsSync(venvPython) ? venvPython : (isWin ? 'python' : 'python3');
+
+    const scriptPath = path.join(app.getAppPath(), 'src', 'backend', 'python', 'scripts', 'diarize.py');
+    if (!fs.existsSync(scriptPath)) return { success: false, error: `diarize.py not found at ${scriptPath}` };
+
+    const args = JSON.stringify({ audioPath: clipPath, numSpeakers: numSpeakers ?? null, maxSpeakers });
+
+    return new Promise((resolve) => {
+      let out = '';
+      let err = '';
+      const proc = spawn(pythonBin, [scriptPath, args], { shell: false });
+      proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+      proc.stderr?.on('data', (d: Buffer) => { err += d.toString(); });
+      proc.on('close', (code) => {
+        // Resemblyzer prints a "Loaded model..." line before the JSON — find the JSON line
+        const jsonLine = out.split('\n').find(l => l.trim().startsWith('{'));
+        try {
+          const result = JSON.parse(jsonLine ?? out.trim());
+          resolve(result);
+        } catch {
+          resolve({ success: false, error: err.slice(-400) || out.slice(-300) || `exit ${code}` });
+        }
+      });
+      proc.on('error', (e) => resolve({ success: false, error: e.message }));
+    });
   });
 
   // Generate a full edit spec by sending both user footage + reference to Gemini

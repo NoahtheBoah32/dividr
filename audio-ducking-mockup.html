@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DiviDr — Audio Ducking</title>
+<style>
+  :root {
+    --bg: #0c0c0c;
+    --surface: #141414;
+    --border: rgba(255,255,255,0.06);
+    --text: #d0d0d0;
+    --muted: #3a3a3a;
+    --green: #4ade80;
+    --green-glow: rgba(74,222,128,0.18);
+    --blue: #3d5fa0;
+    --blue-hi: #7aa3e8;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 12px; color: var(--text);
+    display: flex; flex-direction: column;
+  }
+
+  /* ── Topbar ── */
+  .topbar {
+    height: 36px; flex-shrink: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 16px; gap: 10px;
+  }
+  .t-title { font-size: 10px; font-weight: 600; color: #444; letter-spacing: .08em; text-transform: uppercase; }
+  .t-badge {
+    display: none; padding: 2px 9px; border-radius: 20px; font-size: 10px;
+    background: rgba(74,222,128,.08); color: var(--green); border: 1px solid rgba(74,222,128,.2);
+  }
+  .t-spacer { flex: 1; }
+  .t-tag { font-size: 9px; color: #222; }
+
+  /* ── Ruler ── */
+  .ruler {
+    height: 22px; flex-shrink: 0;
+    background: #0a0a0a; border-bottom: 1px solid var(--border);
+    display: flex;
+  }
+  .ruler-gutter { width: 152px; flex-shrink: 0; border-right: 1px solid var(--border); }
+  .ruler-body { flex: 1; position: relative; }
+  .rmark {
+    position: absolute; bottom: 0; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .rmark span { font-size: 9px; color: var(--muted); margin-bottom: 2px; font-family: monospace; }
+  .rmark::after { content:''; width: 1px; height: 5px; background: #222; }
+
+  /* ── Track rows ── */
+  .track-row { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+
+  .track-label {
+    width: 152px; flex-shrink: 0;
+    background: var(--surface); border-right: 1px solid var(--border);
+    padding: 0 12px; display: flex; flex-direction: column; justify-content: center; gap: 3px;
+  }
+  .track-label .name { font-size: 11px; font-weight: 500; }
+  .track-label .meta { font-size: 9px; color: var(--muted); }
+
+  .track-body { flex: 1; position: relative; overflow: hidden; }
+
+  /* ── Video track ── */
+  .video-row .track-body { height: 52px; background: #0b0b0b; }
+
+  .vclip {
+    position: absolute; top: 7px; bottom: 7px;
+    background: #1e3060; border: 1px solid #3b5a9e; border-radius: 3px;
+    display: flex; align-items: center; padding: 0 9px;
+    font-size: 9px; color: #7090cc; overflow: hidden; white-space: nowrap;
+  }
+
+  .playhead {
+    position: absolute; top: 0; bottom: 0; width: 1px;
+    background: #4d90f0; z-index: 5; pointer-events: none;
+    left: 30%;
+  }
+  .playhead::before {
+    content: ''; position: absolute; top: 0; left: -4px;
+    border-left: 5px solid transparent; border-right: 5px solid transparent;
+    border-top: 7px solid #4d90f0;
+  }
+
+  /* ── Audio track ── */
+  .audio-row .track-label { border-left: 2px solid var(--green); }
+  .audio-row .track-body {
+    background: #0b0b0b;
+    height: 52px;
+    transition: height 0.4s cubic-bezier(0.4,0,0.2,1);
+    overflow: visible;
+    cursor: default;
+  }
+  .audio-row .track-body.expanded { height: 272px; overflow: visible; }
+
+  /* waveform strip - always 52px */
+  #wave-wrap {
+    position: absolute; top: 0; left: 0; right: 0; height: 52px;
+    z-index: 2;
+  }
+  #wave-wrap canvas { display: block; width: 100%; height: 100%; }
+
+  .wave-hint {
+    position: absolute; bottom: 6px; right: 10px;
+    font-size: 9px; color: var(--muted); pointer-events: none;
+    transition: opacity .2s;
+  }
+
+  /* expansion panel (spectrogram + thumbnails) */
+  #expand-wrap {
+    position: absolute; top: 52px; left: 0; right: 0;
+    height: 220px;
+    opacity: 0; transform: scaleY(0.92); transform-origin: top;
+    transition: opacity .35s ease, transform .35s ease;
+    pointer-events: none;
+    overflow: visible;
+  }
+  #expand-wrap.vis { opacity: 1; transform: scaleY(1); pointer-events: auto; }
+  #expand-wrap canvas { display: block; width: 100%; height: 100%; }
+
+  /* ── Filler ── */
+  .filler { flex: 1; display: flex; border-bottom: none; }
+  .filler .track-label { background: #080808; border-color: transparent; }
+  .filler .track-body { flex: 1; background: #070707; }
+
+  /* ── Controls ── */
+  .controls {
+    height: 42px; flex-shrink: 0;
+    background: var(--surface); border-top: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 16px; gap: 10px;
+  }
+  .btn {
+    padding: 5px 14px; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,.09); background: #1a1a1a;
+    color: var(--text); cursor: pointer; font-size: 11px; font-family: inherit;
+    transition: all .15s;
+  }
+  .btn:hover { background: #222; border-color: rgba(255,255,255,.15); }
+  .btn.on { background: rgba(74,222,128,.08); border-color: rgba(74,222,128,.35); color: var(--green); }
+  .ctrl-hint { font-size: 10px; color: #252525; transition: color .3s; }
+
+  /* ── Info bar ── */
+  .infobar {
+    height: 26px; flex-shrink: 0;
+    background: #090909; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: #242424; transition: color .3s;
+  }
+  .infobar.on { color: rgba(74,222,128,.38); }
+
+  /* ── Context menu ── */
+  .ctxmenu {
+    position: fixed; display: none;
+    background: #191919; border: 1px solid rgba(255,255,255,.09);
+    border-radius: 9px; padding: 4px; min-width: 194px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.8); z-index: 9999;
+    backdrop-filter: blur(8px);
+  }
+  .ctxmenu.open { display: block; }
+  .ctx-item {
+    padding: 7px 12px; border-radius: 5px; cursor: pointer;
+    font-size: 11px; display: flex; align-items: center; gap: 8px; color: var(--text);
+  }
+  .ctx-item:hover { background: rgba(255,255,255,.05); }
+  .ctx-item.g { color: var(--green); }
+  .ctx-item.r { color: #f87171; }
+  .ctx-item .ic { width: 14px; text-align: center; font-size: 12px; }
+  .ctx-div { height: 1px; background: var(--border); margin: 3px 0; }
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <span class="t-title">DiviDr · Audio Ducking</span>
+  <div class="t-badge" id="badge">● Ducking Active</div>
+  <div class="t-spacer"></div>
+  <span class="t-tag">mockup</span>
+</div>
+
+<!-- Ruler -->
+<div class="ruler">
+  <div class="ruler-gutter"></div>
+  <div class="ruler-body" id="rulerBody"></div>
+</div>
+
+<!-- Video track -->
+<div class="track-row video-row">
+  <div class="track-label">
+    <div class="name">📹 Main Video</div>
+    <div class="meta">Layer 0 · 1080p</div>
+  </div>
+  <div class="track-body" id="videoBody">
+    <div class="playhead"></div>
+    <div class="vclip" style="left:1%;  width:27%;">interview_main.mp4</div>
+    <div class="vclip" style="left:30%; width:17%;">broll_gym.mp4</div>
+    <div class="vclip" style="left:49%; width:24%;">interview_pt2.mp4</div>
+    <div class="vclip" style="left:75%; width:23%;">outro.mp4</div>
+  </div>
+</div>
+
+<!-- Audio track -->
+<div class="track-row audio-row">
+  <div class="track-label">
+    <div class="name">🎵 Background Music</div>
+    <div class="meta">Layer ∞ · MP3 · Lowest</div>
+  </div>
+  <div class="track-body" id="audioBody">
+    <div id="wave-wrap">
+      <canvas id="waveCanvas"></canvas>
+      <div class="wave-hint" id="waveHint">hover to expand</div>
+    </div>
+    <div id="expand-wrap">
+      <canvas id="expandCanvas"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Filler -->
+<div class="track-row filler">
+  <div class="track-label"></div>
+  <div class="track-body" style="flex:1;"></div>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <button class="btn" id="duckBtn" onclick="toggleDuck()">🎚 Apply Audio Ducking</button>
+  <div class="t-spacer"></div>
+  <span class="ctrl-hint" id="ctrlHint">Right-click music track for options</span>
+</div>
+
+<!-- Info bar -->
+<div class="infobar" id="infobar">
+  Audio ducking is not automatic — apply it to unlock the spectrogram view on hover
+</div>
+
+<!-- Context menu -->
+<div class="ctxmenu" id="ctx">
+  <div class="ctx-item"><span class="ic">✂️</span> Split at Playhead</div>
+  <div class="ctx-item"><span class="ic">🔇</span> Mute Track</div>
+  <div class="ctx-item"><span class="ic">🔊</span> Set Volume…</div>
+  <div class="ctx-item"><span class="ic">⏱</span> Fade In / Fade Out</div>
+  <div class="ctx-div"></div>
+  <div class="ctx-item g" onclick="toggleDuck(); closeCtx()">
+    <span class="ic">🎚</span><span id="ctxLabel">Apply Audio Ducking</span>
+  </div>
+  <div class="ctx-div"></div>
+  <div class="ctx-item"><span class="ic">📋</span> Duplicate Track</div>
+  <div class="ctx-item r"><span class="ic">🗑</span> Remove Track</div>
+</div>
+
+<script>
+'use strict';
+
+/* ── State ─────────────────────────────────────────── */
+let ducking = false;
+let spectroImageData = null; // cached spectrogram pixels
+
+/* ── Duck regions (0–1 fractions of full timeline) ─── */
+const REGIONS = [
+  { s: 0.03, e: 0.26, label: '0:02 – 0:16' },
+  { s: 0.36, e: 0.51, label: '0:22 – 0:31' },
+  { s: 0.61, e: 0.82, label: '0:37 – 0:49' },
+];
+
+/* ── Seeded RNG (consistent spectrogram on each draw) ─ */
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(1664525, s) + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+/* ── Ruler ─────────────────────────────────────────── */
+function buildRuler() {
+  const el = document.getElementById('rulerBody');
+  el.innerHTML = '';
+  for (let i = 0; i <= 55; i += 5) {
+    const d = document.createElement('div');
+    d.className = 'rmark';
+    d.style.left = (i / 55 * 100) + '%';
+    const mm = String(Math.floor(i / 60)).padStart(2,'0');
+    const ss = String(i % 60).padStart(2,'0');
+    d.innerHTML = `<span>${mm}:${ss}</span>`;
+    el.appendChild(d);
+  }
+}
+
+/* ── Green color map ─────────────────────────────────
+   Maps energy 0–1 to a dark-green → bright-green → yellow-green palette */
+function greenMap(e) {
+  if (e < 0.06)       return [0,          Math.round(e/0.06*22),    Math.round(e/0.06*10)];
+  if (e < 0.28)  { const t=(e-0.06)/0.22; return [0, Math.round(22+t*88), Math.round(10-t*6)]; }
+  if (e < 0.55)  { const t=(e-0.28)/0.27; return [Math.round(t*30), Math.round(110+t*105), Math.round(4)]; }
+  if (e < 0.78)  { const t=(e-0.55)/0.23; return [Math.round(30+t*80), Math.round(215+t*28), 4]; }
+                 { const t=(e-0.78)/0.22; return [Math.round(110+t*145), Math.min(255,243+Math.round(t*12)), Math.round(t*30)]; }
+}
+
+/* ── Draw Waveform ───────────────────────────────────
+   Green waveform, dips smoothly at duck regions */
+function drawWave() {
+  const wrap = document.getElementById('wave-wrap');
+  const canvas = document.getElementById('waveCanvas');
+  const W = wrap.offsetWidth;
+  const H = 52;
+  if (W < 10) { requestAnimationFrame(drawWave); return; }
+
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const rng = makeRng(7331);
+
+  // Background
+  ctx.fillStyle = '#0b0b0b';
+  ctx.fillRect(0, 0, W, H);
+
+  const mid = H / 2;
+
+  // Draw line by line
+  for (let x = 0; x < W; x++) {
+    // Organic amplitude
+    const baseAmp = (
+      Math.abs(Math.sin(x * 0.27 + 0.8)) * 0.38 +
+      Math.abs(Math.sin(x * 0.69 + 2.0)) * 0.27 +
+      Math.abs(Math.sin(x * 1.43 + 0.4)) * 0.16 +
+      rng() * 0.06 + 0.08
+    ) * mid * 0.88;
+
+    let amp = baseAmp;
+    let col = '#4ade80';
+
+    if (ducking) {
+      for (const r of REGIONS) {
+        const x1 = r.s * W, x2 = r.e * W;
+        if (x >= x1 && x <= x2) {
+          // Smooth cosine taper
+          const t = (x - x1) / (x2 - x1);
+          const taper = (1 - Math.cos(t * Math.PI * 2)) * 0.5; // 0→1→0
+          const dip = 0.08 + (1 - taper) * 0.04; // max dip in center
+          amp = baseAmp * Math.min(taper * 0.5 + dip, 0.18);
+          col = 'rgba(74,222,128,0.28)';
+        }
+      }
+    }
+
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, mid - amp);
+    ctx.lineTo(x, mid + amp);
+    ctx.stroke();
+  }
+
+  // Duck region overlays
+  if (ducking) {
+    for (const r of REGIONS) {
+      const x1 = r.s * W, x2 = r.e * W, cx = (x1 + x2) / 2;
+      // Subtle fill
+      ctx.fillStyle = 'rgba(74,222,128,0.04)';
+      ctx.fillRect(x1, 0, x2 - x1, H);
+      // Soft border lines
+      for (const bx of [x1, x2]) {
+        const grd = ctx.createLinearGradient(bx, 0, bx, H);
+        grd.addColorStop(0,   'rgba(74,222,128,0.0)');
+        grd.addColorStop(0.5, 'rgba(74,222,128,0.35)');
+        grd.addColorStop(1,   'rgba(74,222,128,0.0)');
+        ctx.strokeStyle = grd;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, H); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // Tiny duck label
+      ctx.fillStyle = 'rgba(74,222,128,0.38)';
+      ctx.font = '8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('↓', cx, 12);
+      ctx.textAlign = 'left';
+    }
+  }
+}
+
+/* ── Build spectrogram image data (cached) ───────────
+   Only recomputed when W changes, runs once. */
+function buildSpectroCache(W, H) {
+  const rng = makeRng(2049);
+  const img = new ImageData(W, H);
+  const d = img.data;
+
+  for (let x = 0; x < W; x++) {
+    const t = x / W;
+    // Slightly vary energy over time
+    const tEnv = 0.85 + 0.15 * Math.sin(t * Math.PI * 4.3);
+
+    for (let y = 0; y < H; y++) {
+      const fq = 1 - y / H; // 0=low, 1=high
+
+      let e = rng() * 0.055 * tEnv; // noise floor
+
+      // Bass (0–15%)
+      e += Math.exp(-fq * 9.5) * (0.72 + 0.28 * Math.sin(x * 0.091 + 0.4)) * tEnv;
+
+      // Low-mid body (20–45%)
+      e += Math.exp(-Math.pow(fq - 0.32, 2) / 0.018) *
+           (0.55 + 0.38 * Math.sin(x * 0.047 + fq * 3.1)) * tEnv;
+
+      // Mid presence (40–60%)
+      e += Math.exp(-Math.pow(fq - 0.52, 2) / 0.014) *
+           (0.38 + 0.3 * Math.sin(x * 0.062 + 1.7)) * tEnv * 0.7;
+
+      // High shimmer (75–90%)
+      e += Math.exp(-Math.pow(fq - 0.82, 2) / 0.008) *
+           (0.28 + 0.22 * Math.sin(x * 0.21 + 0.9)) * tEnv * 0.6;
+
+      // Air (90%+)
+      e += Math.exp(-Math.pow(fq - 0.95, 2) / 0.003) * 0.12 * tEnv;
+
+      e = Math.min(1, e);
+      const [r,g,b] = greenMap(e);
+      const i = (y * W + x) * 4;
+      d[i]=r; d[i+1]=g; d[i+2]=b; d[i+3]=255;
+    }
+  }
+  return img;
+}
+
+/* ── Draw expansion panel (spectrogram + thumbnails) ─ */
+function drawExpand() {
+  const wrap   = document.getElementById('expand-wrap');
+  const canvas = document.getElementById('expandCanvas');
+  const W = wrap.offsetWidth;
+  const H = 220;
+  if (W < 10) return;
+
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // ── Zones ─────────────────────────────────────────
+  const THUMB_H  = 62;  // thumbnail zone height
+  const SPECTRO_Y = THUMB_H;
+  const SPECTRO_H = H - THUMB_H;
+
+  // ── Background ────────────────────────────────────
+  ctx.fillStyle = '#080d09';
+  ctx.fillRect(0, 0, W, H);
+
+  // ── Build / use cached spectrogram ────────────────
+  if (!spectroImageData || spectroImageData.width !== W) {
+    spectroImageData = buildSpectroCache(W, SPECTRO_H);
+  }
+  ctx.putImageData(spectroImageData, 0, SPECTRO_Y);
+
+  // ── Dim duck regions on spectrogram ───────────────
+  if (ducking) {
+    for (const r of REGIONS) {
+      const x1 = r.s * W, x2 = r.e * W;
+      ctx.fillStyle = 'rgba(0,0,0,0.62)';
+      ctx.fillRect(x1, SPECTRO_Y, x2 - x1, SPECTRO_H);
+    }
+  }
+
+  // ── Frequency axis ────────────────────────────────
+  const freqs = [['18k', 0.03], ['8k', 0.19], ['3k', 0.38], ['1k', 0.57], ['300', 0.76], ['60', 0.92]];
+  ctx.fillStyle = 'rgba(74,222,128,0.28)';
+  ctx.font = '8px monospace';
+  for (const [lbl, frac] of freqs) {
+    ctx.fillText(lbl, 4, SPECTRO_Y + frac * SPECTRO_H + 3);
+  }
+
+  // ── Separator line (thumb zone / spectrogram) ─────
+  const sepGrd = ctx.createLinearGradient(0, SPECTRO_Y, W, SPECTRO_Y);
+  sepGrd.addColorStop(0,   'rgba(74,222,128,0)');
+  sepGrd.addColorStop(0.15,'rgba(74,222,128,0.15)');
+  sepGrd.addColorStop(0.85,'rgba(74,222,128,0.15)');
+  sepGrd.addColorStop(1,   'rgba(74,222,128,0)');
+  ctx.strokeStyle = sepGrd;
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(0, SPECTRO_Y); ctx.lineTo(W, SPECTRO_Y);
+  ctx.stroke();
+
+  if (!ducking) {
+    // No markers — just show clean spectrogram teaser
+    ctx.fillStyle = 'rgba(74,222,128,0.18)';
+    ctx.font = '11px Inter, system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('Apply ducking to see markers', W / 2, THUMB_H / 2 + 4);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // ── For each duck region: draw connector + thumbnail ──
+  for (const r of REGIONS) {
+    const cx   = ((r.s + r.e) / 2) * W;
+    const x1   = r.s * W;
+    const x2   = r.e * W;
+
+    // -- Connector line (from thumb zone into spectrogram) --
+    // Glow pass (blurred, wide)
+    ctx.save();
+    ctx.shadowBlur   = 12;
+    ctx.shadowColor  = 'rgba(74,222,128,0.5)';
+    const lineGrd = ctx.createLinearGradient(cx, SPECTRO_Y + 2, cx, SPECTRO_Y + SPECTRO_H * 0.7);
+    lineGrd.addColorStop(0,   'rgba(74,222,128,0.75)');
+    lineGrd.addColorStop(0.55,'rgba(74,222,128,0.3)');
+    lineGrd.addColorStop(1,   'rgba(74,222,128,0)');
+    ctx.strokeStyle = lineGrd;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, SPECTRO_Y + 2);
+    ctx.lineTo(cx, SPECTRO_Y + SPECTRO_H * 0.72);
+    ctx.stroke();
+    ctx.restore();
+
+    // Line from thumb bottom → spectrogram separator
+    const connGrd = ctx.createLinearGradient(cx, 8, cx, SPECTRO_Y + 2);
+    connGrd.addColorStop(0,   'rgba(74,222,128,0)');
+    connGrd.addColorStop(0.5, 'rgba(74,222,128,0.35)');
+    connGrd.addColorStop(1,   'rgba(74,222,128,0.7)');
+    ctx.strokeStyle = connGrd;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx, 8);
+    ctx.lineTo(cx, SPECTRO_Y + 2);
+    ctx.stroke();
+
+    // Duck region: shaded band on spectrogram + soft edge lines
+    for (const bx of [x1, x2]) {
+      const edgeGrd = ctx.createLinearGradient(bx, SPECTRO_Y, bx, SPECTRO_Y + SPECTRO_H);
+      edgeGrd.addColorStop(0,   'rgba(74,222,128,0.22)');
+      edgeGrd.addColorStop(0.5, 'rgba(74,222,128,0.12)');
+      edgeGrd.addColorStop(1,   'rgba(74,222,128,0.0)');
+      ctx.strokeStyle = edgeGrd;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath(); ctx.moveTo(bx, SPECTRO_Y); ctx.lineTo(bx, SPECTRO_Y + SPECTRO_H); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // -- Thumbnail frame --
+    const TW = 66, TH = 40;
+    const tx = Math.max(6, Math.min(cx - TW / 2, W - TW - 6));
+    const ty = (THUMB_H - TH) / 2; // vertically centred in thumb zone
+
+    // Shadow behind thumb
+    ctx.save();
+    ctx.shadowBlur  = 14;
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+    ctx.fillStyle = '#0a140c';
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, TW, TH, 3);
+    ctx.fill();
+    ctx.restore();
+
+    // "Video content" gradient fill
+    const vGrd = ctx.createRadialGradient(tx + TW*0.4, ty + TH*0.4, 2, tx + TW/2, ty + TH/2, TW*0.6);
+    vGrd.addColorStop(0, '#1a2e1c');
+    vGrd.addColorStop(1, '#0c1a0e');
+    ctx.fillStyle = vGrd;
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, TW, TH, 3);
+    ctx.fill();
+
+    // Scan-line texture (subtle horizontal lines)
+    ctx.fillStyle = 'rgba(74,222,128,0.04)';
+    for (let row = 0; row < Math.floor(TH / 4); row++) {
+      ctx.fillRect(tx + 1, ty + 1 + row * 4, TW - 2, 2);
+    }
+
+    // Play icon (triangle, very subtle)
+    ctx.fillStyle = 'rgba(74,222,128,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(cx - 7, ty + TH / 2 - 7);
+    ctx.lineTo(cx - 7, ty + TH / 2 + 7);
+    ctx.lineTo(cx + 9, ty + TH / 2);
+    ctx.closePath();
+    ctx.fill();
+
+    // Frame border — green glow
+    ctx.save();
+    ctx.shadowBlur  = 6;
+    ctx.shadowColor = 'rgba(74,222,128,0.4)';
+    ctx.strokeStyle = 'rgba(74,222,128,0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, TW, TH, 3);
+    ctx.stroke();
+    ctx.restore();
+
+    // Dot at connector join (thumb bottom)
+    const dotY = ty + TH + 1;
+    ctx.save();
+    ctx.shadowBlur  = 8;
+    ctx.shadowColor = 'rgba(74,222,128,0.7)';
+    ctx.fillStyle = 'rgba(74,222,128,0.85)';
+    ctx.beginPath();
+    ctx.arc(cx, dotY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Timestamp pill
+    const tsW = 72, tsH = 14;
+    const tsx = Math.max(4, Math.min(cx - tsW/2, W - tsW - 4));
+    const tsy = SPECTRO_Y + SPECTRO_H - 18;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.roundRect(tsx, tsy, tsW, tsH, 3);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(74,222,128,0.75)';
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(r.label, tsx + tsW/2, tsy + 10);
+    ctx.textAlign = 'left';
+  }
+
+  // "DUCKING ACTIVE" badge top-right of spectrogram
+  const bw = 106, bh = 15;
+  ctx.fillStyle = 'rgba(74,222,128,0.07)';
+  ctx.beginPath();
+  ctx.roundRect(W - bw - 8, SPECTRO_Y + 6, bw, bh, 3);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(74,222,128,0.22)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(74,222,128,0.55)';
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText('● DUCKING ACTIVE', W - 10, SPECTRO_Y + 17);
+  ctx.textAlign = 'left';
+}
+
+/* ── Hover expand ─────────────────────────────────── */
+const audioBody  = document.getElementById('audioBody');
+const expandWrap = document.getElementById('expand-wrap');
+const waveHint   = document.getElementById('waveHint');
+let expandDrawn  = false;
+
+audioBody.addEventListener('mouseenter', () => {
+  if (!ducking) return;
+  audioBody.classList.add('expanded');
+  expandWrap.classList.add('vis');
+  if (!expandDrawn) { requestAnimationFrame(drawExpand); expandDrawn = true; }
+});
+
+audioBody.addEventListener('mouseleave', () => {
+  audioBody.classList.remove('expanded');
+  expandWrap.classList.remove('vis');
+});
+
+/* ── Toggle ducking ───────────────────────────────── */
+function toggleDuck() {
+  ducking = !ducking;
+  expandDrawn = false; // force redraw with new state
+
+  const btn     = document.getElementById('duckBtn');
+  const badge   = document.getElementById('badge');
+  const infobar = document.getElementById('infobar');
+  const hint    = document.getElementById('ctrlHint');
+  const ctxLbl  = document.getElementById('ctxLabel');
+
+  if (ducking) {
+    btn.textContent = '✓ Ducking On';
+    btn.classList.add('on');
+    badge.style.display = '';
+    waveHint.textContent = 'hover to see spectrogram';
+    infobar.textContent = 'Ducking applied to 3 narration regions · Hover the music track to see the breakdown';
+    infobar.classList.add('on');
+    hint.style.color = '#303030';
+    ctxLbl.textContent = 'Remove Audio Ducking';
+  } else {
+    btn.textContent = '🎚 Apply Audio Ducking';
+    btn.classList.remove('on');
+    badge.style.display = 'none';
+    waveHint.textContent = 'hover to expand';
+    infobar.textContent = 'Audio ducking is not automatic — apply it to unlock the spectrogram view on hover';
+    infobar.classList.remove('on');
+    hint.style.color = '#252525';
+    ctxLbl.textContent = 'Apply Audio Ducking';
+    audioBody.classList.remove('expanded');
+    expandWrap.classList.remove('vis');
+  }
+  drawWave();
+}
+
+/* ── Context menu ─────────────────────────────────── */
+audioBody.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const m = document.getElementById('ctx');
+  m.style.left = Math.min(e.clientX, window.innerWidth - 204) + 'px';
+  m.style.top  = Math.min(e.clientY, window.innerHeight - 240) + 'px';
+  m.classList.add('open');
+  document.getElementById('ctxLabel').textContent = ducking ? 'Remove Audio Ducking' : 'Apply Audio Ducking';
+});
+document.addEventListener('click', closeCtx);
+function closeCtx() { document.getElementById('ctx').classList.remove('open'); }
+
+/* ── Init ─────────────────────────────────────────── */
+window.addEventListener('load', () => {
+  buildRuler();
+  // Double rAF ensures layout has fully settled before measuring widths
+  requestAnimationFrame(() => requestAnimationFrame(drawWave));
+  window.addEventListener('resize', () => {
+    spectroImageData = null;
+    drawWave();
+    if (expandWrap.classList.contains('vis')) drawExpand();
+  });
+});
+</script>
+</body>
+</html>

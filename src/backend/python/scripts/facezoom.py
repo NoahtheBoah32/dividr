@@ -1,22 +1,19 @@
 """
-Face-tracking zoom for DiviDr.
+Face-tracking / object-tracking zoom for DiviDr.
 
 Pipeline:
-  1. Sample every Nth frame in the target range with MediaPipe face detection
-  2. Cubic-spline interpolate back to full frame count
-  3. Gaussian smooth to mimic a camera operator's hand
-  4. Write a per-frame coords file consumed by FFmpeg zoompan
-  5. Run FFmpeg zoompan pass → output file
-
-Usage (via main.py):
-  dividr-tools face-zoom --input <file> --output <file>
-      --start <sec> --end <sec>
-      [--zoom 1.5] [--ease 0.4] [--sample-every 6]
+  1. YOLO finds the target's bounding box; CSRT tracker is initialised on it.
+  2. Per-frame: CSRT is updated every frame (required for lock stability).
+     Every N frames YOLO attempts a re-anchor.
+  3. When both CSRT and YOLO fail (e.g. ball mid-flight), velocity is
+     extrapolated from the rolling position history so the camera keeps moving.
+  4. Gaussian-smooth the position path, apply per-frame crop+scale via
+     OpenCV piped to FFmpeg.
 """
 
 import argparse
+import collections
 import json
-import math
 import os
 import subprocess
 import sys
@@ -26,7 +23,6 @@ import cv2
 import numpy as np
 
 try:
-    from scipy.interpolate import CubicSpline
     from scipy.ndimage import gaussian_filter1d
     _SCIPY_AVAILABLE = True
 except ImportError:
@@ -34,7 +30,7 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# YOLO-80 class alias table — maps user-friendly names to COCO class IDs
+# YOLO-80 class alias table
 # ---------------------------------------------------------------------------
 
 YOLO_CLASS_ALIASES: dict[str, int] = {
@@ -71,7 +67,7 @@ YOLO_CLASS_ALIASES: dict[str, int] = {
     'skis': 30, 'ski': 30,
     'snowboard': 31,
     'sports ball': 32, 'ball': 32, 'basketball': 32, 'soccer ball': 32,
-    'football': 32, 'tennis ball': 32,
+    'football': 32, 'tennis ball': 32, 'baseball': 32,
     'kite': 33,
     'baseball bat': 34, 'bat': 34,
     'baseball glove': 35, 'glove': 35,
@@ -121,17 +117,13 @@ YOLO_CLASS_ALIASES: dict[str, int] = {
     'toothbrush': 79,
 }
 
+_BALL_CLASS_IDS = {32}
+
 
 def resolve_to_yolo_class(target: str) -> int | None:
-    """
-    Map a user-supplied target string to a YOLO COCO class ID.
-    Returns None if the target is not in the 80-class vocabulary
-    (meaning Grounding DINO should be used instead).
-    """
     t = target.lower().strip()
     if t in YOLO_CLASS_ALIASES:
         return YOLO_CLASS_ALIASES[t]
-    # Substring match — "big ball" → matches "ball"
     for alias, class_id in YOLO_CLASS_ALIASES.items():
         if alias in t or t in alias:
             return class_id
@@ -139,28 +131,83 @@ def resolve_to_yolo_class(target: str) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Face detection — OpenCV Haar cascade (no torch/mediapipe dependency)
+# Model / tracker helpers
 # ---------------------------------------------------------------------------
 
 def _load_yolo():
     try:
         from ultralytics import YOLO
-        model = YOLO('yolov8n.pt')
-        return model
+        return YOLO('yolov8n.pt')
     except Exception:
         return None
 
 
+def _make_csrt_tracker():
+    try:
+        return cv2.TrackerCSRT_create()
+    except AttributeError:
+        return cv2.legacy.TrackerCSRT_create()
+
+
+# ---------------------------------------------------------------------------
+# Detection helpers
+# ---------------------------------------------------------------------------
+
+def _detect_yolo_bbox(frame, model, class_id: int,
+                      upscale: float = 1.0,
+                      conf: float = 0.08,
+                      max_aspect: float = 10.0,
+                      max_area_frac: float = 1.0):
+    """
+    Run YOLO for a single class. Returns (x, y, w, h) in original-frame
+    pixel coords or None.
+
+    upscale > 1 zooms the frame before detection so tiny objects (e.g. a ball
+    in a wide shot) are large enough for YOLO to see. Returned bbox is always
+    in original coordinates.
+    """
+    if upscale > 1.0:
+        oh, ow = frame.shape[:2]
+        det_frame = cv2.resize(frame, (int(ow * upscale), int(oh * upscale)),
+                               interpolation=cv2.INTER_LINEAR)
+    else:
+        det_frame = frame
+        upscale = 1.0
+
+    fh, fw = frame.shape[:2]
+    frame_area = fw * fh
+
+    results = model(det_frame, device='cpu', classes=[class_id],
+                    verbose=False, conf=conf)
+    best, best_conf = None, 0.0
+    for r in results:
+        for box in r.boxes:
+            c = float(box.conf[0])
+            if c <= best_conf:
+                continue
+            x1, y1, x2, y2 = [v / upscale for v in box.xyxy[0].tolist()]
+            bw, bh = x2 - x1, y2 - y1
+            if bw < 1 or bh < 1:
+                continue
+            if max(bw / bh, bh / bw) > max_aspect:
+                continue
+            if (bw * bh) / frame_area > max_area_frac:
+                continue
+            best_conf = c
+            best = (x1, y1, bw, bh)
+
+    if best is None:
+        return None
+    return (int(best[0]), int(best[1]), int(best[2]), int(best[3]))
+
+
 def _detect_face_yolo(frame, model, width, height):
     """
-    Use YOLO person detection (class 0) to locate the person bounding box,
-    then run Haar cascade face detection inside the head region for precision.
-    Falls back to top-10% person estimate if no face is found in the crop.
-    Returns (cx, cy) in [0,1] or None.
+    YOLO person detection + Haar cascade face refinement.
+    Returns (cx, cy) normalised [0,1] or None.
     """
     results = model(frame, device='cpu', classes=[0], verbose=False, conf=0.35)
-    best = None
-    best_conf = 0.0
+    best, best_conf = None, 0.0
     for r in results:
         for box in r.boxes:
             conf = float(box.conf[0])
@@ -173,36 +220,26 @@ def _detect_face_yolo(frame, model, width, height):
 
     x1, y1, x2, y2 = best
     person_h = y2 - y1
-    person_w = x2 - x1
-    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-
-    # Search for face in the top 30% of the person crop
-    head_y2 = int(y1 + person_h * 0.30)
-    head_y2 = min(head_y2, height)
-    head_crop = frame[y1:head_y2, x1:x2]
+    x1i, y1i, x2i = int(x1), int(y1), int(x2)
 
     face_cx_px = (x1 + x2) / 2.0
-    face_cy_px = y1 + person_h * 0.10  # default fallback: top 10%
+    face_cy_px = y1 + person_h * 0.10
+
+    head_y2 = min(int(y1 + person_h * 0.30), height)
+    head_crop = frame[y1i:head_y2, x1i:x2i]
 
     if head_crop.size > 0:
         gray = cv2.cvtColor(head_crop, cv2.COLOR_BGR2GRAY)
         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         cascade = cv2.CascadeClassifier(cascade_path)
-        faces = cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.05,
-            minNeighbors=2,
-            minSize=(20, 20),
-            flags=cv2.CASCADE_SCALE_IMAGE,
-        )
+        faces = cascade.detectMultiScale(gray, scaleFactor=1.05,
+                                         minNeighbors=2, minSize=(20, 20),
+                                         flags=cv2.CASCADE_SCALE_IMAGE)
         if len(faces) > 0:
-            # Use the largest detected face (most confident)
             fx, fy, fw, fh = max(faces, key=lambda r: r[2] * r[3])
-            face_cx_px = x1 + fx + fw / 2.0
-            face_cy_px = y1 + fy + fh / 2.0
+            face_cx_px = x1i + fx + fw / 2.0
+            face_cy_px = y1i + fy + fh / 2.0
             print(f"PROGRESS|face_cascade_hit|cx={face_cx_px/width:.2f}_cy={face_cy_px/height:.2f}", flush=True)
-        else:
-            print(f"PROGRESS|face_cascade_miss|using_estimate", flush=True)
 
     return (
         max(0.0, min(1.0, face_cx_px / width)),
@@ -210,12 +247,11 @@ def _detect_face_yolo(frame, model, width, height):
     )
 
 
+# ---------------------------------------------------------------------------
+# Face detection path
+# ---------------------------------------------------------------------------
+
 def detect_faces_in_clip(video_path, start_sec, end_sec, sample_every=6):
-    """
-    Sample every `sample_every` frames in [start_sec, end_sec].
-    Uses YOLO person detection → face-top estimate.
-    Returns list of (frame_index, cx, cy) — cx/cy in [0,1] relative coords.
-    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -224,30 +260,28 @@ def detect_faces_in_clip(video_path, start_sec, end_sec, sample_every=6):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     width        = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height       = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    start_frame = max(0, int(start_sec * fps))
-    end_frame   = min(total_frames - 1, int(end_sec * fps))
+    start_frame  = max(0, int(start_sec * fps))
+    end_frame    = min(total_frames - 1, int(end_sec * fps))
 
     model = _load_yolo()
     if model is None:
         raise RuntimeError("ultralytics not installed — run: pip install ultralytics")
 
     detections = []
-    current_frame = start_frame
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    current_frame = start_frame
 
     while current_frame <= end_frame:
         ret, frame = cap.read()
         if not ret:
             break
-
         actual_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
 
         if (actual_pos - start_frame) % sample_every == 0:
             result = _detect_face_yolo(frame, model, width, height)
             if result:
                 detections.append((actual_pos, result[0], result[1]))
-                print(f"PROGRESS|detected_person_at_frame_{actual_pos}|cx={result[0]:.2f}_cy={result[1]:.2f}", flush=True)
+                print(f"PROGRESS|face_detected|frame={actual_pos}|cx={result[0]:.2f}_cy={result[1]:.2f}", flush=True)
 
         next_target = start_frame + (((actual_pos - start_frame) // sample_every) + 1) * sample_every
         if next_target > actual_pos + 1 and next_target <= end_frame:
@@ -261,194 +295,88 @@ def detect_faces_in_clip(video_path, start_sec, end_sec, sample_every=6):
 
 
 # ---------------------------------------------------------------------------
-# Object detection — YOLO arbitrary class + Grounding DINO zero-shot
+# Object tracking — CSRT + YOLO + velocity extrapolation
 # ---------------------------------------------------------------------------
 
-def _detect_object_yolo_bbox(frame, model, class_id: int, upscale: float = 1.0,
-                              max_area_fraction: float = 1.0,
-                              max_aspect_ratio: float = 10.0,
-                              conf_threshold: float = 0.08):
+def _track_object(cap, model, yolo_class_id, width, height, fps,
+                  start_frame, end_frame, sample_every=2):
     """
-    Run YOLO detection for a single class.
-    Returns (x, y, w, h) pixel bbox of the best detection, or None.
-    Used to initialize the CSRT tracker.
+    Track yolo_class_id from start_frame to end_frame.
 
-    upscale > 1.0 enlarges the frame before detection so tiny objects
-    (e.g. a ball in a wide broadcast shot) appear large enough for YOLO
-    to fire. The returned bbox is always in original-frame coordinates.
+    Phase 1  Scan the first 5 s of the clip with YOLO to find the object.
+             For balls: collect all candidates in the first 2 s, then pick
+             the smallest (the ball is always smaller than the bat/club head
+             that YOLO tends to detect first).
+             Init CSRT on the winning bbox.
 
-    max_area_fraction: reject detections whose bbox area exceeds this fraction
-      of the total frame area (e.g. 0.04 = reject anything > 4% of the frame).
-    max_aspect_ratio: reject detections where w/h or h/w exceeds this value.
-      Use ~2.5 for balls to filter out elongated false positives (club heads).
+    Phase 2  Read every frame:
+             - Update CSRT (must happen every frame to maintain lock).
+             - Every sample_every frames, run YOLO as a re-anchor.
+             - Priority: YOLO > CSRT > velocity extrapolation.
+             - Velocity extrapolation: when both CSRT and YOLO fail, compute
+               the average velocity over the last 8 positions and project
+               forward. This prevents the camera from freezing mid-flight.
+
+    Returns [(frame_idx, cx, cy)] with cx/cy normalised [0, 1].
     """
-    if upscale > 1.0:
-        h, w = frame.shape[:2]
-        detect_frame = cv2.resize(frame, (int(w * upscale), int(h * upscale)),
-                                  interpolation=cv2.INTER_LINEAR)
-    else:
-        detect_frame = frame
-        upscale = 1.0
+    is_ball     = yolo_class_id in _BALL_CLASS_IDS
+    upscale     = 4.0 if is_ball else 1.0
+    init_window = min(start_frame + int(fps * 5), end_frame)
 
-    fh, fw = frame.shape[:2]
-    frame_area = fw * fh
-
-    results = model(detect_frame, device='cpu', classes=[class_id], verbose=False,
-                    conf=conf_threshold)
-    best, best_conf = None, 0.0
-    for r in results:
-        for box in r.boxes:
-            conf = float(box.conf[0])
-            if conf <= best_conf:
-                continue
-            x1, y1, x2, y2 = [v / upscale for v in box.xyxy[0].tolist()]
-            bw, bh = x2 - x1, y2 - y1
-            if bw < 1 or bh < 1:
-                continue
-            # Reject non-round detections (elongated club heads, etc.)
-            aspect = max(bw / bh, bh / bw)
-            if aspect > max_aspect_ratio:
-                continue
-            # Reject detections that are too large relative to the frame
-            if (bw * bh) / frame_area > max_area_fraction:
-                continue
-            best_conf = conf
-            best = (x1, y1, bw, bh)
-
-    if best is None:
-        return None
-    return (int(best[0]), int(best[1]), int(best[2]), int(best[3]))
-
-
-# Ball class IDs in YOLO COCO
-_BALL_CLASS_IDS = {32}  # sports ball
-
-
-def _make_csrt_tracker():
-    """Create a CSRT tracker — works with both contrib and legacy namespaces."""
-    try:
-        return cv2.TrackerCSRT_create()
-    except AttributeError:
-        return cv2.legacy.TrackerCSRT_create()
-
-
-def _csrt_track_clip(cap, model, gdino, yolo_class_id, target,
-                     start_frame, end_frame, fps, width, height, sample_every):
-    """
-    CSRT-based object tracking for the segment [start_frame, end_frame].
-
-    Phase 1 — Initialization: scan up to 5 seconds of the segment with YOLO /
-    Grounding DINO to find one reliable bounding box for the object. As soon as
-    one is found, initialize the CSRT tracker.
-
-    Phase 2 — Tracking: update CSRT on every frame (not just sampled ones — CSRT
-    needs continuous updates to stay locked). Record position at sampled frames.
-    If CSRT loses track, immediately try YOLO again to reinitialize.
-
-    Returns list of (frame_idx, cx, cy) with cx/cy in [0,1].
-    """
-    tracker   = None
-    init_done = False
-    detections = []
-    is_ball    = yolo_class_id in _BALL_CLASS_IDS
-
-    # ── Phase 1: find initial bbox ──
-    # Balls in wide shots may be occluded early; give more search window.
-    init_search_seconds = 10 if is_ball else 5
-    search_end = min(start_frame + int(fps * init_search_seconds), end_frame)
+    # ── Phase 1: find initial bbox ────────────────────────────────────────
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    candidates = []  # (area, bbox, frame_idx, frame_copy)
+    ball_scan_end = min(start_frame + int(fps * 2), init_window)
 
-    # Upscale factor for YOLO detection — helps with tiny objects in wide shots
-    # (ball in broadcast football, etc.). 1.0 for large objects, 4.0 for balls.
-    yolo_upscale = 4.0 if is_ball else 1.0
-
-    # For balls: lock in the initial detected size and use it to reject
-    # wildly different detections later (club heads, etc.)
-    init_bbox_area: float = 0.0   # area in pixels of the first confirmed detection
-    last_cx: float = -1.0         # last confirmed center, for jump guard
-    last_cy: float = -1.0
-
-    # For ball tracking: scan a short window and pick the SMALLEST detection
-    # (the ball is always smaller than the club head which YOLO often detects first).
-    # For non-ball targets: stop at the first confident detection.
-    ball_candidates: list = []  # (area, bbox, frame_pos, frame_data)
-    ball_scan_end = min(start_frame + int(fps * 2), search_end) if is_ball else search_end
-
-    while not init_done:
+    while True:
         ret, frame = cap.read()
         if not ret:
             break
         pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
-
-        # For balls: collect candidates for 2s then pick smallest; after that fall through normally
-        scan_phase = is_ball and pos <= ball_scan_end
-
-        if pos > search_end:
+        if pos > init_window:
             break
 
-        bbox = None
-        if yolo_class_id is not None:
-            bbox = _detect_object_yolo_bbox(
-                frame, model, yolo_class_id, upscale=yolo_upscale,
-                max_aspect_ratio=2.5 if is_ball else 10.0,
-                # Lower threshold in Phase 1 so tiny balls register at all
-                conf_threshold=0.05 if is_ball else 0.08,
-            )
-        else:
-            # Grounding DINO returns (cx,cy) normalized — convert to bbox estimate
-            from PIL import Image
-            rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_img  = Image.fromarray(rgb)
-            results  = gdino(pil_img, candidate_labels=[target], threshold=0.25)
-            if results:
-                best = max(results, key=lambda r: r['score'])
-                box  = best['box']
-                bbox = (box['xmin'], box['ymin'],
-                        box['xmax'] - box['xmin'], box['ymax'] - box['ymin'])
+        bbox = _detect_yolo_bbox(frame, model, yolo_class_id,
+                                  upscale=upscale,
+                                  conf=0.25 if is_ball else 0.08,
+                                  max_aspect=2.5 if is_ball else 10.0,
+                                  max_area_frac=0.015 if is_ball else 1.0)
 
-        if bbox is not None and bbox[2] > 4 and bbox[3] > 4:
-            if scan_phase:
-                # Collect this candidate; don't commit yet
-                ball_candidates.append((float(bbox[2] * bbox[3]), bbox, pos, frame.copy()))
-                # Once scan window ends, pick the smallest
-                if pos >= ball_scan_end and ball_candidates:
-                    _, bbox, pos, frame = min(ball_candidates, key=lambda c: c[0])
-                    scan_phase = False
-                else:
-                    continue
+        if bbox and bbox[2] > 4 and bbox[3] > 4:
+            area = float(bbox[2] * bbox[3])
+            candidates.append((area, bbox, pos, frame.copy()))
+            if is_ball and pos < ball_scan_end:
+                continue  # keep scanning for a smaller (truer) ball candidate
+            break  # non-ball or past scan window: first confident hit is enough
 
-            tracker = _make_csrt_tracker()
-            tracker.init(frame, bbox)
-            init_done = True
-            init_bbox_area = float(bbox[2] * bbox[3])
-            cx = (bbox[0] + bbox[2] / 2) / width
-            cy = (bbox[1] + bbox[3] / 2) / height
-            last_cx, last_cy = cx, cy
-            detections.append((pos, max(0.0, min(1.0, cx)), max(0.0, min(1.0, cy))))
-            print(f"PROGRESS|csrt_init|frame={pos}|cx={cx:.2f}_cy={cy:.2f}", flush=True)
+    # If ball scan window ended without a break, we may still have candidates
+    if not candidates:
+        print("PROGRESS|csrt_init_failed|no_detection_in_search_window", flush=True)
+        return []
 
-    # If scan window ended with candidates but loop exited without committing, pick smallest now
-    if not init_done and ball_candidates:
-        _, bbox, pos, frame = min(ball_candidates, key=lambda c: c[0])
-        tracker = _make_csrt_tracker()
-        tracker.init(frame, bbox)
-        init_done = True
-        init_bbox_area = float(bbox[2] * bbox[3])
-        cx = (bbox[0] + bbox[2] / 2) / width
-        cy = (bbox[1] + bbox[3] / 2) / height
-        last_cx, last_cy = cx, cy
-        detections.append((pos, max(0.0, min(1.0, cx)), max(0.0, min(1.0, cy))))
-        print(f"PROGRESS|csrt_init_smallest|frame={pos}|cx={cx:.2f}_cy={cy:.2f}", flush=True)
+    if is_ball:
+        _, init_bbox, init_pos, init_frame = min(candidates, key=lambda c: c[0])
+    else:
+        _, init_bbox, init_pos, init_frame = candidates[0]
 
-    if not init_done:
-        print("PROGRESS|csrt_init_failed|no_detection_in_first_5s", flush=True)
-        return detections
+    tracker = _make_csrt_tracker()
+    tracker.init(init_frame, init_bbox)
 
-    # ── Phase 2: detector-tracker fusion ──
-    # Every sampled frame: try YOLO first. YOLO hit → record + reinit CSRT.
-    # YOLO miss → fall back to CSRT output. CSRT miss → skip frame (interpolation fills it).
-    # This means CSRT never drifts for more than sample_every frames without a YOLO anchor.
-    consecutive_csrt_fails = 0
+    cx0 = max(0.0, min(1.0, (init_bbox[0] + init_bbox[2] / 2) / width))
+    cy0 = max(0.0, min(1.0, (init_bbox[1] + init_bbox[3] / 2) / height))
+    print(f"PROGRESS|csrt_init|frame={init_pos}|cx={cx0:.2f}_cy={cy0:.2f}", flush=True)
+
+    detections          = [(init_pos, cx0, cy0)]
+    pos_history         = collections.deque([(cx0, cy0)], maxlen=8)
+    last_confirmed_frame = init_pos  # last frame with a real YOLO/CSRT hit
+
+    # ── Phase 2: per-frame tracking ───────────────────────────────────────
+    LOST_LIMIT      = int(fps * 2.0)  # extrapolate up to 2 s before giving up
+    REANCHOR_LIMIT  = int(fps * 0.5)  # stop YOLO re-anchoring after 0.5 s of loss
+    frames_lost     = 0
+    frames_since_yolo = 0
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, init_pos + 1)
 
     while True:
         ret, frame = cap.read()
@@ -458,112 +386,103 @@ def _csrt_track_clip(cap, model, gdino, yolo_class_id, target,
         if pos > end_frame:
             break
 
-        is_sample = (pos - start_frame) % sample_every == 0
+        # Always update CSRT — needs every frame to keep its appearance model current
+        csrt_ok, csrt_bbox = tracker.update(frame)
 
-        # Always update CSRT to keep it current (even on non-sample frames)
-        csrt_success, csrt_bbox = tracker.update(frame)
+        found = None
 
-        if is_sample:
-            result_pos = None
+        # Pre-compute expected position from velocity for use in the YOLO gate below.
+        # Also detect if velocity projects the ball outside the frame — if so, the ball
+        # has exited and CSRT is silently tracking background drift. Block both CSRT
+        # and YOLO to prevent the camera jumping to a wrong object (water bottles, etc.).
+        expected_pos = None
+        ball_exited  = False
+        if len(pos_history) >= 2:
+            hist = list(pos_history)
+            n    = len(hist)
+            vx   = (hist[-1][0] - hist[0][0]) / max(1, n - 1)
+            vy   = (hist[-1][1] - hist[0][1]) / max(1, n - 1)
+            raw_x = hist[-1][0] + vx
+            raw_y = hist[-1][1] + vy
+            ball_exited = raw_x < -0.05 or raw_x > 1.05 or raw_y < -0.05 or raw_y > 1.05
+            expected_pos = (
+                max(0.02, min(0.98, raw_x)),
+                max(0.02, min(0.98, raw_y)),
+            )
+        elif pos_history:
+            expected_pos = pos_history[-1]
 
-            # Tier 1: YOLO — authoritative when it fires
-            if yolo_class_id is not None:
-                yolo_bbox = _detect_object_yolo_bbox(
-                    frame, model, yolo_class_id, upscale=yolo_upscale,
-                    max_aspect_ratio=2.5 if is_ball else 10.0,
-                    # Phase-2 reinit uses higher confidence to reduce false positives
-                    conf_threshold=0.15 if is_ball else 0.08,
-                )
-                if yolo_bbox is not None and yolo_bbox[2] > 4 and yolo_bbox[3] > 4:
-                    cx = (yolo_bbox[0] + yolo_bbox[2] / 2) / width
-                    cy = (yolo_bbox[1] + yolo_bbox[3] / 2) / height
+        if ball_exited:
+            csrt_ok = False  # ball left the frame; CSRT is tracking background drift
 
-                    # Size guard: reject if >6× bigger than initial detection (club heads, etc.)
-                    bbox_area = float(yolo_bbox[2] * yolo_bbox[3])
-                    size_ok = (not is_ball or init_bbox_area == 0 or
-                               bbox_area <= init_bbox_area * 6.0)
+        # YOLO re-anchor on a fixed cadence (skip entirely if ball has exited)
+        frames_since_yolo += 1
+        if not ball_exited and frames_since_yolo >= sample_every:
+            frames_since_yolo = 0
+            yolo_bbox = _detect_yolo_bbox(frame, model, yolo_class_id,
+                                           upscale=upscale,
+                                           conf=0.25 if is_ball else 0.08,
+                                           max_aspect=2.5 if is_ball else 10.0,
+                                           max_area_frac=0.015 if is_ball else 1.0)
+            if yolo_bbox and yolo_bbox[2] > 4 and yolo_bbox[3] > 4:
+                cx = (yolo_bbox[0] + yolo_bbox[2] / 2) / width
+                cy = (yolo_bbox[1] + yolo_bbox[3] / 2) / height
+                # Agreement gate:
+                # - CSRT active: YOLO must land within 15% of CSRT's position.
+                # - CSRT lost, short gap (<0.5 s): YOLO must land within 20% of
+                #   the velocity-extrapolated expected position. Prevents latching
+                #   onto a different visible object (club head, bystander, etc.).
+                # - CSRT lost, long gap (>0.5 s): object has likely left the frame;
+                #   refuse all re-anchors so velocity extrapolation runs to completion
+                #   and interpolate_positions eases the camera back to centre.
+                if csrt_ok:
+                    csrt_cx = (csrt_bbox[0] + csrt_bbox[2] / 2) / width
+                    csrt_cy = (csrt_bbox[1] + csrt_bbox[3] / 2) / height
+                    agree = abs(cx - csrt_cx) < 0.15 and abs(cy - csrt_cy) < 0.15
+                elif frames_lost < REANCHOR_LIMIT and expected_pos is not None:
+                    agree = (abs(cx - expected_pos[0]) < 0.20 and
+                             abs(cy - expected_pos[1]) < 0.20)
+                else:
+                    agree = False  # object gone; ignore YOLO entirely
+                if agree:
+                    found = (cx, cy)
+                    tracker = _make_csrt_tracker()
+                    tracker.init(frame, yolo_bbox)
+                    frames_lost = 0
+                    last_confirmed_frame = pos
+                    print(f"PROGRESS|yolo_anchor|frame={pos}|cx={cx:.2f}_cy={cy:.2f}", flush=True)
+                else:
+                    print(f"PROGRESS|yolo_rejected|disagreement|frame={pos}", flush=True)
 
-                    # Position jump guard: reject if center jumps >35% of frame
-                    jump_ok = (last_cx < 0 or
-                               (abs(cx - last_cx) < 0.35 and abs(cy - last_cy) < 0.35))
+        # CSRT fallback
+        if found is None and csrt_ok:
+            cx = (csrt_bbox[0] + csrt_bbox[2] / 2) / width
+            cy = (csrt_bbox[1] + csrt_bbox[3] / 2) / height
+            found = (max(0.0, min(1.0, cx)), max(0.0, min(1.0, cy)))
+            frames_lost = 0
+            last_confirmed_frame = pos
 
-                    if size_ok and jump_ok:
-                        result_pos = (max(0.0, min(1.0, cx)), max(0.0, min(1.0, cy)))
-                        tracker = _make_csrt_tracker()
-                        tracker.init(frame, yolo_bbox)
-                        last_cx, last_cy = cx, cy
-                        consecutive_csrt_fails = 0
-                        print(f"PROGRESS|yolo_anchor|frame={pos}|cx={cx:.2f}_cy={cy:.2f}", flush=True)
-                    else:
-                        reason = "size" if not size_ok else "jump"
-                        print(f"PROGRESS|yolo_rejected|{reason}|frame={pos}|cx={cx:.2f}_cy={cy:.2f}", flush=True)
+        # Velocity extrapolation — keeps the camera moving when both fail.
+        # Extrapolated positions are NOT added to pos_history so the velocity
+        # estimate doesn't decay to zero when the ball hits the frame boundary.
+        is_extrapolated = False
+        if found is None:
+            frames_lost += 1
+            if frames_lost <= LOST_LIMIT and expected_pos is not None:
+                found = expected_pos
+                is_extrapolated = True
+                print(f"PROGRESS|extrapolate|frame={pos}|lost={frames_lost}|cx={expected_pos[0]:.2f}_cy={expected_pos[1]:.2f}", flush=True)
 
-            # Tier 2: CSRT — fills in between YOLO hits
-            if result_pos is None and csrt_success:
-                cx = (csrt_bbox[0] + csrt_bbox[2] / 2) / width
-                cy = (csrt_bbox[1] + csrt_bbox[3] / 2) / height
-                result_pos = (max(0.0, min(1.0, cx)), max(0.0, min(1.0, cy)))
-                last_cx, last_cy = cx, cy
-                consecutive_csrt_fails = 0
-                print(f"PROGRESS|csrt|frame={pos}|cx={cx:.2f}_cy={cy:.2f}", flush=True)
-            elif is_sample and not csrt_success:
-                consecutive_csrt_fails += 1
+        if found:
+            cx, cy = found
+            detections.append((pos, max(0.0, min(1.0, cx)), max(0.0, min(1.0, cy))))
+            if not is_extrapolated:
+                pos_history.append(found)
 
-            if result_pos is not None:
-                detections.append((pos, result_pos[0], result_pos[1]))
-
-    return detections
-
-
-def _load_grounding_dino():
-    """
-    Lazy-load the Grounding DINO zero-shot object detection pipeline (CPU).
-    Used only when the user's target is outside YOLO's 80-class vocabulary.
-    Returns the pipeline or None if transformers is not installed.
-    """
-    try:
-        from transformers import pipeline as hf_pipeline
-        print("PROGRESS|loading_grounding_dino|this may take a moment on first run", flush=True)
-        gdino = hf_pipeline(
-            model="IDEA-Research/grounding-dino-tiny",
-            task="zero-shot-object-detection",
-            device='cpu',
-        )
-        return gdino
-    except Exception as e:
-        print(f"PROGRESS|grounding_dino_unavailable|{e}", flush=True)
-        return None
-
-
-def _detect_object_grounding_dino(frame, gdino, target: str, width: int, height: int):
-    """
-    Detect an arbitrary object described by `target` text using Grounding DINO.
-    Returns (cx, cy) in [0,1] or None if nothing found above threshold.
-    """
-    from PIL import Image
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(rgb)
-
-    results = gdino(pil_img, candidate_labels=[target], threshold=0.25)
-    if not results:
-        return None
-
-    best = max(results, key=lambda r: r['score'])
-    box = best['box']  # {'xmin': px, 'ymin': px, 'xmax': px, 'ymax': px}
-    cx = (box['xmin'] + box['xmax']) / 2.0 / width
-    cy = (box['ymin'] + box['ymax']) / 2.0 / height
-    return (max(0.0, min(1.0, cx)), max(0.0, min(1.0, cy)))
+    return detections, last_confirmed_frame
 
 
 def detect_objects_in_clip(video_path, start_sec, end_sec, target: str, sample_every=2):
-    """
-    Like detect_faces_in_clip but for arbitrary objects.
-    - If target maps to a YOLO-80 class → uses YOLO (fast, already installed)
-    - Otherwise → uses Grounding DINO zero-shot (slower, handles arbitrary text)
-
-    The face detection path (detect_faces_in_clip) is NOT called here.
-    Returns identical signature: (detections, fps, total_frames, width, height)
-    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -572,35 +491,28 @@ def detect_objects_in_clip(video_path, start_sec, end_sec, target: str, sample_e
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     width        = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height       = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    start_frame = max(0, int(start_sec * fps))
-    end_frame   = min(total_frames - 1, int(end_sec * fps))
+    start_frame  = max(0, int(start_sec * fps))
+    end_frame    = min(total_frames - 1, int(end_sec * fps))
 
     yolo_class_id = resolve_to_yolo_class(target)
+    if yolo_class_id is None:
+        raise RuntimeError(
+            f"'{target}' is not in the YOLO-80 vocabulary. "
+            "Supported targets include: ball, person, bat, glove, etc."
+        )
 
-    if yolo_class_id is not None:
-        model = _load_yolo()
-        if model is None:
-            raise RuntimeError("ultralytics not installed — run: pip install ultralytics")
-        gdino = None
-        print(f"PROGRESS|object_detect_mode|yolo|class_id={yolo_class_id}|target={target}", flush=True)
-    else:
-        model = None
-        gdino = _load_grounding_dino()
-        if gdino is None:
-            raise RuntimeError(
-                f"'{target}' is not in YOLO-80 classes and Grounding DINO failed to load. "
-                "Install with: pip install transformers accelerate pillow"
-            )
-        print(f"PROGRESS|object_detect_mode|grounding_dino|target={target}", flush=True)
+    model = _load_yolo()
+    if model is None:
+        raise RuntimeError("ultralytics not installed — run: pip install ultralytics")
 
-    detections = _csrt_track_clip(
-        cap, model, gdino, yolo_class_id, target,
-        start_frame, end_frame, fps, width, height, sample_every,
+    print(f"PROGRESS|object_detect_mode|yolo|class={yolo_class_id}|target={target}", flush=True)
+
+    detections, last_confirmed_frame = _track_object(
+        cap, model, yolo_class_id, width, height, fps,
+        start_frame, end_frame, sample_every,
     )
-
     cap.release()
-    return detections, fps, total_frames, width, height
+    return detections, fps, total_frames, width, height, last_confirmed_frame
 
 
 # ---------------------------------------------------------------------------
@@ -609,13 +521,10 @@ def detect_objects_in_clip(video_path, start_sec, end_sec, target: str, sample_e
 
 def interpolate_positions(detections, start_frame, end_frame, fps: float = 30.0):
     """
-    Given sparse (frame_idx, cx, cy) samples, fill every frame in
-    [start_frame, end_frame] using:
-      - Linear interp between known detections
-      - Forward-fill before first detection
-      - When object exits frame early (last detection >=1.5s before end_frame),
-        hold the last position for 0.5s then ease smoothly back to center.
-    Returns arrays (xs, ys) of length (end_frame - start_frame + 1).
+    Fill every frame in [start_frame, end_frame] from sparse detections.
+    Uses linear interpolation between known positions. When the object exits
+    the frame early (last detection >= 1.5 s before end), holds for 0.5 s
+    then eases back to centre.
     """
     n = end_frame - start_frame + 1
 
@@ -627,37 +536,30 @@ def interpolate_positions(detections, start_frame, end_frame, fps: float = 30.0)
     cys  = np.array([d[2] for d in detections], dtype=float)
 
     all_frames = np.arange(start_frame, end_frame + 1, dtype=float)
+    xs = np.interp(all_frames, idxs, cxs, left=float(cxs[0]), right=float(cxs[-1]))
+    ys = np.interp(all_frames, idxs, cys, left=float(cys[0]), right=float(cys[-1]))
 
-    # Linear interpolation; clamp to first/last for out-of-range frames
-    xs = np.interp(all_frames, idxs, cxs,
-                   left=float(cxs[0]), right=float(cxs[-1]))
-    ys = np.interp(all_frames, idxs, cys,
-                   left=float(cys[0]), right=float(cys[-1]))
-
-    # ── Object-exit recovery ──────────────────────────────────────────────────
-    # When the last detection is >=1.5s before clip end, the subject likely exited
-    # the frame. Hold last position for 0.5s, then ease smoothly back to center.
+    # Exit recovery: ease to centre when object has left the frame
     hold_frames   = int(fps * 0.5)
     ease_frames   = max(1, int(fps * 1.0))
-    gap_threshold = hold_frames + ease_frames  # ~1.5s total
+    gap_threshold = hold_frames + ease_frames
 
     last_det_frame    = int(idxs[-1])
     frames_after_last = end_frame - last_det_frame
 
     if frames_after_last >= gap_threshold:
-        ease_start_abs = last_det_frame + hold_frames
-        ease_end_abs   = ease_start_abs + ease_frames
-        last_cx = float(cxs[-1])
-        last_cy = float(cys[-1])
+        ease_start = last_det_frame + hold_frames
+        ease_end   = ease_start + ease_frames
+        last_cx    = float(cxs[-1])
+        last_cy    = float(cys[-1])
+        print(f"PROGRESS|object_exited|last_det={last_det_frame}|easing_to_centre", flush=True)
 
-        print(f"PROGRESS|object_exited_frame|last_det={last_det_frame}|easing_to_center", flush=True)
-
-        for abs_f in range(ease_start_abs, end_frame + 1):
+        for abs_f in range(ease_start, end_frame + 1):
             i = abs_f - start_frame
             if i < 0 or i >= n:
                 continue
-            if abs_f <= ease_end_abs:
-                t = (abs_f - ease_start_abs) / ease_frames
+            if abs_f <= ease_end:
+                t = (abs_f - ease_start) / ease_frames
                 t = t * t * (3.0 - 2.0 * t)  # smooth-step
                 xs[i] = last_cx * (1.0 - t) + 0.5 * t
                 ys[i] = last_cy * (1.0 - t) + 0.5 * t
@@ -669,32 +571,23 @@ def interpolate_positions(detections, start_frame, end_frame, fps: float = 30.0)
 
 
 def smooth_positions(xs, ys, sigma=8.0):
-    """Gaussian smooth the position curves to remove jitter."""
     if _SCIPY_AVAILABLE:
         xs = gaussian_filter1d(xs, sigma=sigma)
         ys = gaussian_filter1d(ys, sigma=sigma)
-    # If scipy unavailable we just return as-is (already interpolated)
     return np.clip(xs, 0.0, 1.0), np.clip(ys, 0.0, 1.0)
 
 
 # ---------------------------------------------------------------------------
-# Ease curve
+# Zoom curve
 # ---------------------------------------------------------------------------
 
 def ease_in_out(t):
-    """Smooth step: 3t²-2t³"""
     return t * t * (3.0 - 2.0 * t)
 
 
 def build_zoom_curve(n_frames, zoom_target, ease_frames):
-    """
-    Returns array of zoom values (1.0 → zoom_target → 1.0 or hold).
-    ease_frames: number of frames to ramp in/out.
-    We ease in for ease_frames, hold at zoom_target, ease out for ease_frames.
-    """
     curve = np.ones(n_frames)
     ease_frames = min(ease_frames, n_frames // 2)
-
     for i in range(n_frames):
         if i < ease_frames:
             t = ease_in_out(i / ease_frames)
@@ -704,16 +597,14 @@ def build_zoom_curve(n_frames, zoom_target, ease_frames):
             curve[i] = 1.0 + (zoom_target - 1.0) * t
         else:
             curve[i] = zoom_target
-
     return curve
 
 
 # ---------------------------------------------------------------------------
-# FFmpeg zoompan
+# FFmpeg helpers
 # ---------------------------------------------------------------------------
 
 def find_ffmpeg():
-    """Find ffmpeg binary — check common locations."""
     import shutil
     ffmpeg = shutil.which('ffmpeg')
     if ffmpeg:
@@ -727,32 +618,30 @@ def find_ffmpeg():
     for c in candidates:
         if os.path.exists(c):
             return c
-    raise RuntimeError("ffmpeg not found. Make sure it is on PATH.")
-
+    raise RuntimeError("ffmpeg not found — make sure it is on PATH.")
 
 
 def apply_zoom_opencv(input_path, output_path, start_sec, end_sec,
                       zoom_curve, xs, ys, width, height, fps, total_frames):
     """
-    Apply per-frame face-tracked zoom using OpenCV + FFmpeg.
+    Per-frame face-tracked zoom via OpenCV + FFmpeg pipe.
 
-    Strategy:
-      1. FFmpeg extracts middle segment (video-only, stream copy — fast)
-      2. OpenCV reads frames, applies crop+scale, pipes raw BGR24 to FFmpeg stdin
-         → FFmpeg encodes to h264 video-only temp file (no codec install needed)
-      3. FFmpeg muxes encoded video + audio from original → seg_middle.mp4
-      4. FFmpeg concats before / seg_middle / after
+    1. FFmpeg re-encodes the middle segment to a reliable temp file.
+    2. OpenCV reads frames; per-frame crop+scale is piped into FFmpeg stdin
+       which encodes video-only.
+    3. FFmpeg muxes the encoded video with audio from the original.
+    4. Before / after segments are copied and concatenated.
     """
     ffmpeg   = find_ffmpeg()
     tmpdir   = tempfile.mkdtemp()
     orig_dur = total_frames / fps
 
-    seg_before      = os.path.join(tmpdir, 'seg_before.mp4')
-    seg_raw_middle  = os.path.join(tmpdir, 'seg_mid_raw.mp4')
-    seg_vid_only    = os.path.join(tmpdir, 'seg_mid_vid.mp4')
-    seg_middle      = os.path.join(tmpdir, 'seg_mid.mp4')
-    seg_after       = os.path.join(tmpdir, 'seg_after.mp4')
-    concat_list     = os.path.join(tmpdir, 'concat.txt')
+    seg_before     = os.path.join(tmpdir, 'before.mp4')
+    seg_raw_mid    = os.path.join(tmpdir, 'mid_raw.mp4')
+    seg_vid_only   = os.path.join(tmpdir, 'mid_vid.mp4')
+    seg_middle     = os.path.join(tmpdir, 'mid.mp4')
+    seg_after      = os.path.join(tmpdir, 'after.mp4')
+    concat_list    = os.path.join(tmpdir, 'concat.txt')
 
     enc = ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
            '-c:a', 'aac', '-b:a', '192k', '-ar', '44100']
@@ -762,20 +651,19 @@ def apply_zoom_opencv(input_path, output_path, start_sec, end_sec,
         if r.returncode != 0:
             raise RuntimeError(f"FFmpeg failed:\n{r.stderr[-800:]}")
 
-    # ── Step 1: Extract raw middle segment video (re-encode for reliable seek) ──
+    # Step 1: extract middle segment video (re-encode for reliable seek)
     run_ff(['-y',
             '-ss', str(start_sec), '-to', str(end_sec),
             '-i', input_path,
             '-map', '0:v',
             '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18',
-            seg_raw_middle])
+            seg_raw_mid])
 
-    # ── Step 2: OpenCV reads segment, pipes processed frames to FFmpeg stdin ──
-    cap = cv2.VideoCapture(seg_raw_middle)
+    # Step 2: OpenCV per-frame crop+scale → pipe to FFmpeg stdin
+    cap = cv2.VideoCapture(seg_raw_mid)
     seg_fps = cap.get(cv2.CAP_PROP_FPS) or fps
     n_zoom  = len(zoom_curve)
 
-    # FFmpeg reads raw BGR24 from stdin, encodes to h264 mp4 (video only)
     pipe_cmd = [
         ffmpeg, '-y',
         '-f', 'rawvideo', '-vcodec', 'rawvideo',
@@ -797,22 +685,17 @@ def apply_zoom_opencv(input_path, output_path, start_sec, end_sec,
         if not ret:
             break
 
-        # Resize frame to exact output dimensions if needed
         fh, fw = frame.shape[:2]
         if fw != width or fh != height:
             frame = cv2.resize(frame, (width, height))
 
-        local_idx = min(i, n_zoom - 1)
-        z  = float(zoom_curve[local_idx])
-        cx = float(xs[local_idx])
-        cy = float(ys[local_idx])
-
-        # No adaptive zoom reduction — keep full zoom, just clamp crop to edges
-        z = max(1.0, z)
+        idx = min(i, n_zoom - 1)
+        z   = max(1.0, float(zoom_curve[idx]))
+        cx  = float(xs[idx])
+        cy  = float(ys[idx])
 
         crop_w = max(1, int(width  / z))
         crop_h = max(1, int(height / z))
-        # Center crop on face, clamp so crop stays within frame
         x = int(max(0, min(width  - crop_w, cx * width  - crop_w / 2)))
         y = int(max(0, min(height - crop_h, cy * height - crop_h / 2)))
 
@@ -832,7 +715,7 @@ def apply_zoom_opencv(input_path, output_path, start_sec, end_sec,
     if pipe_proc.returncode != 0:
         raise RuntimeError(f"FFmpeg pipe encode failed:\n{pipe_err.decode()[-500:]}")
 
-    # ── Step 3: Mux encoded video + audio from original ──
+    # Step 3: mux encoded video + audio from original
     run_ff(['-y',
             '-i', seg_vid_only,
             '-ss', str(start_sec), '-to', str(end_sec), '-i', input_path,
@@ -841,7 +724,7 @@ def apply_zoom_opencv(input_path, output_path, start_sec, end_sec,
             '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
             seg_middle])
 
-    # ── Step 4: Before / after segments ──
+    # Step 4: before / after segments
     if start_sec > 0.05:
         run_ff(['-y', '-t', str(start_sec), '-i', input_path,
                 '-map', '0:v', '-map', '0:a?'] + enc + [seg_before])
@@ -850,7 +733,7 @@ def apply_zoom_opencv(input_path, output_path, start_sec, end_sec,
         run_ff(['-y', '-ss', str(end_sec), '-i', input_path,
                 '-map', '0:v', '-map', '0:a?'] + enc + [seg_after])
 
-    # ── Step 5: Concat ──
+    # Step 5: concatenate
     parts = []
     if start_sec > 0.05 and os.path.exists(seg_before):
         parts.append(seg_before)
@@ -870,15 +753,13 @@ def apply_zoom_opencv(input_path, output_path, start_sec, end_sec,
                 '-map', '0:v', '-map', '0:a?'] + enc +
                ['-movflags', '+faststart', output_path])
 
-    # ── Verify output exists and has content ──
     if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
         raise RuntimeError(f"Output file missing or empty: {output_path}")
 
-    # ── Cleanup ──
-    for f in [seg_before, seg_raw_middle, seg_vid_only, seg_middle,
-              seg_after, concat_list]:
+    for f in [seg_before, seg_raw_mid, seg_vid_only, seg_middle, seg_after, concat_list]:
         try:
-            if os.path.exists(f): os.unlink(f)
+            if os.path.exists(f):
+                os.unlink(f)
         except Exception:
             pass
     try:
@@ -897,21 +778,23 @@ def run(input_path, output_path, start_sec, end_sec,
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input not found: {input_path}")
 
-    # Determine whether this is a face zoom or an object zoom.
-    # Face path is completely unchanged — object path is additive.
     _target = (target or 'face').lower().strip()
     is_face = _target in ('face', 'person', 'head', '')
 
+    last_confirmed_frame = None
+
     if is_face:
-        print(f"PROGRESS|detecting_faces|0", flush=True)
+        print("PROGRESS|detecting_faces|0", flush=True)
         detections, fps, total_frames, width, height = detect_faces_in_clip(
             input_path, start_sec, end_sec, sample_every=sample_every
         )
     else:
         print(f"PROGRESS|detecting_object|target={_target}", flush=True)
-        detections, fps, total_frames, width, height = detect_objects_in_clip(
-            input_path, start_sec, end_sec, target=_target, sample_every=sample_every
-        )
+        detections, fps, total_frames, width, height, last_confirmed_frame = \
+            detect_objects_in_clip(
+                input_path, start_sec, end_sec, target=_target,
+                sample_every=2  # objects always use dense sampling
+            )
 
     print(f"PROGRESS|interpolating|30", flush=True)
     print(f"INFO|detections={len(detections)}", flush=True)
@@ -921,14 +804,33 @@ def run(input_path, output_path, start_sec, end_sec,
     n_frames    = end_frame - start_frame + 1
 
     xs, ys = interpolate_positions(detections, start_frame, end_frame, fps=fps)
-    # For objects (non-face), use lighter smoothing so fast trajectories aren't flattened
-    smooth_sigma = fps * 0.10 if not is_face else fps * 0.25
+
+    # Light smoothing for objects (fast trajectory); heavier for faces
+    smooth_sigma = fps * 0.05 if not is_face else fps * 0.25
     xs, ys = smooth_positions(xs, ys, sigma=smooth_sigma)
 
     ease_frames = int(ease_sec * fps)
     zoom_curve  = build_zoom_curve(n_frames, zoom_level, ease_frames)
 
-    print(f"PROGRESS|applying_zoom|60", flush=True)
+    # For object tracking: if the object left the frame before the clip ends,
+    # release the zoom back to 1.0x starting from that point.
+    # This prevents the camera from staying zoomed in on whatever else is visible.
+    if last_confirmed_frame is not None:
+        release_start_abs = last_confirmed_frame + int(fps * 0.2)  # 0.2 s grace
+        release_start     = release_start_abs - start_frame
+        release_dur       = max(1, int(fps * 0.5))                 # 0.5 s ease-out
+        if release_start < n_frames - 1:
+            print(f"PROGRESS|zoom_release|at_frame={release_start_abs}", flush=True)
+            for i in range(release_start, n_frames):
+                local = i - release_start
+                if local < release_dur:
+                    t = local / release_dur
+                    t = t * t * (3.0 - 2.0 * t)  # smooth-step
+                    zoom_curve[i] = zoom_level * (1.0 - t) + 1.0 * t
+                else:
+                    zoom_curve[i] = 1.0
+
+    print("PROGRESS|applying_zoom|60", flush=True)
 
     apply_zoom_opencv(
         input_path, output_path,
@@ -937,7 +839,7 @@ def run(input_path, output_path, start_sec, end_sec,
         width, height, fps, total_frames
     )
 
-    print(f"PROGRESS|done|100", flush=True)
+    print("PROGRESS|done|100", flush=True)
     result = {
         "success": True,
         "output": output_path,
@@ -949,7 +851,7 @@ def run(input_path, output_path, start_sec, end_sec,
 
 
 def add_subparser(subparsers):
-    p = subparsers.add_parser('face-zoom', help='Face-tracking smooth zoom')
+    p = subparsers.add_parser('face-zoom', help='Face / object tracking smooth zoom')
     p.add_argument('--input',        required=True)
     p.add_argument('--output',       required=True)
     p.add_argument('--start',        type=float, required=True)
@@ -958,7 +860,7 @@ def add_subparser(subparsers):
     p.add_argument('--ease',         type=float, default=0.4)
     p.add_argument('--sample-every', type=int,   default=6)
     p.add_argument('--target',       type=str,   default='face',
-                   help='Subject to zoom: face (default), ball, vase, bottle, money, etc.')
+                   help='What to zoom: face (default), ball, bat, bottle, etc.')
     return p
 
 

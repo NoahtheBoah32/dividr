@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EDITH — Cut & Trim Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #141414;
+    color: #fff;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 0;
+    gap: 28px;
+    min-height: 100vh;
+  }
+
+  h2 {
+    font-size: 11px;
+    color: #555;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  /* ── CHAT PANEL ── */
+  .chat-panel {
+    width: 820px;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 80px;
+  }
+  .msg {
+    font-size: 12px;
+    line-height: 1.6;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.2s, transform 0.2s;
+    max-width: 80%;
+  }
+  .msg.show { opacity: 1; transform: none; }
+  .msg.user { color: #aaa; align-self: flex-end; text-align: right; }
+  .msg.edith { color: #ccc; }
+  .msg .label { font-size: 10px; color: #444; margin-bottom: 2px; letter-spacing: 1px; text-transform: uppercase; }
+  .msg.edith .label { color: #00D4FF44; }
+  .msg.user .label { color: #FFD70044; }
+  .msg .bubble {
+    background: #222;
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: inline-block;
+  }
+  .msg.user .bubble { background: #1e2a1e; }
+
+  /* ── TIMELINE ── */
+  .timeline-wrap {
+    width: 820px;
+    position: relative;
+  }
+
+  .ruler {
+    position: relative;
+    height: 28px;
+    margin-left: 72px;
+    border-bottom: 1px solid #2a2a2a;
+    margin-bottom: 0;
+  }
+  .ruler-tick {
+    position: absolute;
+    bottom: 0;
+    transform: translateX(-50%);
+    font-size: 9px;
+    color: #3a3a3a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    letter-spacing: 0.5px;
+  }
+  .ruler-tick span { width: 1px; height: 8px; background: #2e2e2e; display: block; }
+  .ruler-tick.major { color: #555; }
+  .ruler-tick.major span { background: #444; height: 12px; }
+
+  .tracks-area {
+    margin-left: 72px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 10px 0;
+  }
+
+  .track-row {
+    position: relative;
+    height: 44px;
+    background: #1c1c1c;
+    border-radius: 3px;
+    overflow: visible;
+  }
+  .track-row-label {
+    position: absolute;
+    left: -68px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 9px;
+    color: #3a3a3a;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    width: 60px;
+    text-align: right;
+  }
+
+  /* Clips */
+  .clip {
+    position: absolute;
+    top: 4px; bottom: 4px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    transition: width 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+                left 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.35s ease;
+  }
+  .clip-video  { background: #1e3550; color: #6aabde; border: 1px solid #2a4a6a; }
+  .clip-broll  { background: #1e3528; color: #6ade9a; border: 1px solid #2a5a3a; }
+  .clip-orphan { background: #3a2a1a; color: #de9a6a; border: 1px solid #5a3a2a; }
+  .clip-sub    { background: #2e2416; color: #dec46a; border: 1px solid #4e3a1a; }
+
+  .clip.deleting {
+    opacity: 0;
+    transform: scaleY(0.3);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+
+  /* Playhead */
+  .playhead {
+    position: absolute;
+    top: -32px;
+    bottom: 0;
+    width: 2px;
+    background: rgba(255,255,255,0.9);
+    pointer-events: none;
+    z-index: 20;
+    transition: left 0.18s linear;
+  }
+  .playhead::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 8px; height: 8px;
+    background: #fff;
+    clip-path: polygon(50% 100%, 0 0, 100% 0);
+  }
+  .playhead-time {
+    position: absolute;
+    top: -26px;
+    left: 6px;
+    font-size: 9px;
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+    padding: 1px 4px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  /* ── STATUS LINE ── */
+  .status-bar {
+    width: 820px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: #444;
+    height: 20px;
+  }
+  .status-bar .op  { color: #00D4FF; font-weight: 600; }
+  .status-bar .ts  { color: #FFD700; }
+  .status-bar .del { color: #FF6B6B; }
+  .status-bar .ok  { color: #6ade9a; }
+
+  /* ── CONTROLS ── */
+  .controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .btn {
+    background: #1e1e1e;
+    border: 1px solid #333;
+    color: #888;
+    padding: 8px 22px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 1px;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: #282828; border-color: #555; color: #ccc; }
+  .btn.primary { border-color: #00D4FF44; color: #00D4FF; }
+  .btn.primary:hover { border-color: #00D4FF; background: #002a3a; }
+  .btn.active { border-color: #00D4FF; color: #00D4FF; background: #001820; }
+
+  .scenario-label {
+    font-size: 10px;
+    color: #444;
+    letter-spacing: 1px;
+  }
+
+  /* ── LEGEND ── */
+  .legend {
+    display: flex;
+    gap: 20px;
+    font-size: 9px;
+    color: #444;
+    letter-spacing: 1px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h2>EDITH — Cut & Trim</h2>
+
+<!-- Chat -->
+<div class="chat-panel" id="chatPanel"></div>
+
+<!-- Timeline -->
+<div class="timeline-wrap">
+  <div class="ruler" id="ruler"></div>
+
+  <div class="tracks-area" id="tracksArea">
+
+    <!-- Row 0: captions/subtitle -->
+    <div class="track-row" id="rowSubs">
+      <span class="track-row-label">subs</span>
+      <!-- populated by JS -->
+    </div>
+
+    <!-- Row 1: b-roll -->
+    <div class="track-row" id="rowBroll">
+      <span class="track-row-label">b-roll</span>
+    </div>
+
+    <!-- Row 2: main video -->
+    <div class="track-row" id="rowVideo">
+      <span class="track-row-label">video</span>
+    </div>
+
+    <!-- Playhead spans all rows -->
+    <div class="playhead" id="playhead" style="left:0px">
+      <div class="playhead-time" id="phTime">0:00</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Status -->
+<div class="status-bar" id="statusBar">Ready</div>
+
+<!-- Controls -->
+<div class="controls">
+  <span class="scenario-label">SCENARIO</span>
+  <button class="btn primary active" id="btnA" onclick="selectScenario('A')">Trim to 1 min</button>
+  <button class="btn" id="btnB" onclick="selectScenario('B')">Extract 5–6 min</button>
+  <button class="btn" id="btnC" onclick="selectScenario('C')">Delete orphan</button>
+  <span style="width:12px"></span>
+  <button class="btn primary" id="btnRun" onclick="runDemo()">▶ Run EDITH</button>
+  <button class="btn" onclick="resetDemo()">↺ Reset</button>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#1e3550;border:1px solid #2a4a6a"></div>main video</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#1e3528;border:1px solid #2a5a3a"></div>b-roll</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3a2a1a;border:1px solid #5a3a2a"></div>orphan clip</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2e2416;border:1px solid #4e3a1a"></div>caption</div>
+</div>
+
+<script>
+// ── CONSTANTS ────────────────────────────────────────────────────────────────
+const TOTAL_SECS = 626;   // 10:26 total source duration
+const TRACK_W = 820 - 72; // drawable track width in px
+
+function secToPct(s) { return (s / TOTAL_SECS) * 100; }
+function pctToSec(p) { return p / 100 * TOTAL_SECS; }
+function fmt(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// ── DOM HELPERS ──────────────────────────────────────────────────────────────
+const chatPanel  = document.getElementById('chatPanel');
+const ruler      = document.getElementById('ruler');
+const rowVideo   = document.getElementById('rowVideo');
+const rowBroll   = document.getElementById('rowBroll');
+const rowSubs    = document.getElementById('rowSubs');
+const playhead   = document.getElementById('playhead');
+const phTime     = document.getElementById('phTime');
+const statusBar  = document.getElementById('statusBar');
+
+function setPlayhead(secs) {
+  const pct = secToPct(secs);
+  const px = (pct / 100) * TRACK_W;
+  playhead.style.left = px + 'px';
+  phTime.textContent = fmt(secs);
+}
+
+function setStatus(html) { statusBar.innerHTML = html; }
+
+function makeClip(cls, leftPct, widthPct, label, id) {
+  const el = document.createElement('div');
+  el.className = 'clip ' + cls;
+  el.id = id || '';
+  el.style.left   = leftPct + '%';
+  el.style.width  = widthPct + '%';
+  el.textContent  = label;
+  return el;
+}
+
+function addChat(role, text) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = `<div class="label">${role === 'edith' ? 'EDITH' : 'YOU'}</div><div class="bubble">${text}</div>`;
+  chatPanel.appendChild(div);
+  requestAnimationFrame(() => div.classList.add('show'));
+  chatPanel.scrollTop = chatPanel.scrollHeight;
+}
+
+// ── BUILD RULER ──────────────────────────────────────────────────────────────
+function buildRuler() {
+  ruler.innerHTML = '';
+  const marks = [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, TOTAL_SECS];
+  marks.forEach(s => {
+    const tick = document.createElement('div');
+    const isMajor = s % 120 === 0;
+    tick.className = 'ruler-tick' + (isMajor ? ' major' : '');
+    tick.style.left = secToPct(s) + '%';
+    tick.innerHTML = `<span></span>${fmt(s)}`;
+    ruler.appendChild(tick);
+  });
+}
+
+// ── INITIAL TIMELINE STATE ────────────────────────────────────────────────────
+function buildInitialTimeline() {
+  rowVideo.innerHTML = '<span class="track-row-label">video</span>';
+  rowBroll.innerHTML = '<span class="track-row-label">b-roll</span>';
+  rowSubs.innerHTML  = '<span class="track-row-label">subs</span>';
+
+  // Main video: 0 → 626s (full)
+  rowVideo.appendChild(makeClip('clip-video',  0, 100, 'The Farm Ep 2 Pt.2 — 10:26', 'clipMain'));
+
+  // Orphan end-card: 620 → 626s
+  const orphanLeft = secToPct(620);
+  const orphanWidth = secToPct(6);
+  rowVideo.appendChild(makeClip('clip-orphan', orphanLeft, orphanWidth, 'end-card', 'clipOrphan'));
+
+  // B-roll clips
+  rowBroll.appendChild(makeClip('clip-broll', secToPct(30),  secToPct(20), 'Farm wide', 'broll1'));
+  rowBroll.appendChild(makeClip('clip-broll', secToPct(90),  secToPct(25), 'Close-up',  'broll2'));
+  rowBroll.appendChild(makeClip('clip-broll', secToPct(200), secToPct(30), 'Harvest',   'broll3'));
+  rowBroll.appendChild(makeClip('clip-broll', secToPct(350), secToPct(20), 'B-roll 4',  'broll4'));
+  rowBroll.appendChild(makeClip('clip-broll', secToPct(480), secToPct(25), 'B-roll 5',  'broll5'));
+
+  // Subtitle clips (scattered across the content)
+  const subs = [
+    [10, 18, 'SO TODAY'], [30, 25, 'WE ARE'], [58, 20, 'ON THE FARM'],
+    [80, 22, 'AND WE GROW'], [105, 30, 'RICE'], [138, 20, 'AND CORN'],
+    [160, 25, 'AND MANY MORE'], [188, 30, 'THINGS'],
+  ];
+  subs.forEach(([s, d, t], i) =>
+    rowSubs.appendChild(makeClip('clip-sub', secToPct(s), secToPct(d), t, 'sub' + i))
+  );
+}
+
+// ── SLEEP ────────────────────────────────────────────────────────────────────
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── SCENARIOS ────────────────────────────────────────────────────────────────
+let selectedScenario = 'A';
+
+function selectScenario(s) {
+  selectedScenario = s;
+  document.getElementById('btnA').className = 'btn' + (s === 'A' ? ' primary active' : '');
+  document.getElementById('btnB').className = 'btn' + (s === 'B' ? ' primary active' : '');
+  document.getElementById('btnC').className = 'btn' + (s === 'C' ? ' primary active' : '');
+  resetDemo();
+}
+
+// SCENARIO A — Trim to 1 minute
+async function scenarioA() {
+  addChat('user', 'Make a 1 minute reel from this.');
+
+  await sleep(700);
+  setPlayhead(0); setStatus('Scanning timeline…');
+  await animatePlayhead(0, TOTAL_SECS, 900);
+
+  await sleep(300);
+  addChat('edith', 'Best 60s or first 60s?');
+  await sleep(1000);
+  addChat('user', 'First 60s.');
+  await sleep(600);
+
+  // Trim the end to 60s
+  setStatus('<span class="op">trimClip</span> — out-point → <span class="ts">1:00</span>');
+  setPlayhead(60);
+  await sleep(200);
+  await trimClipEnd('clipMain', 60);
+  await sleep(300);
+
+  // Delete b-rolls that are now past 60s
+  const brollsToDelete = ['broll2', 'broll3', 'broll4', 'broll5'];
+  for (const id of brollsToDelete) {
+    setStatus(`<span class="del">deleteClip</span> — removing <span class="ts">${id.replace('broll', 'b-roll ')}</span> (past 1:00)`);
+    await deleteClip(id);
+    await sleep(200);
+  }
+
+  // Delete subs past 60s
+  const subsToDelete = ['sub2','sub3','sub4','sub5','sub6','sub7'];
+  for (const id of subsToDelete) {
+    const el = document.getElementById(id);
+    if (el) {
+      setStatus(`<span class="del">deleteClip</span> — removing caption past 1:00`);
+      await deleteClip(id);
+      await sleep(120);
+    }
+  }
+
+  // Delete orphan
+  setStatus('<span class="del">deleteClip</span> — removing orphan end-card');
+  await deleteClip('clipOrphan');
+  await sleep(300);
+
+  setStatus('<span class="ok">✓ Done</span> — timeline trimmed to <span class="ts">1:00</span>');
+  addChat('edith', 'Done. Timeline trimmed to 1:00 — b-rolls and captions past that point removed.');
+}
+
+// SCENARIO B — Extract 5:00–6:00
+async function scenarioB() {
+  addChat('user', 'I want just the 5 to 6 minute segment.');
+
+  await sleep(700);
+  setPlayhead(0); setStatus('Scanning timeline…');
+  await animatePlayhead(0, 360, 700);
+
+  await sleep(300);
+  addChat('edith', 'Extracting 5:00–6:00 — trimming front and back, repositioning to start.');
+  await sleep(800);
+
+  // Trim the front (move start to 5:00)
+  setStatus('<span class="op">trimClip</span> — in-point → <span class="ts">5:00</span>');
+  setPlayhead(300);
+  await sleep(200);
+  await trimClipFront('clipMain', 300, 60);
+  await sleep(400);
+
+  // Now trim the back to 6:00 (which is now 1:00 on the trimmed clip)
+  setStatus('<span class="op">trimClip</span> — out-point → <span class="ts">6:00</span>');
+  setPlayhead(360);
+  await sleep(200);
+  await trimClipEnd('clipMain', 360, 300);
+  await sleep(400);
+
+  // Delete b-rolls outside 5:00–6:00
+  const allBrolls = ['broll1','broll2','broll3','broll4','broll5'];
+  for (const id of allBrolls) {
+    setStatus(`<span class="del">deleteClip</span> — ${id.replace('broll','b-roll ')} outside 5–6 min`);
+    await deleteClip(id);
+    await sleep(150);
+  }
+
+  // Delete most subs
+  for (let i = 0; i < 8; i++) {
+    const el = document.getElementById('sub' + i);
+    if (el) { await deleteClip('sub' + i); await sleep(80); }
+  }
+
+  // Delete orphan
+  await deleteClip('clipOrphan');
+
+  // Move clip to timeline 0
+  setStatus('<span class="op">moveClip</span> — repositioning to 0:00');
+  await sleep(300);
+  const clip = document.getElementById('clipMain');
+  if (clip) {
+    clip.style.left = '0%';
+    clip.style.width = secToPct(60) + '%';
+  }
+  setPlayhead(0);
+  await sleep(400);
+
+  setStatus('<span class="ok">✓ Done</span> — 5:00–6:00 segment extracted → now at 0:00–1:00');
+  addChat('edith', 'Done. Extracted 5:00–6:00, repositioned to start of timeline.');
+}
+
+// SCENARIO C — Delete orphan end-card only
+async function scenarioC() {
+  addChat('user', 'Get rid of the orphan end-card at the end.');
+
+  await sleep(700);
+  setStatus('Scanning timeline for orphan clips…');
+  await animatePlayhead(0, TOTAL_SECS, 900);
+  await sleep(200);
+  setPlayhead(620);
+  await sleep(400);
+
+  addChat('edith', 'Found orphan end-card at 10:20–10:26. Deleting.');
+  await sleep(600);
+
+  setStatus('<span class="del">deleteClip</span> — end-card at <span class="ts">10:20</span>');
+  await deleteClip('clipOrphan');
+  await sleep(300);
+
+  setStatus('<span class="ok">✓ Done</span> — orphan removed');
+  addChat('edith', 'Done. Orphan end-card removed.');
+}
+
+// ── ANIMATION HELPERS ────────────────────────────────────────────────────────
+
+async function animatePlayhead(fromSec, toSec, ms) {
+  const steps = 40;
+  const stepMs = ms / steps;
+  const range = toSec - fromSec;
+  for (let i = 0; i <= steps; i++) {
+    setPlayhead(fromSec + (range * i / steps));
+    await sleep(stepMs);
+  }
+}
+
+// Trim clip end: animate width shrinking from current to newEndSec
+async function trimClipEnd(id, newEndSec, offsetSec = 0) {
+  const clip = document.getElementById(id);
+  if (!clip) return;
+  const leftPct = parseFloat(clip.style.left);
+  const startSec = pctToSec(leftPct) + offsetSec;
+  const newWidthPct = secToPct(newEndSec - (startSec - offsetSec));
+  clip.style.width = newWidthPct + '%';
+  await sleep(600);
+}
+
+// Trim clip front: animate left edge moving right and width shrinking
+async function trimClipFront(id, newStartSec, durationSec) {
+  const clip = document.getElementById(id);
+  if (!clip) return;
+  const newLeftPct = secToPct(newStartSec);
+  const newWidthPct = secToPct(durationSec);
+  clip.style.left  = newLeftPct + '%';
+  clip.style.width = newWidthPct + '%';
+  await sleep(650);
+}
+
+async function deleteClip(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('deleting');
+  await sleep(450);
+  el.remove();
+}
+
+// ── RUN / RESET ──────────────────────────────────────────────────────────────
+let isRunning = false;
+
+async function runDemo() {
+  if (isRunning) return;
+  isRunning = true;
+  document.getElementById('btnRun').textContent = '⏳ Running…';
+  document.getElementById('btnRun').classList.add('active');
+
+  try {
+    if (selectedScenario === 'A') await scenarioA();
+    else if (selectedScenario === 'B') await scenarioB();
+    else if (selectedScenario === 'C') await scenarioC();
+  } finally {
+    isRunning = false;
+    document.getElementById('btnRun').textContent = '▶ Run EDITH';
+    document.getElementById('btnRun').classList.remove('active');
+  }
+}
+
+function resetDemo() {
+  isRunning = false;
+  setPlayhead(0);
+  setStatus('Ready');
+  chatPanel.innerHTML = '';
+  buildInitialTimeline();
+}
+
+// ── INIT ─────────────────────────────────────────────────────────────────────
+buildRuler();
+buildInitialTimeline();
+setPlayhead(0);
+</script>
+</body>
+</html>

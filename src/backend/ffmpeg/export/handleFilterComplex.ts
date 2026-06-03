@@ -18,8 +18,11 @@ import {
   buildAspectRatioScaleFilter,
   buildCropFilter,
   buildOverlayFilter,
+  buildPipFilter,
   buildScaleFilter,
   getHardwareAccelerationStatus,
+  getPipOverlayPosition,
+  PIP_MASKED_REF,
 } from './hardwareFilters';
 import {
   buildOverlayOrder,
@@ -1486,6 +1489,27 @@ export function buildSeparateTimelineFilterComplex(
   console.log('\n📋 PHASE 3: Processing overlays in layer order...\n');
   let currentCompositeLabel = '';
 
+  // PiP detection: if the base layer (layer 0) has pipFrame set AND there are overlay layers,
+  // transform the base to a floating PiP and use the first overlay as the new background.
+  const baseOverlayItem = overlayOrder.find(o => (o as any).layer === 0 && o.type === 'video');
+  const baseLayerPip = baseOverlayItem
+    ? (() => {
+        const seg = (baseOverlayItem as any).videoTimeline?.segments?.[0];
+        return seg?.input?.pipFrame ?? null;
+      })()
+    : null;
+  const hasOverlaysAboveBase = overlayOrder.some(o => (o as any).layer > 0 && o.type === 'video');
+
+  if (baseLayerPip && hasOverlaysAboveBase) {
+    // Reorder: move base layer to end so it renders on top as PiP
+    const baseIdx = overlayOrder.findIndex(o => (o as any).layer === 0 && o.type === 'video');
+    if (baseIdx >= 0) {
+      const [baseItem] = overlayOrder.splice(baseIdx, 1);
+      overlayOrder.push(baseItem);
+      console.log('   🖼️ PiP mode: moved base layer to top, B-roll becomes background');
+    }
+  }
+
   // Check if we need a base layer (black background) before processing overlays
   // This is needed if the first overlay is not a video/image layer prepared as base
   const firstOverlay = overlayOrder[0];
@@ -1536,6 +1560,44 @@ export function buildSeparateTimelineFilterComplex(
           `   ✅ Layer ${overlay.layer} (${overlay.type}) is base layer -> [${currentCompositeLabel}]`,
         );
       } else if (overlay.type === 'video' && videoTimeline) {
+        // Check if this is the PiP main-track being drawn on top of B-roll
+        const overlayPip = videoTimeline.segments[0]?.input?.pipFrame;
+        if (overlayPip && hasOverlaysAboveBase) {
+          const pipFilters = buildPipFilter(
+            `[${layerLabel}]`,
+            `[pip_transformed]`,
+            targetDimensions.width,
+            targetDimensions.height,
+            overlayPip,
+          );
+          // Strip the comment line, push real filters
+          for (const f of pipFilters) {
+            if (!f.startsWith('# ')) videoFilters.push(f);
+          }
+          const { x: pipX, y: pipY } = getPipOverlayPosition(
+            targetDimensions.width,
+            targetDimensions.height,
+            overlayPip,
+          );
+          const startT = Math.min(...videoTimeline.segments.map(s => s.startTime));
+          const endT = Math.max(...videoTimeline.segments.map(s => s.endTime));
+          const pipCompositeLabel = 'video_composite';
+          videoFilters.push(
+            buildOverlayFilter(
+              `[${currentCompositeLabel}]`,
+              `[${PIP_MASKED_REF}]`,
+              `[${pipCompositeLabel}]`,
+              String(pipX),
+              String(pipY),
+              hwAccel,
+              { shortest: 0, enable: `between(t,${startT.toFixed(3)},${endT.toFixed(3)})`, eofAction: 'pass' },
+            ),
+          );
+          currentCompositeLabel = pipCompositeLabel;
+          console.log(`   🖼️ PiP overlay applied: ${overlayPip.style} at (${pipX},${pipY})`);
+          continue;
+        }
+
         // Overlay this video layer on top of current composite
         const overlayStartTime =
           videoTimeline.segments.length > 0

@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Speed Ramp Animation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a1a;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 40px;
+    padding: 40px;
+  }
+
+  h2 {
+    color: #aaa;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  /* ── Mock timeline ── */
+  .timeline {
+    width: 700px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .ruler {
+    display: flex;
+    gap: 0;
+    padding-left: 0;
+    color: #555;
+    font-size: 11px;
+  }
+  .ruler span {
+    flex: 1;
+    text-align: left;
+  }
+
+  .track {
+    height: 56px;
+    background: #2a2a2a;
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #333;
+  }
+
+  /* The base clip (green, like DiviDr) */
+  .clip {
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 0;
+    width: 100%;
+    background: linear-gradient(180deg, #1a3a2a 0%, #122b1e 100%);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    border: 1.5px solid #2a6644;
+  }
+
+  .clip-label {
+    color: #4caf80;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── Speed ramp overlay ── */
+  .speed-overlay {
+    position: absolute;
+    top: 0; bottom: 0;
+    overflow: hidden;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+
+  /* Chevron strip — the moving layer */
+  .chevron-strip {
+    position: absolute;
+    top: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 0px;
+    will-change: transform;
+  }
+
+  /* Individual chevron SVG wrapper */
+  .chev {
+    width: 28px;
+    height: 100%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+  }
+
+  .chev svg {
+    width: 18px;
+    height: 28px;
+  }
+
+  /* Speed-up: arrows right, strip moves right */
+  .overlay-speedup {
+    background: transparent;
+  }
+
+  .overlay-speedup .chevron-strip {
+    animation: flowRight 0.6s linear infinite;
+  }
+
+  .overlay-speedup .chev {
+    animation: fadeChevRight 0.6s linear infinite;
+  }
+
+  /* Slow-mo: arrows left, strip moves left */
+  .overlay-slowmo {
+    background: transparent;
+  }
+
+  .overlay-slowmo .chevron-strip {
+    animation: flowLeft 1.4s linear infinite;
+  }
+
+  .overlay-slowmo .chev {
+    animation: fadeChevLeft 1.4s linear infinite;
+  }
+
+  /* Strip travel distance = one chevron width (28px) */
+  @keyframes flowRight {
+    from { transform: translateX(0); }
+    to   { transform: translateX(28px); }
+  }
+  @keyframes flowLeft {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-28px); }
+  }
+
+  /* Each chevron fades in from the left and out at right (speed-up) */
+  @keyframes fadeChevRight {
+    0%   { opacity: 0; }
+    15%  { opacity: 0.55; }
+    50%  { opacity: 0.55; }
+    85%  { opacity: 0.55; }
+    100% { opacity: 0; }
+  }
+
+  /* Each chevron fades in from the right and out at left (slow-mo) */
+  @keyframes fadeChevLeft {
+    0%   { opacity: 0; }
+    15%  { opacity: 0.35; }
+    50%  { opacity: 0.35; }
+    85%  { opacity: 0.35; }
+    100% { opacity: 0; }
+  }
+
+  /* Stagger each chevron within the strip */
+  .chev:nth-child(1)  { animation-delay: calc(var(--period) * 0 / var(--count)); }
+  .chev:nth-child(2)  { animation-delay: calc(var(--period) * 1 / var(--count)); }
+  .chev:nth-child(3)  { animation-delay: calc(var(--period) * 2 / var(--count)); }
+  .chev:nth-child(4)  { animation-delay: calc(var(--period) * 3 / var(--count)); }
+  .chev:nth-child(5)  { animation-delay: calc(var(--period) * 4 / var(--count)); }
+  .chev:nth-child(6)  { animation-delay: calc(var(--period) * 5 / var(--count)); }
+  .chev:nth-child(7)  { animation-delay: calc(var(--period) * 6 / var(--count)); }
+  .chev:nth-child(8)  { animation-delay: calc(var(--period) * 7 / var(--count)); }
+  .chev:nth-child(9)  { animation-delay: calc(var(--period) * 8 / var(--count)); }
+  .chev:nth-child(10) { animation-delay: calc(var(--period) * 9 / var(--count)); }
+  .chev:nth-child(11) { animation-delay: calc(var(--period) * 10 / var(--count)); }
+  .chev:nth-child(12) { animation-delay: calc(var(--period) * 11 / var(--count)); }
+  .chev:nth-child(13) { animation-delay: calc(var(--period) * 12 / var(--count)); }
+  .chev:nth-child(14) { animation-delay: calc(var(--period) * 13 / var(--count)); }
+  .chev:nth-child(15) { animation-delay: calc(var(--period) * 14 / var(--count)); }
+  .chev:nth-child(16) { animation-delay: calc(var(--period) * 15 / var(--count)); }
+  .chev:nth-child(17) { animation-delay: calc(var(--period) * 16 / var(--count)); }
+  .chev:nth-child(18) { animation-delay: calc(var(--period) * 17 / var(--count)); }
+  .chev:nth-child(19) { animation-delay: calc(var(--period) * 18 / var(--count)); }
+  .chev:nth-child(20) { animation-delay: calc(var(--period) * 19 / var(--count)); }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    gap: 12px;
+  }
+
+  button {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+
+  .btn-speed  { background: #ffb400; color: #111; }
+  .btn-slow   { background: #4a90e2; color: #fff; }
+  .btn-clear  { background: #333; color: #aaa; }
+
+  /* Labels */
+  .demo-label {
+    color: #666;
+    font-size: 12px;
+    margin-bottom: -30px;
+    align-self: flex-start;
+    margin-left: 0;
+  }
+</style>
+</head>
+<body>
+
+<h2>Speed Ramp Timeline Animation</h2>
+
+<div class="controls">
+  <button class="btn-speed" onclick="addOverlay('speedup', 0.2, 0.6)">Speed Up (2–6s)</button>
+  <button class="btn-slow"  onclick="addOverlay('slowmo', 0.5, 0.85)">Slow Mo (5–8.5s)</button>
+  <button class="btn-clear" onclick="clearOverlays()">Clear</button>
+</div>
+
+<div class="timeline">
+  <div class="ruler">
+    <span>:00</span><span>00:02</span><span>00:04</span><span>00:06</span><span>00:08</span><span>00:10</span>
+  </div>
+  <div class="track">
+    <div class="clip">
+      <span class="clip-label">footage.mp4</span>
+    </div>
+    <!-- overlays injected here -->
+  </div>
+</div>
+
+<script>
+  const CHEVRON_COUNT = 20;
+  const CHEV_W = 28;
+
+  function makeChevSvg(dir) {
+    const points = dir === 'right'
+      ? 'M4,4 L14,14 L4,24'
+      : 'M14,4 L4,14 L14,24';
+    return `<svg viewBox="0 0 18 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <polyline points="${points}" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+  }
+
+  function buildStrip(type) {
+    const dir = type === 'speedup' ? 'right' : 'left';
+    const period = type === 'speedup' ? '0.6s' : '1.4s';
+    const strip = document.createElement('div');
+    strip.className = 'chevron-strip';
+    strip.style.setProperty('--period', period);
+    strip.style.setProperty('--count', CHEVRON_COUNT);
+
+    for (let i = 0; i < CHEVRON_COUNT; i++) {
+      const chev = document.createElement('div');
+      chev.className = 'chev';
+      chev.innerHTML = makeChevSvg(dir);
+      strip.appendChild(chev);
+    }
+    return strip;
+  }
+
+  function addOverlay(type, startFrac, endFrac) {
+    const track = document.querySelector('.track');
+    const trackW = track.offsetWidth;
+
+    const overlay = document.createElement('div');
+    overlay.className = `speed-overlay overlay-${type}`;
+    overlay.dataset.type = type;
+
+    const left = startFrac * trackW;
+    const width = (endFrac - startFrac) * trackW;
+    overlay.style.left = left + 'px';
+    overlay.style.width = width + 'px';
+
+    // Strip needs to be wider than the overlay to allow seamless scroll
+    const stripW = width + CHEV_W * 2;
+    const strip = buildStrip(type);
+    strip.style.width = stripW + 'px';
+    strip.style.left = type === 'speedup' ? `-${CHEV_W}px` : '0px';
+
+    overlay.appendChild(strip);
+    track.appendChild(overlay);
+  }
+
+  function clearOverlays() {
+    document.querySelectorAll('.speed-overlay').forEach(el => el.remove());
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EDITH Timeline Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a1a;
+    color: #fff;
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    gap: 24px;
+  }
+
+  h2 { font-size: 13px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+
+  /* ── TIMELINE SHELL ── */
+  .timeline-wrap {
+    position: relative;
+    width: 800px;
+  }
+
+  /* Time ruler */
+  .ruler {
+    position: relative;
+    height: 24px;
+    border-bottom: 1px solid #333;
+  }
+  .ruler-tick {
+    position: absolute;
+    bottom: 0;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: #555;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .ruler-tick span { width: 1px; height: 6px; background: #444; display: block; }
+
+  /* Track rows */
+  .tracks {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 0;
+  }
+
+  .track {
+    position: relative;
+    height: 48px;
+    background: #222;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .track-label {
+    position: absolute;
+    left: -72px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    width: 64px;
+    text-align: right;
+  }
+
+  /* Clips */
+  .clip {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 0.9;
+  }
+
+  .clip-video { background: #2a4a6b; color: #7bb8f0; border: 1px solid #3a6a9b; }
+  .clip-broll { background: #2a4a3a; color: #7bf0a8; border: 1px solid #3a6a4a; }
+  .clip-caption { background: #4a3a2a; color: #f0c87b; border: 1px solid #6a5a3a; }
+
+  /* ── THE CURTAIN SYSTEM ── */
+  /* Dark overlay — covers everything RIGHT of playhead */
+  .curtain {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background: #1a1a1a;
+    opacity: 0.92;
+    pointer-events: none;
+    transition: width 0s; /* jumpy — no smooth */
+  }
+
+  /* Playhead */
+  .playhead {
+    position: absolute;
+    top: -28px;
+    bottom: 0;
+    width: 2px;
+    background: #fff;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .playhead::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    clip-path: polygon(50% 100%, 0 0, 100% 0);
+  }
+
+  /* ── STATUS BAR ── */
+  .status {
+    font-size: 11px;
+    color: #666;
+    height: 16px;
+    text-align: center;
+  }
+  .status .op { color: #00D4FF; }
+  .status .time { color: #FFD700; }
+
+  /* ── CONTROLS ── */
+  .controls {
+    display: flex;
+    gap: 12px;
+  }
+  button {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    color: #ccc;
+    padding: 8px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+  }
+  button:hover { background: #333; border-color: #666; color: #fff; }
+  button.active { border-color: #00D4FF; color: #00D4FF; }
+</style>
+</head>
+<body>
+
+<h2>EDITH — Timeline Edit Mockup</h2>
+
+<div class="timeline-wrap" id="timelineWrap">
+  <!-- Ruler -->
+  <div class="ruler" id="ruler"></div>
+
+  <!-- Playhead (spans ruler + tracks) -->
+  <div class="playhead" id="playhead"></div>
+
+  <!-- Tracks -->
+  <div class="tracks" style="margin-left: 80px;">
+
+    <div class="track" id="trackVideo">
+      <span class="track-label">video</span>
+      <!-- Main interview clip -->
+      <div class="clip clip-video" style="left:0%; width:100%;">
+        I LIKE CHOCOLATE BARS
+      </div>
+      <!-- Curtain -->
+      <div class="curtain" id="curtainVideo"></div>
+    </div>
+
+    <div class="track" id="trackBroll">
+      <span class="track-label">b-roll</span>
+      <div class="clip clip-broll" style="left:40%; width:25%;">Chocolate farm</div>
+      <div class="clip clip-broll" style="left:70%; width:20%;">Close-up bar</div>
+      <div class="curtain" id="curtainBroll"></div>
+    </div>
+
+    <div class="track" id="trackCaptions">
+      <span class="track-label">captions</span>
+      <div class="clip clip-caption" style="left:2%; width:19%;">I LIKE</div>
+      <div class="clip clip-caption" style="left:22%; width:24%;">CHOCOLATE</div>
+      <div class="clip clip-caption" style="left:47%; width:22%;">BARS</div>
+      <div class="clip clip-caption" style="left:75%; width:22%;">FOLLOW @MYCELIUM</div>
+      <div class="curtain" id="curtainCaptions"></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="status" id="status">Press <strong>▶ Run EDITH</strong> to watch her edit</div>
+
+<div class="controls">
+  <button id="btnRun">▶ Run EDITH</button>
+  <button id="btnReset">↺ Reset</button>
+</div>
+
+<script>
+  const TIMELINE_WIDTH = 800; // px (full wrap width)
+  const TRACK_OFFSET_LEFT = 80; // px (label width)
+  const TRACK_WIDTH = TIMELINE_WIDTH - TRACK_OFFSET_LEFT; // drawable area
+
+  const playhead = document.getElementById('playhead');
+  const curtains = [
+    document.getElementById('curtainVideo'),
+    document.getElementById('curtainBroll'),
+    document.getElementById('curtainCaptions'),
+  ];
+  const statusEl = document.getElementById('status');
+  const btnRun = document.getElementById('btnRun');
+  const btnReset = document.getElementById('btnReset');
+
+  // Build ruler
+  const ruler = document.getElementById('ruler');
+  ruler.style.marginLeft = TRACK_OFFSET_LEFT + 'px';
+  ruler.style.width = TRACK_WIDTH + 'px';
+  for (let s = 0; s <= 5; s++) {
+    const tick = document.createElement('div');
+    tick.className = 'ruler-tick';
+    tick.style.left = (s / 5 * 100) + '%';
+    tick.innerHTML = `<span></span>${s}s`;
+    ruler.appendChild(tick);
+  }
+
+  // Set playhead + curtain to a fraction (0–1)
+  let currentFrac = 0;
+  function setPlayhead(frac) {
+    currentFrac = frac;
+    const px = TRACK_OFFSET_LEFT + frac * TRACK_WIDTH;
+    playhead.style.left = px + 'px';
+    // Curtain covers from frac to 100%
+    const curtainWidth = (1 - frac) * 100;
+    curtains.forEach(c => { c.style.width = curtainWidth + '%'; });
+  }
+
+  function setStatus(html) {
+    statusEl.innerHTML = html;
+  }
+
+  // ── EDITH EDIT SEQUENCE ──────────────────────────────────────────
+  // Micro-level: small forward steps, tiny backtracks, slow progression L→R
+  const sequence = [
+    { to: 0.000, label: 'Scanning timeline…', hold: 600 },
+
+    // ── Trim intro
+    { to: 0.018, label: '<span class="op">trimClip</span> — in-point at <span class="time">0.09s</span>', hold: 300 },
+    { to: 0.012, label: '<span class="op">trimClip</span> — nudge back <span class="time">0.03s</span>', hold: 250 },
+    { to: 0.021, label: '<span class="op">trimClip</span> — locked <span class="time">0.10s</span>', hold: 350 },
+
+    // ── Caption 1: "I LIKE"
+    { to: 0.038, label: '<span class="op">addCaption</span> — placing "I LIKE" start', hold: 280 },
+    { to: 0.031, label: '<span class="op">addCaption</span> — micro-pull start back', hold: 220 },
+    { to: 0.041, label: '<span class="op">addCaption</span> — start <span class="time">0.20s</span>', hold: 280 },
+    { to: 0.088, label: '<span class="op">addCaption</span> — end point <span class="time">0.44s</span>', hold: 300 },
+    { to: 0.079, label: '<span class="op">addCaption</span> — shorten end <span class="time">0.40s</span>', hold: 250 },
+    { to: 0.092, label: '<span class="op">addCaption</span> — "I LIKE" locked', hold: 350 },
+
+    // ── Caption 2: "CHOCOLATE"
+    { to: 0.110, label: '<span class="op">addCaption</span> — gap check before "CHOCOLATE"', hold: 280 },
+    { to: 0.124, label: '<span class="op">addCaption</span> — placing "CHOCOLATE" start <span class="time">0.62s</span>', hold: 300 },
+    { to: 0.118, label: '<span class="op">addCaption</span> — micro-pull start', hold: 220 },
+    { to: 0.128, label: '<span class="op">addCaption</span> — start confirmed', hold: 260 },
+    { to: 0.192, label: '<span class="op">addCaption</span> — end <span class="time">0.96s</span>', hold: 300 },
+    { to: 0.184, label: '<span class="op">addCaption</span> — trim end slightly', hold: 220 },
+    { to: 0.196, label: '<span class="op">addCaption</span> — "CHOCOLATE" locked', hold: 350 },
+
+    // ── B-roll: chocolate farm
+    { to: 0.220, label: '<span class="op">addBroll</span> — scanning insert point', hold: 300 },
+    { to: 0.238, label: '<span class="op">addBroll</span> — place chocolate farm <span class="time">1.19s</span>', hold: 320 },
+    { to: 0.229, label: '<span class="op">addBroll</span> — micro-pull in-point', hold: 240 },
+    { to: 0.244, label: '<span class="op">addBroll</span> — align to caption start', hold: 280 },
+    { to: 0.310, label: '<span class="op">addBroll</span> — b-roll out-point <span class="time">1.55s</span>', hold: 320 },
+    { to: 0.296, label: '<span class="op">addBroll</span> — trim out slightly', hold: 240 },
+    { to: 0.318, label: '<span class="op">addBroll</span> — farm clip locked', hold: 380 },
+
+    // ── Caption 3: "BARS"
+    { to: 0.340, label: '<span class="op">addCaption</span> — gap check', hold: 260 },
+    { to: 0.358, label: '<span class="op">addCaption</span> — placing "BARS" <span class="time">1.79s</span>', hold: 300 },
+    { to: 0.349, label: '<span class="op">addCaption</span> — micro-pull', hold: 220 },
+    { to: 0.363, label: '<span class="op">addCaption</span> — start confirmed', hold: 260 },
+    { to: 0.418, label: '<span class="op">addCaption</span> — end <span class="time">2.09s</span>', hold: 300 },
+    { to: 0.408, label: '<span class="op">addCaption</span> — tighten end', hold: 220 },
+    { to: 0.424, label: '<span class="op">addCaption</span> — "BARS" locked', hold: 350 },
+
+    // ── Color grade pass
+    { to: 0.010, label: '<span class="op">colorGrade</span> — applying warm grade from start…', hold: 300 },
+    { to: 0.180, label: '<span class="op">colorGrade</span> — pass through mid…', hold: 280 },
+    { to: 0.430, label: '<span class="op">colorGrade</span> — grade through <span class="time">2.15s</span>', hold: 350 },
+
+    // ── B-roll: close-up
+    { to: 0.448, label: '<span class="op">addBroll</span> — scanning for close-up insert', hold: 300 },
+    { to: 0.462, label: '<span class="op">addBroll</span> — place close-up <span class="time">2.31s</span>', hold: 320 },
+    { to: 0.454, label: '<span class="op">addBroll</span> — micro-pull', hold: 220 },
+    { to: 0.469, label: '<span class="op">addBroll</span> — in-point confirmed', hold: 280 },
+    { to: 0.528, label: '<span class="op">addBroll</span> — out-point <span class="time">2.64s</span>', hold: 300 },
+    { to: 0.519, label: '<span class="op">addBroll</span> — shorten', hold: 220 },
+    { to: 0.534, label: '<span class="op">addBroll</span> — close-up locked', hold: 360 },
+
+    // ── CTA caption
+    { to: 0.560, label: '<span class="op">addCaption</span> — gap to CTA check', hold: 280 },
+    { to: 0.578, label: '<span class="op">addCaption</span> — placing CTA start <span class="time">2.89s</span>', hold: 300 },
+    { to: 0.568, label: '<span class="op">addCaption</span> — micro-pull', hold: 220 },
+    { to: 0.583, label: '<span class="op">addCaption</span> — start locked', hold: 260 },
+    { to: 0.648, label: '<span class="op">addCaption</span> — "FOLLOW @MYCELIUM" end <span class="time">3.24s</span>', hold: 300 },
+    { to: 0.638, label: '<span class="op">addCaption</span> — tighten', hold: 220 },
+    { to: 0.654, label: '<span class="op">addCaption</span> — CTA locked', hold: 380 },
+
+    // ── Final trim + out-point
+    { to: 0.670, label: '<span class="op">trimClip</span> — out-point after CTA', hold: 280 },
+    { to: 0.662, label: '<span class="op">trimClip</span> — micro-pull', hold: 220 },
+    { to: 0.675, label: '<span class="op">trimClip</span> — out-point <span class="time">3.37s</span> locked', hold: 340 },
+
+    // ── Final grade pass
+    { to: 0.010, label: '<span class="op">colorGrade</span> — final pass…', hold: 250 },
+    { to: 0.340, label: '<span class="op">colorGrade</span> — mid…', hold: 250 },
+    { to: 0.675, label: '<span class="op">colorGrade</span> — grade complete', hold: 400 },
+
+    { to: 0.675, label: '✓ Edit complete — <span class="time">3.37s reel</span>', hold: 1000 },
+  ];
+
+  let running = false;
+  let raf = null;
+
+  async function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+  }
+
+  const SPEED = 0.22; // lower = faster. 1.0 = original speed
+
+  async function runSequence() {
+    running = true;
+    btnRun.classList.add('active');
+    btnRun.textContent = '⏳ Editing…';
+
+    for (const step of sequence) {
+      if (!running) break;
+      setPlayhead(step.to);
+      setStatus(step.label);
+      await sleep(Math.max(40, step.hold * SPEED));
+    }
+
+    running = false;
+    btnRun.classList.remove('active');
+    btnRun.textContent = '▶ Run EDITH';
+  }
+
+  function reset() {
+    running = false;
+    btnRun.classList.remove('active');
+    btnRun.textContent = '▶ Run EDITH';
+    setPlayhead(0);
+    setStatus('Press <strong>▶ Run EDITH</strong> to watch her edit');
+  }
+
+  btnRun.addEventListener('click', () => {
+    if (running) return;
+    reset();
+    setTimeout(runSequence, 100);
+  });
+
+  btnReset.addEventListener('click', reset);
+
+  // Init
+  setPlayhead(0);
+</script>
+</body>
+</html>

@@ -54,6 +54,12 @@ export interface TrackInfo {
    * Used during FFmpeg overlay filter chain construction
    */
   layerIndex?: number;
+  /** PiP frame config — when set on the base layer (layer 0), renders it as a floating frame over B-roll */
+  pipFrame?: {
+    style: 'circle' | 'rounded-square' | 'square';
+    x: number; y: number; size: number;
+    borderColor: string; borderWidth: number;
+  };
 
   /**
    * Compositing group - clips with same groupId are processed together

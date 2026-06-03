@@ -208,51 +208,90 @@ def _energy_timeline(frames_data, fps, total_frames, sample_every):
     Returns (timeline, events) where timeline is list of {second, score} (0-1).
     Computed from wrist + elbow velocity per second bucket.
     """
-    ENERGY_JOINTS = [_L_WRIST, _R_WRIST, _L_ELBOW, _R_ELBOW]
-
     buckets: dict = {}
     prev = None
+
+    # Torso center indices for cut detection
+    _TORSO = [_L_SHOULDER, _R_SHOULDER, _L_HIP, _R_HIP]
 
     for entry in frames_data:
         if prev is None:
             prev = entry
             continue
 
-        second = int(entry['frame'] / fps)
-        velocities = []
-        for idx in ENERGY_JOINTS:
+        # Detect hard cuts: if torso center jumps > 25% of frame width in one
+        # sample step it's a scene cut, not movement — discard this velocity reading.
+        torso_pts_cur, torso_pts_prev = [], []
+        for idx in _TORSO:
             cx, cy, _, cvis = _lm(entry['landmarks'], idx)
             px, py, _, pvis = _lm(prev['landmarks'], idx)
             if min(cvis, pvis) > 0.4:
-                v = _dist2d((cx, cy), (px, py)) * fps / sample_every
-                velocities.append(v)
+                torso_pts_cur.append((cx, cy))
+                torso_pts_prev.append((px, py))
+        if torso_pts_cur and torso_pts_prev:
+            tcx = float(np.mean([p[0] for p in torso_pts_cur]))
+            tcy = float(np.mean([p[1] for p in torso_pts_cur]))
+            tpx = float(np.mean([p[0] for p in torso_pts_prev]))
+            tpy = float(np.mean([p[1] for p in torso_pts_prev]))
+            if _dist2d((tcx, tcy), (tpx, tpy)) > 0.25:
+                prev = entry
+                continue
 
-        if velocities:
-            buckets.setdefault(second, []).append(float(np.mean(velocities)))
+        second = int(entry['frame'] / fps)
+
+        # Bilateral wrist scoring: high only when BOTH wrists are moving fast.
+        # This discriminates boxing (both gloves always active) from interview
+        # gestures (one arm at a time). Formula: 40% mean + 60% min of the pair.
+        lv = rv = None
+        for side, idx in [('L', _L_WRIST), ('R', _R_WRIST)]:
+            cx, cy, _, cvis = _lm(entry['landmarks'], idx)
+            px, py, _, pvis = _lm(prev['landmarks'], idx)
+            if min(cvis, pvis) > 0.35:
+                v = _dist2d((cx, cy), (px, py)) * fps / sample_every
+                if side == 'L':
+                    lv = v
+                else:
+                    rv = v
+
+        if lv is not None and rv is not None:
+            frame_score = 0.4 * (lv + rv) / 2.0 + 0.6 * min(lv, rv)
+        elif lv is not None or rv is not None:
+            # Only one wrist visible — heavily discount (can't confirm bilateral)
+            frame_score = 0.3 * (lv if lv is not None else rv)
+        else:
+            frame_score = None
+
+        if frame_score is not None:
+            buckets.setdefault(second, []).append(frame_score)
         prev = entry
 
     if not buckets:
         return [], []
 
     scores = {sec: float(np.mean(vals)) for sec, vals in buckets.items()}
-    max_score = max(scores.values()) if scores else 1.0
-    if max_score == 0:
-        max_score = 1.0
+    # Use 95th percentile instead of max — prevents a single spike from
+    # compressing the whole distribution and merging boxing with interview.
+    score_vals = list(scores.values())
+    norm_base = float(np.percentile(score_vals, 95)) if score_vals else 1.0
+    if norm_base == 0:
+        norm_base = float(np.max(score_vals)) if score_vals else 1.0
+    if norm_base == 0:
+        norm_base = 1.0
 
     total_seconds = int(total_frames / fps) + 1
     timeline = []
     for sec in range(total_seconds):
         raw = scores.get(sec, 0.0)
-        timeline.append({'second': sec, 'score': round(raw / max_score, 3)})
+        timeline.append({'second': sec, 'score': round(raw / norm_base, 3)})
 
     events = []
     run_start = None
     for item in timeline:
-        if item['score'] >= 0.7:
+        if item['score'] >= 0.75:
             if run_start is None:
                 run_start = item['second']
         else:
-            if run_start is not None and item['second'] - run_start >= 2:
+            if run_start is not None and item['second'] - run_start >= 3:
                 events.append({
                     'type': 'high_energy',
                     'startFrame': int(run_start * fps),
@@ -263,6 +302,19 @@ def _energy_timeline(frames_data, fps, total_frames, sample_every):
                     ),
                 })
             run_start = None
+
+    # Flush any high-energy run that reaches the end of the clip without dropping.
+    # Without this, boxing that continues to the last frame is silently dropped.
+    if run_start is not None and timeline[-1]['second'] - run_start >= 3:
+        events.append({
+            'type': 'high_energy',
+            'startFrame': int(run_start * fps),
+            'endFrame': int(timeline[-1]['second'] * fps),
+            'score': round(
+                float(np.mean([t['score'] for t in timeline
+                               if t['second'] >= run_start])), 2
+            ),
+        })
 
     return timeline, events
 

@@ -556,6 +556,9 @@ function convertTracksToFFmpegInputs(
       trackRowIndex: track.trackRowIndex ?? 0,
       layerIndex: track.layer ?? track.trackRowIndex ?? 0,
       compositingGroup: track.isLinked ? track.linkedTrackId : undefined,
+      pipFrame: (track as any).pipFrame?.style && (track as any).pipFrame.style !== 'none'
+        ? (track as any).pipFrame
+        : undefined,
     };
 
     console.log('Track Info: ', trackInfo);

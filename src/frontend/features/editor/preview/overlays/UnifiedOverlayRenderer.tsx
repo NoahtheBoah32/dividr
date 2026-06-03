@@ -33,6 +33,8 @@ import {
   getTrackZIndex,
 } from '../utils/trackUtils';
 import { DualBufferVideo, DualBufferVideoRef } from './DualBufferVideoOverlay';
+import { TrackedCaptionOverlay } from './TrackedCaptionOverlay';
+import { PipDragOverlay } from './PipDragOverlay';
 import {
   FrameDrivenCompositor,
   FrameDrivenCompositorRef,
@@ -278,7 +280,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
   const activeSubtitles = useMemo(
     () =>
       sortedVisualTracks
-        .filter((t) => t.type === 'subtitle' && (t.subtitleText || (t as any).subtitleSegments?.length))
+        .filter((t) => t.type === 'subtitle' && !(t as any).subtitleTracked && (t.subtitleText || (t as any).subtitleSegments?.length))
         .map((t): VideoTrack | null => {
           const segs = (t as any).subtitleSegments as Array<{
             text: string; startFrame: number; endFrame: number; highlightWordIndex?: number;
@@ -805,6 +807,22 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
 
       {/* Subtitles */}
       {renderSubtitles()}
+
+      {/* PiP drag handle — lets the user reposition the PiP frame by dragging */}
+      <PipDragOverlay
+        actualWidth={actualWidth}
+        actualHeight={actualHeight}
+        panX={panX}
+        panY={panY}
+      />
+
+      {/* Tracked captions — canvas overlay anchored to pose landmarks */}
+      <TrackedCaptionOverlay
+        actualWidth={actualWidth}
+        actualHeight={actualHeight}
+        panX={panX}
+        panY={panY}
+      />
     </>
   );
 };

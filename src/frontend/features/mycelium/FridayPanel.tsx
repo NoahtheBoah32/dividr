@@ -505,6 +505,38 @@ export function FridayPanel({ className }: { className?: string }) {
   useEffect(() => {
     const handler = (e: Event) => {
       const chunk = (e as CustomEvent).detail;
+
+      // Speaker diarization result — feed back to EDITH so she can name speakers
+      if (chunk?.speakerDiarization) {
+        const segs: Array<{speaker: string; start: number; end: number}> = chunk.segments ?? [];
+        const speakers = [...new Set(segs.map(s => s.speaker))];
+        const summary = speakers.map(spk => {
+          const windows = segs.filter(s => s.speaker === spk)
+            .map(s => `${s.start.toFixed(1)}–${s.end.toFixed(1)}s`).slice(0, 5).join(', ');
+          return `${spk}: ${windows}`;
+        }).join('\n');
+        const note = `Speaker diarization complete — ${speakers.length} speaker${speakers.length !== 1 ? 's' : ''} identified.\n${summary}\n\nThese are anonymous labels (SPEAKER_A, SPEAKER_B…). Cross-reference with the transcript to figure out who each label maps to — the first person to speak in the transcript is likely SPEAKER_A. Once you know who is who, use the speaker labels when writing B-roll queries and placing captions.`;
+        setAgentStatus('running');
+        const s = useVideoEditorStore.getState() as any;
+        const fps = s.timeline?.fps || 30;
+        window.electronAPI.invoke('mycelium:sendMessage', {
+          text: `continue (${note})`,
+          timelineSnapshot: {
+            fps, currentFrame: s.timeline?.currentFrame ?? 0, totalFrames: s.timeline?.totalFrames ?? 0,
+            selectedClipIds: s.selectedTrackIds ?? [],
+            clips: (s.tracks ?? []).map((t: any) => ({
+              id: t.id, mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+              sourcePath: t.source ?? '', type: t.type, layer: t.trackRowIndex ?? 0,
+              startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+              durationFrames: (t.endFrame ?? 0) - (t.startFrame ?? 0),
+            })),
+          },
+          activeDownloads: [],
+          sfxLibrary,
+        }).catch(() => {});
+        return;
+      }
+
       if (!chunk?.text?.trim() || !transcriptionPipelineActiveRef.current) return;
       pendingTranscriptChunksRef.current.push({
         chunkIndex: chunk.chunkIndex,
@@ -518,7 +550,7 @@ export function FridayPanel({ className }: { className?: string }) {
     };
     window.addEventListener('edith:transcriptChunk', handler);
     return () => window.removeEventListener('edith:transcriptChunk', handler);
-  }, [flushTranscriptChunks]);
+  }, [flushTranscriptChunks, sfxLibrary]);
 
   // Frame snapshot verification — EDITH jumps playhead, we capture + analyze, then auto-continue
   useEffect(() => {
@@ -608,6 +640,42 @@ export function FridayPanel({ className }: { className?: string }) {
     };
     window.addEventListener('edith:scanVideoResult', handler);
     return () => window.removeEventListener('edith:scanVideoResult', handler);
+  }, [sfxLibrary]);
+
+  // detectTransients result — feed timestamps back to EDITH so she can place SFX
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { transients, count } = (e as CustomEvent).detail as { transients: number[]; count: number };
+      let note: string;
+      if (!transients || transients.length === 0) {
+        note = 'Transient detection result: no transients found. The audio may be too quiet or the clip may have no percussive events.';
+      } else {
+        const sample = transients.slice(0, 20).map((t: number) => `${t.toFixed(3)}s`).join(', ');
+        const suffix = count > 20 ? ` … (${count} total)` : '';
+        note = `Transient detection result: ${count} audio spikes found at: ${sample}${suffix}. These are the exact onset timestamps. Now place the appropriate SFX at each relevant one using placeSFX — match each spike to the best-fit file from the SFX Library. Skip spikes that fall during speech or silence gaps where SFX would clash.`;
+      }
+      setAgentStatus('running');
+      const s = useVideoEditorStore.getState() as any;
+      const fps = s.timeline?.fps || 30;
+      const timelineCtx = {
+        fps, currentFrame: s.timeline?.currentFrame ?? 0, totalFrames: s.timeline?.totalFrames ?? 0,
+        selectedClipIds: s.selectedTrackIds ?? [],
+        clips: (s.tracks ?? []).map((t: any) => ({
+          id: t.id, mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+          sourcePath: t.source ?? '', type: t.type, layer: t.trackRowIndex ?? 0,
+          startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+          durationFrames: (t.endFrame ?? 0) - (t.startFrame ?? 0),
+        })),
+      };
+      window.electronAPI.invoke('mycelium:sendMessage', {
+        text: `continue (${note})`,
+        timelineSnapshot: timelineCtx,
+        activeDownloads: [],
+        sfxLibrary,
+      }).catch(() => {});
+    };
+    window.addEventListener('edith:transientsResult', handler);
+    return () => window.removeEventListener('edith:transientsResult', handler);
   }, [sfxLibrary]);
 
   // B-roll quality check thumbnails pushed from main process
@@ -1243,6 +1311,7 @@ export function FridayPanel({ className }: { className?: string }) {
         isReference: item.category === 'reference',
         transcription,
         referenceAnalysis,
+        speakerSegments: (item as any).speakerSegments,
       };
     });
   }, [mediaLibrary]);

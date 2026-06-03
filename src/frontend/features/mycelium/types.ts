@@ -29,6 +29,13 @@ export type Op =
       endSeconds: number;
       style?: CaptionStyle;
     }
+  | {
+      type: 'addTrackedCaption';
+      text: string;
+      startSeconds: number;
+      endSeconds: number;
+      style?: CaptionStyle;
+    }
   | { type: 'setVolume'; clipId: string; volumeDb: number }
   | { type: 'muteClip'; clipId: string; muted: boolean }
   | { type: 'addSfx'; src: string; atFrame: number }

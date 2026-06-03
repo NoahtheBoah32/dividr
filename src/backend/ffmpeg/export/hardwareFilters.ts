@@ -157,6 +157,90 @@ export function buildOverlayFilter(
 }
 
 /**
+ * Builds FFmpeg filter chain to transform a video into a PiP frame (circle/rounded-square/square)
+ * with a gold border, scaled and positioned for overlay on the main canvas.
+ *
+ * @param inputRef   - FFmpeg stream reference for the video to PiP-ify (the main/talking-head track)
+ * @param outputRef  - Output stream reference
+ * @param canvasW    - Full canvas width in pixels
+ * @param canvasH    - Full canvas height in pixels
+ * @param pip        - PiP configuration from the track
+ * @returns           Array of filter strings to append to filter_complex
+ */
+/** Fixed output reference for the PiP masked stream — always `pip_masked` */
+export const PIP_MASKED_REF = 'pip_masked';
+
+export function buildPipFilter(
+  inputRef: string,
+  _outputRef: string,
+  canvasW: number,
+  canvasH: number,
+  pip: { style: 'circle' | 'rounded-square' | 'square'; x: number; y: number; size: number; borderColor: string; borderWidth: number },
+): string[] {
+  const pipDiam = Math.round(pip.size * canvasW);
+  const borderPx = Math.max(2, Math.round(pip.borderWidth * (canvasW / 1080)));
+
+  // Parse border color (#FFB800 → r=255, g=184, b=0)
+  const hex = (pip.borderColor ?? '#FFB800').replace('#', '');
+  const br = parseInt(hex.substring(0, 2), 16);
+  const bg = parseInt(hex.substring(2, 4), 16);
+  const bb = parseInt(hex.substring(4, 6), 16);
+
+  const scaledRef = 'pip_scaled';
+  const maskedRef = PIP_MASKED_REF;
+
+  const filters: string[] = [];
+
+  // Step 1: Scale and crop to a square matching pip diameter
+  filters.push(
+    `${inputRef}scale=${pipDiam}:${pipDiam}:force_original_aspect_ratio=increase,crop=${pipDiam}:${pipDiam}[${scaledRef}]`,
+  );
+
+  // Step 2: Apply shape mask with gold border ring
+  if (pip.style === 'circle') {
+    const r = pipDiam / 2;
+    const innerR = r - borderPx;
+    // geq: border ring = gold, inner = video, outer = transparent
+    filters.push(
+      `[${scaledRef}]format=rgba,` +
+      `geq=` +
+        `r='if(and(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR})),${br},r(X\\,Y))':` +
+        `g='if(and(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR})),${bg},g(X\\,Y))':` +
+        `b='if(and(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR})),${bb},b(X\\,Y))':` +
+        `a='if(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),255,0)'` +
+      `[${maskedRef}]`,
+    );
+  } else {
+    // Square / rounded-square: use geq for solid alpha mask + drawbox for border
+    filters.push(
+      `[${scaledRef}]format=rgba,` +
+      `geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='255'[${maskedRef}_sq];` +
+      `[${maskedRef}_sq]drawbox=x=0:y=0:w=${pipDiam}:h=${pipDiam}:color=${hex}@1:thickness=${borderPx}[${maskedRef}]`,
+    );
+  }
+
+  // The final masked stream is at maskedRef — caller overlays it at (pipX, pipY) on top of the B-roll
+  filters.push(`# pip_position: x=${pipX} y=${pipY} ref=${maskedRef} → ${outputRef}`);
+
+  return filters;
+}
+
+/**
+ * Returns the pixel position for overlaying a PiP on the canvas
+ */
+export function getPipOverlayPosition(
+  canvasW: number,
+  canvasH: number,
+  pip: { x: number; y: number; size: number },
+): { x: number; y: number } {
+  const diam = Math.round(pip.size * canvasW);
+  return {
+    x: Math.round(pip.x * canvasW - diam / 2),
+    y: Math.round(pip.y * canvasH - diam / 2),
+  };
+}
+
+/**
  * Builds a scale filter for aspect ratio conversion with GPU acceleration
  * Optimized for aspect ratio changes (e.g., 16:9 to 9:16)
  *

@@ -163,7 +163,8 @@ def transcribe_audio(
             model_size,
             device=device,
             compute_type=compute_type,
-            num_workers=4  # Use multiple CPU cores
+            cpu_threads=2,   # Limit CTranslate2 threads — reduces per-thread memory overhead
+            num_workers=1,   # Single decoder worker — 4 workers was causing MKL OOM on large-v3
         )
         load_time = time.time() - load_start
         
@@ -297,9 +298,19 @@ def transcribe_audio(
             result["faster_than_realtime"] = bool(rtf < 1.0)
         
         progress_callback("complete", 100, f"Transcription complete! {segment_count} segments")
-        
+
+        # Explicitly delete the model and force garbage collection so Python releases
+        # the ~1.5GB of RAM immediately rather than waiting for the GC.
+        # This matters when the next operation (e.g. analyzeMotion) also needs a large model.
+        try:
+            del model
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+
         return result
-        
+
     except (FileNotFoundError, ModelLoadError):
         # Re-raise our custom exceptions
         raise

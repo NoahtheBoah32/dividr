@@ -18,6 +18,7 @@ import { RotateCcw } from 'lucide-react';
 import React, { useCallback, useMemo, useRef } from 'react';
 import { useVideoEditorStore } from '../../../stores/videoEditor/index';
 import { AudioProperties } from '../audio/audioProperties';
+import { VideoFramePanel } from './videoFramePanel';
 
 interface VideoPropertiesProps {
   selectedTrackIds: string[];
@@ -448,6 +449,9 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                 </TabsTrigger>
                 <TabsTrigger value="audio" className="rounded">
                   Audio
+                </TabsTrigger>
+                <TabsTrigger value="frame" className="rounded">
+                  Frame
                 </TabsTrigger>
               </>
             ) : (
@@ -933,6 +937,11 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
             />
           </TabsContent>
         )}
+
+        {/* Frame Tab — PiP config for the main video */}
+        <TabsContent value="frame" className="flex-1 overflow-hidden">
+          <VideoFramePanel selectedTrackIds={selectedTrackIds} />
+        </TabsContent>
       </Tabs>
     </div>
   );

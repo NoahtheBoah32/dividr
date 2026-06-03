@@ -310,6 +310,8 @@ export interface VideoTrack {
   color: string;
   subtitleText?: string;
   subtitleType?: 'karaoke' | 'regular'; // Distinguish between karaoke (generated) and regular (imported) subtitles
+  subtitleTracked?: boolean; // When true, rendered by TrackedCaptionOverlay anchored to pose landmarks
+  trackedLinkedVideoTrackId?: string; // Source video track ID for skeleton landmark data
   // When present, this track is a merged caption stream. The renderer displays the active segment
   // based on the current frame; subtitleText is a fallback label only.
   subtitleSegments?: Array<{
@@ -322,6 +324,15 @@ export interface VideoTrack {
   isLinked?: boolean;
   layer?: number; // Layer index for video/image tracks (0 = base layer, higher = overlay priority)
   trackRowIndex?: number; // Row index within the same media type (0 = bottom row, higher = upper rows)
+  // Picture-in-Picture frame config — applied to the main (layer-0) track when B-roll is active
+  pipFrame?: {
+    style: 'none' | 'circle' | 'rounded-square' | 'square'; // mask shape
+    x: number;           // PiP center X, normalized 0–1 (0=left, 1=right), default 0.82
+    y: number;           // PiP center Y, normalized 0–1 (0=top, 1=bottom), default 0.12
+    size: number;        // PiP diameter as fraction of canvas width, default 0.22
+    borderColor: string; // stroke color, default '#FFB800'
+    borderWidth: number; // stroke thickness in px at full canvas width, default 4
+  };
   // For subtitle tracks: reference to the source video/audio track they were generated from
   linkedVideoTrackId?: string;
   // Precise subtitle timing from original SRT file (in seconds with millisecond precision)
