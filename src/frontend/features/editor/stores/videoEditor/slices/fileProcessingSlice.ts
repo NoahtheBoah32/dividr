@@ -1953,7 +1953,7 @@ export const createFileProcessingSlice: StateCreator<
                     storeState.findDuplicateBySignature(signature);
                   if (existingMedia) {
                     duplicatesToHandle.push({
-                      id: `dup-${fileInfo.name}-${Date.now()}`,
+                      id: `dup-${fileInfo.name}-${Date.now()}-${Math.random()}`,
                       pendingFileName: fileInfo.name,
                       pendingFilePath: fileInfo.path,
                       existingMedia,

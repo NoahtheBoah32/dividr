@@ -8,7 +8,54 @@ import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
 import { useEdithEditingStore } from './stores/edithEditingStore';
 import { setSfxLibraryCache } from './storeAdapter';
 
-function renderBold(text: string): React.ReactNode {
+// "Find me the moment" fast-path. A plain CTRL-F request ("find the car", "where's the
+// person", "jump to the busiest part") does NOT need an LLM turn — that adds ~7-10s of
+// latency to what should feel instant. We parse the intent client-side and run the finder
+// directly. Conservative by design: it only fires on a clear find verb + a KNOWN target
+// (or motion / a spoken-word query). Anything it doesn't recognize returns null and falls
+// through to the normal EDITH turn, so nothing regresses.
+const FIND_SYNONYMS: Record<string, string> = {
+  person: 'person', people: 'person', man: 'person', woman: 'person', men: 'person',
+  women: 'person', someone: 'person', somebody: 'person', her: 'person', him: 'person',
+  them: 'person', dancer: 'person', figure: 'person', guy: 'person', girl: 'person',
+  boy: 'person', kid: 'person', lady: 'person', walker: 'person', pedestrian: 'person',
+  car: 'car', vehicle: 'car', automobile: 'car', cars: 'car', truck: 'truck', bus: 'bus',
+  dog: 'dog', cat: 'cat', bike: 'bicycle', bicycle: 'bicycle', cyclist: 'bicycle',
+  ball: 'sports ball', bottle: 'bottle', cup: 'cup', glass: 'cup', phone: 'cell phone',
+  laptop: 'laptop', bird: 'bird', horse: 'horse', dance: 'person',
+};
+function resolveFindIntent(raw: string): { type: 'findMoment'; target?: string; query?: string } | null {
+  const t = raw.trim().toLowerCase().replace(/[?.!]+$/, '');
+  // must open with a find verb / locator, else it is not a pure find
+  const m = t.match(/^(?:find|locate|jump to|go to|take me to|skip to|seek to|show me|where(?:'?s| is| are)?|wheres)\s+(.+)$/);
+  if (!m) return null;
+  // motion intent
+  if (/\b(busiest|most motion|most movement|most active|peak action|biggest motion|most action|the action)\b/.test(t)) {
+    return { type: 'findMoment', target: 'motion' };
+  }
+  // spoken-word (transcript) intent. Strip a trailing copula ("...where pinocchio is" →
+  // "pinocchio") so the visual fallback gets a clean subject and the label reads right;
+  // storeAdapter does the same cleaning centrally, this just keeps the shown label honest.
+  const q = t.match(/(?:part|moment|bit|spot|point)\s+where\s+(.+)/) || t.match(/when\s+(.+?)\s+(?:says?|said|talks?|mentions?)\b/);
+  if (q) {
+    const cleaned = q[1].trim().replace(/\s+(?:is|are|'s|appears?|shows?\s+up)\s*$/i, '').trim();
+    return { type: 'findMoment', query: cleaned || q[1].trim() };
+  }
+  // object/scene intent: pass the cleaned phrase to OPEN-VOCAB Claude vision. Unlike
+  // YOLO's 80 classes, vision identifies anything, so we no longer require a known noun —
+  // any descriptive phrase ("the ampalaya", "the red jeepney") goes straight through.
+  const rest = m[1]
+    .replace(/^where(?:ver)?\s+/i, '')
+    .replace(/^(?:the|a|an|any|some|first|that|this)\s+/i, '')
+    .replace(/\b(?:in this clip|in the clip|in this video|in the video|please|now)\b/gi, '')
+    .replace(/\s+(?:is|are|appears?|shows? up)\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!rest || rest.length < 2) return null;
+  return { type: 'findMoment', target: FIND_SYNONYMS[rest] || rest }; // normalize pronouns, else raw phrase
+}
+
+function renderInlineBold(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   if (parts.length === 1) return text;
   return (
@@ -18,6 +65,31 @@ function renderBold(text: string): React.ReactNode {
           ? <strong key={i} className="font-semibold text-zinc-100">{part.slice(2, -2)}</strong>
           : <React.Fragment key={i}>{part}</React.Fragment>
       )}
+    </>
+  );
+}
+
+// Renders **bold** plus markdown bullet lines ("- item"). Fast path: text with no
+// bullet line renders exactly as before (inline bold only), so existing messages are
+// untouched — only EDITH's organize-style summaries gain real bullets.
+function renderBold(text: string): React.ReactNode {
+  if (!/^\s*[-*]\s+/m.test(text)) return renderInlineBold(text);
+  const lines = text.split('\n');
+  return (
+    <>
+      {lines.map((line, i) => {
+        const m = line.match(/^\s*[-*]\s+(.*)$/);
+        if (m) {
+          return (
+            <span key={i} className="flex gap-1.5">
+              <span className="text-zinc-500 select-none">•</span>
+              <span className="flex-1">{renderInlineBold(m[1])}</span>
+            </span>
+          );
+        }
+        if (line.trim() === '') return <span key={i} className="block h-1.5" />;
+        return <span key={i} className="block">{renderInlineBold(line)}</span>;
+      })}
     </>
   );
 }
@@ -277,7 +349,14 @@ const STATUS_DOT: Record<AgentStatus, string> = {
 };
 
 function historyToMessages(entries: HistoryEntry[]): AgentMessage[] {
-  return entries.map((e, i) => {
+  return entries
+    // Internal agent-loop "continue" turns fire silently (no chat bubble) when they
+    // run live. They are still persisted because EDITH needs them in her context, so
+    // a reload would otherwise paint them as fake user messages. Drop them from the
+    // DISPLAY only — the backend history EDITH reasons over is untouched, so this
+    // just makes a reloaded chat match what was shown live.
+    .filter((e) => !(e.role === 'user' && /^continue($| \()/.test(e.text.trim())))
+    .map((e, i) => {
     if (e.role === 'edith' && e.text.startsWith('PLAN:')) {
       try {
         const steps = JSON.parse(e.text.slice(5).trim()) as Array<{ id: string; step: string }>;
@@ -340,6 +419,12 @@ export function FridayPanel({ className }: { className?: string }) {
   const activePlanIdRef = useRef<string | null>(null);
   const agentStatusRef = useRef<AgentStatus>('idle');
   const interruptedRef = useRef(false);
+  // EDITH is kept mounted when you switch panels (so a running op survives), so the
+  // document-level Escape/Copy shortcuts must only fire while EDITH is the VISIBLE
+  // panel. Otherwise a hidden EDITH would swallow Escape (cancelling her) or Copy from
+  // whatever panel you are actually looking at.
+  const panelTypeForVisibility = usePanelStore((s) => s.activePanelType);
+  const isPanelVisibleRef = useRef(true);
   const pendingSlowOpsRef = useRef<Set<string>>(new Set());
   const pendingSnapshotAnalysisRef = useRef<string | null>(null);
   // QA tracking â€" count substantial ops per EDITH run, trigger QA after done
@@ -642,6 +727,99 @@ export function FridayPanel({ className }: { className?: string }) {
     return () => window.removeEventListener('edith:scanVideoResult', handler);
   }, [sfxLibrary]);
 
+  // findMoment result — fire a continue turn so EDITH confirms the jump OR reports a clean miss.
+  // Without this she narrates "Scanning…" and never follows up (the result note was never delivered).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      const label = d.label || d.query || 'that';
+      let note: string;
+      if (d.found && d.atSec != null) {
+        const mm = Math.floor(d.atSec / 60);
+        const ss = Math.floor(d.atSec % 60).toString().padStart(2, '0');
+        note = `findMoment result: "${label}" found at ${mm}:${ss}. The playhead already jumped there — confirm in ONE short line (e.g. "Jumped to ${mm}:${ss} — ${label}."). Do NOT emit any op.`;
+      } else {
+        note = `findMoment result: "${label}" was NOT found — the footage does not contain it, nothing changed, and the playhead did NOT move. Tell the user plainly that the footage doesn't have what they're looking for, and ask them to either be more specific or point you at different footage. Do NOT invent a timestamp, do NOT jump anywhere, do NOT emit any op.`;
+      }
+      setAgentStatus('running');
+      const s = useVideoEditorStore.getState() as any;
+      const fps = s.timeline?.fps || 30;
+      const timelineCtx = {
+        fps,
+        currentFrame: s.timeline?.currentFrame ?? 0,
+        totalFrames: s.timeline?.totalFrames ?? 0,
+        selectedClipIds: s.selectedTrackIds ?? [],
+        clips: (s.tracks ?? []).map((t: any) => ({
+          id: t.id,
+          mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+          sourcePath: t.source ?? '',
+          type: t.type, layer: t.trackRowIndex ?? 0,
+          startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+          durationFrames: (t.endFrame ?? 0) - (t.startFrame ?? 0),
+        })),
+      };
+      window.electronAPI.invoke('mycelium:sendMessage', {
+        text: `continue (${note})`,
+        timelineSnapshot: timelineCtx,
+        activeDownloads: [],
+        sfxLibrary,
+      }).catch(() => {});
+    };
+    window.addEventListener('edith:findMomentResult', handler);
+    return () => window.removeEventListener('edith:findMomentResult', handler);
+  }, [sfxLibrary]);
+
+  // organizeMedia result — feed the folder breakdown back so EDITH narrates the
+  // summary (a line + one bullet per folder). The library was already re-foldered
+  // by the op; this turn is narration only.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      let note: string;
+      if (d.success) {
+        const folders: Array<{ name: string; count: number }> = d.folders || [];
+        const breakdown = folders.map((f) => `${f.name} (${f.count})`).join(', ');
+        note =
+          `organizeMedia result: done. The media library is now sorted into ${folders.length} ` +
+          `folder(s): ${breakdown}. Confirm with ONE short line, then a bullet list with one ` +
+          `folder per line exactly "- <Folder> (<count>)", in that order. Do NOT emit any op.`;
+      } else if (d.empty) {
+        note =
+          'organizeMedia result: there is no media to organize — the library is empty. Tell the ' +
+          'user there is nothing to sort yet. Do NOT emit any op.';
+      } else {
+        note =
+          `organizeMedia result: the organize did not complete (${d.error || 'unknown error'}). ` +
+          'Tell the user briefly that it did not work and they can try again. Do NOT emit any op.';
+      }
+      setAgentStatus('running');
+      const s = useVideoEditorStore.getState() as any;
+      const fps = s.timeline?.fps || 30;
+      const timelineCtx = {
+        fps,
+        currentFrame: s.timeline?.currentFrame ?? 0,
+        totalFrames: s.timeline?.totalFrames ?? 0,
+        selectedClipIds: s.selectedTrackIds ?? [],
+        clips: (s.tracks ?? []).map((t: any) => ({
+          id: t.id,
+          mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+          sourcePath: t.source ?? '',
+          type: t.type, layer: t.trackRowIndex ?? 0,
+          startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+          durationFrames: (t.endFrame ?? 0) - (t.startFrame ?? 0),
+        })),
+      };
+      window.electronAPI.invoke('mycelium:sendMessage', {
+        text: `continue (${note})`,
+        timelineSnapshot: timelineCtx,
+        activeDownloads: [],
+        sfxLibrary,
+      }).catch(() => {});
+    };
+    window.addEventListener('edith:organizeMediaResult', handler);
+    return () => window.removeEventListener('edith:organizeMediaResult', handler);
+  }, [sfxLibrary]);
+
   // detectTransients result — feed timestamps back to EDITH so she can place SFX
   useEffect(() => {
     const handler = (e: Event) => {
@@ -737,9 +915,9 @@ export function FridayPanel({ className }: { className?: string }) {
           const isTranscribeOp = completedOp?.type === 'runWhisper' || completedOp?.type === 'transcribe';
           if (isTranscribeOp && completedOp?.streamCaptions !== false) {
             transcriptionPipelineActiveRef.current = false;
-            note = 'Transcription fully complete. Check ## Timeline — if subtitle clips exist, captions were placed automatically. Do NOT emit caption ops. Now: (1) scan transcript for the theanine/requested cut sections and emit cut ops at the start and end of each section, then delete the segment between them by emitting cut at start-of-section, cut at end-of-section, and deleteBroll (or a second cut to remove). (2) Check b-roll coverage and download for any uncovered 30s windows — do NOT re-download already placed. (3) Emit grade. (4) Emit snapshot.';
+            note = 'Transcription fully complete. Check ## Timeline — if subtitle clips exist, captions were placed automatically, so do NOT emit caption ops. CRITICAL: now do ONLY what the user actually asked for. If they only asked to transcribe or caption, STOP here and confirm it is done — do NOT cut, grade, zoom, or download/place b-roll on your own. Only continue into cuts / b-roll / grade / snapshot if the user EXPLICITLY asked for a full edit, reels, or "edit this video". When unsure, do the minimal thing they asked and ask before doing more.';
           } else if (isTranscribeOp && completedOp?.streamCaptions === false) {
-            note = 'Transcription complete. Full transcript is in ## Available Project Media. Emit caption ops for the full transcript, then cuts, grade, snapshot.';
+            note = 'Transcription complete. The full transcript is now in ## Available Project Media. CRITICAL: do ONLY what the user actually asked. If they asked only to transcribe, STOP and confirm it is ready — do NOT emit captions, cuts, grade, zoom, or b-roll on your own. Only build captions or continue editing if the user EXPLICITLY requested it.';
           }
           triggerAutoContinue(note);
         }
@@ -818,8 +996,14 @@ export function FridayPanel({ className }: { className?: string }) {
         if (op.type === 'runWhisper' || op.type === 'transcribe' || op.type === 'analyzeReference' || op.type === 'geminiEdit' || op.type === 'snapshotVerify' || op.type === 'snapshot') {
           pendingSlowOpsRef.current.add(qId);
         }
-        // Arm chunk pipeline for both V1 (runWhisper) and V2 (transcribe)
-        if ((op.type === 'runWhisper' || op.type === 'transcribe') && (op as any).streamCaptions !== false) {
+        // Arm the per-chunk B-ROLL pipeline ONLY when auto b-roll was explicitly
+        // requested. A plain transcribe (no `autoBroll`) must NEVER fire EDITH per
+        // chunk to download stock footage — transcription is standalone. Previously
+        // this armed on `streamCaptions !== false`, which is `true` for a plain
+        // transcribe (streamCaptions undefined), so "transcribe, don't do anything
+        // else" wrongly auto-downloaded b-roll. B-roll is now opt-in: the user asks
+        // for footage explicitly, or a reel flow sets `autoBroll: true` on the op.
+        if ((op.type === 'runWhisper' || op.type === 'transcribe') && (op as any).autoBroll === true) {
           transcriptionPipelineActiveRef.current = true;
           pendingTranscriptChunksRef.current = [];
         }
@@ -1339,6 +1523,7 @@ export function FridayPanel({ className }: { className?: string }) {
         volume: t.volume,
         muted: t.muted,
         letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
+        backgroundRemoved: t.backgroundRemoved || undefined,
         captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
       })),
     };
@@ -1418,6 +1603,25 @@ export function FridayPanel({ className }: { className?: string }) {
         ...(imagePreviews.length > 0 && { imagePreviews }),
       },
     ]);
+    // Fast-path: a plain "find the moment" request skips the LLM and runs the finder
+    // directly (instant CTRL-F). Only when there are no attachments / deny-context.
+    const fastFind = (!attachedPaths.length && !denyCtx) ? resolveFindIntent(text) : null;
+    if (fastFind) {
+      const label = fastFind.target === 'motion'
+        ? 'the action'
+        : (fastFind.target ?? `“${fastFind.query}”`);
+      setMessages((prev) => [
+        ...prev,
+        { id: Math.random().toString(36).slice(2), role: 'edith', text: `Jumping to ${label}.`, timestamp: Date.now() },
+      ]);
+      operationEngine.enqueue(fastFind as any);
+      setQueue(operationEngine.getQueue());
+      submittingRef.current = false;
+      edithLlmActiveRef.current = false;
+      setAgentStatus('done');
+      return;
+    }
+
     setAgentStatus('running');
     await window.electronAPI.invoke('mycelium:sendMessage', {
       text: fullText,
@@ -1482,10 +1686,12 @@ export function FridayPanel({ className }: { className?: string }) {
 
   // Keep ref in sync so the Escape listener doesn't close over stale state
   useEffect(() => { agentStatusRef.current = agentStatus; }, [agentStatus]);
+  useEffect(() => { isPanelVisibleRef.current = panelTypeForVisibility === 'friday'; }, [panelTypeForVisibility]);
 
   // Ctrl+C copies selected text from chat messages (non-input elements)
   useEffect(() => {
     const onCopy = (e: KeyboardEvent) => {
+      if (!isPanelVisibleRef.current) return; // EDITH not visible -> let other panels copy
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'c') return;
       const activeEl = document.activeElement;
       // Let the browser handle copy natively if focus is inside an input/textarea
@@ -1504,6 +1710,7 @@ export function FridayPanel({ className }: { className?: string }) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (!isPanelVisibleRef.current) return; // only cancel EDITH from the EDITH panel
       if (agentStatusRef.current !== 'running' && agentStatusRef.current !== 'paused') return;
       interruptedRef.current = true;
       pendingSlowOpsRef.current.clear();
@@ -1531,11 +1738,20 @@ export function FridayPanel({ className }: { className?: string }) {
     return (
       <div className={`flex flex-col h-full${className ? ` ${className}` : ''}`}>
         <ConsentScreen
-          onAgree={async () => {
+          onAgree={() => {
+            // Consent must activate the instant Agree is clicked. Persist + flip state
+            // FIRST, then prepare the downloads dir as a guarded, non-blocking side task.
+            // Previously this awaited initDownloadDir before setConsentGiven, so if that
+            // call was missing (stale preload), slow, or threw, consent never took and the
+            // button looked dead. Optional chaining + fire-and-forget makes it bulletproof.
             localStorage.setItem(getConsentKey(), 'true');
-            const dlResult = await window.electronAPI.initDownloadDir().catch(() => null);
-            if (dlResult?.path) localStorage.setItem('edith-download-dir', dlResult.path);
             setConsentGiven(true);
+            Promise.resolve(window.electronAPI?.initDownloadDir?.())
+              .then((dlResult) => {
+                if (dlResult?.path)
+                  localStorage.setItem('edith-download-dir', dlResult.path);
+              })
+              .catch(() => {});
           }}
           onCancel={hidePanel}
         />

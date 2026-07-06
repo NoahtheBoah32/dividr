@@ -14,11 +14,13 @@ import {
   TooltipTrigger,
 } from '@/frontend/components/ui/tooltip';
 import { cn } from '@/frontend/utils/utils';
-import { RotateCcw } from 'lucide-react';
-import React, { useCallback, useMemo, useRef } from 'react';
+import { Loader2, RotateCcw } from 'lucide-react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useVideoEditorStore } from '../../../stores/videoEditor/index';
 import { AudioProperties } from '../audio/audioProperties';
+import { ColorGradePanel } from './colorGradePanel';
 import { VideoFramePanel } from './videoFramePanel';
+import { NuancedEffectsPanel } from '../effects/nuancedEffectsPanel';
 
 interface VideoPropertiesProps {
   selectedTrackIds: string[];
@@ -97,6 +99,9 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
       ) || null
     );
   }, [tracks, selectedTrack]);
+
+  // Remove Background processing state
+  const [isRemovingBackground, setIsRemovingBackground] = useState(false);
 
   // Tab state management - persist while same track is selected
   const [activeTab, setActiveTab] = React.useState(
@@ -433,6 +438,52 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
     });
   }, [updateTransform]);
 
+  // Background removal — calls electronAPI, replaces track source with alpha WebM/PNG
+  const handleRemoveBackground = useCallback(async () => {
+    const sourcePath = (selectedTrack as any).source || (selectedTrack as any).tempFilePath;
+    if (!sourcePath) return;
+
+    setIsRemovingBackground(true);
+    try {
+      const cacheDir = await window.electronAPI.getMediaCacheDir();
+      const outputDir = (cacheDir as any).path ?? '';
+      const result = await (window.electronAPI as any).removeBackground({
+        inputPath: sourcePath,
+        outputDir,
+        model: 'rembg',
+      });
+      if (result?.success && result.filePath) {
+        let previewUrl = result.filePath;
+        try {
+          const p = await window.electronAPI.createPreviewUrl(result.filePath);
+          if (p && typeof p === 'object' && (p as any).url) previewUrl = (p as any).url;
+          else if (typeof p === 'string') previewUrl = p;
+        } catch { /* use filePath directly */ }
+        updateTrack(selectedTrack.id, {
+          source: result.filePath,
+          previewUrl,
+          backgroundRemoved: true,
+          backgroundRemovedOutputPath: result.filePath,
+        } as any);
+      } else {
+        console.error('Remove background failed:', result?.error);
+      }
+    } catch (err) {
+      console.error('Remove background error:', err);
+    } finally {
+      setIsRemovingBackground(false);
+    }
+  }, [selectedTrack, updateTrack]);
+
+  const handleResetBackgroundRemoval = useCallback(() => {
+    updateTrack(selectedTrack.id, {
+      backgroundRemoval: { enabled: false },
+    } as any);
+  }, [selectedTrack.id, updateTrack]);
+
+  const backgroundRemovalEnabled =
+    !!(selectedTrack as any).backgroundRemoval?.enabled;
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <Tabs
@@ -450,6 +501,9 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                 <TabsTrigger value="audio" className="rounded">
                   Audio
                 </TabsTrigger>
+                <TabsTrigger value="color" className="rounded">
+                  Color
+                </TabsTrigger>
                 <TabsTrigger value="frame" className="rounded">
                   Frame
                 </TabsTrigger>
@@ -464,6 +518,9 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                 </TabsTrigger>
               </>
             )}
+            <TabsTrigger value="effects" className="rounded">
+              Effects
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -596,6 +653,84 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Opacity controls coming soon
+                    </p>
+                  </div>
+
+                  <Separator />
+
+                  {/* Motion Blur */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-muted-foreground">Motion Blur</label>
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {(selectedTrack as any).motionBlur ?? 0}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[(selectedTrack as any).motionBlur ?? 0]}
+                      onValueChange={([v]) => updateTrack(selectedTrack.id, { motionBlur: v } as any)}
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="flex-1"
+                      disabled={isMultipleSelected}
+                    />
+                    <p className="text-xs text-muted-foreground">Baked as frame blending on export</p>
+                  </div>
+
+                  <Separator />
+
+                  {/* Remove Background */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-semibold text-foreground">
+                          Remove Background
+                        </label>
+                        {isRemovingBackground && (
+                          <Loader2 className="size-4 animate-spin text-primary" />
+                        )}
+                        {backgroundRemovalEnabled && !isRemovingBackground && (
+                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/15 border border-green-500/30">
+                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                            <span className="text-xs text-green-600 dark:text-green-400 font-medium">Removed</span>
+                          </div>
+                        )}
+                      </div>
+                      {backgroundRemovalEnabled && !isRemovingBackground && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={handleResetBackgroundRemoval}
+                              className="h-7 w-7 p-0"
+                              disabled={isMultipleSelected}
+                            >
+                              <RotateCcw className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Clear background removal</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                    {!backgroundRemovalEnabled && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full h-8 text-xs"
+                        onClick={handleRemoveBackground}
+                        disabled={isRemovingBackground || isMultipleSelected}
+                      >
+                        {isRemovingBackground ? 'Processing...' : 'Remove Background'}
+                      </Button>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {backgroundRemovalEnabled
+                        ? 'Background removed — baked at export'
+                        : 'AI background removal'}
                     </p>
                   </div>
 
@@ -820,6 +955,62 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
 
                 <Separator />
 
+                {/* Remove Background */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm font-semibold text-foreground">
+                        Remove Background
+                      </label>
+                      {isRemovingBackground && (
+                        <Loader2 className="size-4 animate-spin text-primary" />
+                      )}
+                      {backgroundRemovalEnabled && !isRemovingBackground && (
+                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/15 border border-green-500/30">
+                          <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                          <span className="text-xs text-green-600 dark:text-green-400 font-medium">Removed</span>
+                        </div>
+                      )}
+                    </div>
+                    {backgroundRemovalEnabled && !isRemovingBackground && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleResetBackgroundRemoval}
+                            className="h-7 w-7 p-0"
+                            disabled={isMultipleSelected}
+                          >
+                            <RotateCcw className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Clear background removal</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                  {!backgroundRemovalEnabled && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full h-8 text-xs"
+                      onClick={handleRemoveBackground}
+                      disabled={isRemovingBackground || isMultipleSelected}
+                    >
+                      {isRemovingBackground ? 'Processing...' : 'Remove Background'}
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {backgroundRemovalEnabled
+                      ? 'Background removed — baked at export'
+                      : 'AI background removal'}
+                  </p>
+                </div>
+
+                <Separator />
+
                 {/* Position */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -930,7 +1121,10 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
 
         {/* Audio Tab */}
         {hasAudio && (
-          <TabsContent value="audio" className="flex-1 overflow-hidden">
+          <TabsContent
+            value="audio"
+            className="flex-1 flex flex-col overflow-hidden"
+          >
             <AudioProperties
               selectedTrackIds={[audioTrackId]}
               forceTrackId={audioTrackId}
@@ -938,9 +1132,19 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
           </TabsContent>
         )}
 
+        {/* Color Tab — reference grade palette + manual adjustments */}
+        <TabsContent value="color" className="flex-1 overflow-hidden">
+          <ColorGradePanel selectedTrackIds={selectedTrackIds} />
+        </TabsContent>
+
         {/* Frame Tab — PiP config for the main video */}
         <TabsContent value="frame" className="flex-1 overflow-hidden">
           <VideoFramePanel selectedTrackIds={selectedTrackIds} />
+        </TabsContent>
+
+        {/* Effects Tab — nuanced AI skills: Hold the World, In-Frame Speed, Find a Moment */}
+        <TabsContent value="effects" className="flex-1 overflow-y-auto">
+          <NuancedEffectsPanel selectedTrackIds={selectedTrackIds} />
         </TabsContent>
       </Tabs>
     </div>

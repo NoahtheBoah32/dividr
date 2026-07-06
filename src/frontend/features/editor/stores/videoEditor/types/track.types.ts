@@ -205,6 +205,9 @@ export interface VideoTrack {
   name: string;
   source: string;
   previewUrl?: string;
+  /** Immutable pristine source. Nuanced effects (freeze, region-speed) re-bake from
+   *  THIS, never from the prior baked output, so re-running never compounds (spine). */
+  originalSource?: string;
   originalFile?: File;
   tempFilePath?: string;
   mediaId?: string; // Media library ID for accurate waveform/sprite lookup
@@ -213,6 +216,15 @@ export interface VideoTrack {
   startFrame: number;
   endFrame: number;
   sourceStartTime?: number; // in seconds - where in the source file this track segment starts (trim in-point)
+  /** Non-destructive reverse: when true, the preview plays this clip backward (frames inverted).
+   * Instant — no re-encode. The actual reversed frames/audio are baked at export. */
+  reversed?: boolean;
+  /** Source chapters (e.g. YouTube), inherited from the media item. `start` is seconds into the source. */
+  chapters?: Array<{ start: number; title: string }>;
+  /** Provenance recorded at import — 'youtube' | 'url' | 'user' | 'stock'. */
+  origin?: string;
+  /** Detected scene-cut markers (reviewable). `atSeconds` is source time, `fraction` is 0..1 within the clip. */
+  sceneMarkers?: Array<{ atSeconds: number; fraction: number }>;
   offsetX?: number;
   offsetY?: number;
   width?: number;
@@ -304,6 +316,55 @@ export interface VideoTrack {
    * @see NoiseReductionEngine
    */
   noiseReductionEngine?: NoiseReductionEngine;
+  /**
+   * Voice isolation (separation curve) state for this track.
+   * Non-destructive: stored as params, applied live in preview via a Web Audio
+   * graphic-EQ graph and baked at export via an ffmpeg equalizer chain.
+   * Gated: the manual curve panel stays locked until EDITH runs `isolateVoice`
+   * once (which sets `appliedByEdith` / `enabled`).
+   */
+  voiceIsolation?: {
+    /** Master on/off for the effect on this track. */
+    enabled: boolean;
+    /**
+     * Separation curve control nodes (Catmull-Rom). Exactly 4 nodes.
+     * x = voiceness 0..1 (0 = noise/ambiance on the left, 1 = voice on the right)
+     * y = keep-gain 0..1 (1 = keep fully, 0 = cut).
+     */
+    nodes: { x: number; y: number }[];
+    /** Set true once EDITH has applied it — unlocks the manual curve. */
+    appliedByEdith?: boolean;
+  };
+  /**
+   * Source separation (stems) bake state. Powers the voiceIsolation curve.
+   *
+   * A one-time offline bake (MDX-Net ONNX, CPU) splits the clip into a clean
+   * VOICE stem and a clean BACKGROUND stem (the exact residual, so they sum to
+   * the original). EDITH's `isolateVoice` op kicks the bake; the stem file paths
+   * live in the SeparationCache (keyed by sourceId). The voiceIsolation CURVE
+   * drives the live mix of the two stems — its right side (voice) sets the voice
+   * level, its left side (noise) sets the background level — and the same curve's
+   * EQ runs on the voice stem, so pulling the left side down truly removes the
+   * background. This field only tracks the bake lifecycle.
+   */
+  separation?: {
+    /** Bake lifecycle: idle (not started) | processing | cached (ready) | error. */
+    status: 'idle' | 'processing' | 'cached' | 'error';
+    /** Separation model used (room for future engines). */
+    engine?: 'mdxnet';
+    /** Last error message when status === 'error'. */
+    error?: string;
+  };
+  /**
+   * Transcript panel edit layer — the user's per-word PARTIAL deletions, keyed by
+   * the word's stable id. The value is the remaining visible text of a word that
+   * has been partly backspaced (e.g. "nag" out of "nagging"). A word only ripples
+   * out of the video once it is fully emptied; partial entries live here so the
+   * partial text persists. This is SEPARATE from EDITH's canonical transcript
+   * (cachedKaraokeSubtitles.transcriptionResult), which is never modified — so
+   * mis-deletions in the panel never break EDITH's understanding of the clip.
+   */
+  transcriptEdits?: Record<string, string>;
   // ==========================================================================
   visible: boolean;
   locked: boolean;
@@ -324,6 +385,21 @@ export interface VideoTrack {
   isLinked?: boolean;
   layer?: number; // Layer index for video/image tracks (0 = base layer, higher = overlay priority)
   trackRowIndex?: number; // Row index within the same media type (0 = bottom row, higher = upper rows)
+  // Color grade state — palette from K-Means + manual Lightroom-style adjustments
+  motionBlur?: number; // 0–100 intensity, applied as tmix frame blending at export
+  colorGrade?: {
+    palette?: string[];      // hex codes from K-Means extraction
+    curves?: { r: number[]; g: number[]; b: number[]; ffmpegFilter: string }; // per-channel 256-value LUT from gradeReference
+    temperature?: number;    // -100 to 100 (warm/cool)
+    tint?: number;           // -100 to 100 (green/magenta)
+    hue?: number;            // -180 to 180 (global hue shift)
+    shadows?: number;        // -100 to 100
+    highlights?: number;     // -100 to 100
+    midtones?: number;       // -100 to 100
+    palettes?: Array<{ palette: string[]; curves: { r: number[]; g: number[]; b: number[]; ffmpegFilter: string }; refTimeSec?: number }>;
+    lastMethod?: string;
+    lastRefPath?: string;
+  };
   // Picture-in-Picture frame config — applied to the main (layer-0) track when B-roll is active
   pipFrame?: {
     style: 'none' | 'circle' | 'rounded-square' | 'square'; // mask shape
@@ -428,6 +504,36 @@ export interface VideoTrack {
   /** CSS filter string applied during compositing (e.g. "brightness(1.1) contrast(1.2) saturate(1.3)") */
   filter?: string;
 
+  /**
+   * AI background removal settings.
+   * `enabled` drives the compositor and export pipeline.
+   * `maskPath` is written by the backend after processing and referenced at export to avoid recomputing the mask.
+   */
+  backgroundRemoval?: {
+    enabled: boolean;
+    model?: 'rembg' | 'mediapipe';
+    /** Absolute path to the pre-generated alpha mask written by the backend */
+    maskPath?: string;
+  };
+
   /** Per-frame pose landmark data from analyzeMotion. [x, y, visibility] per landmark (33 points). */
   poseLandmarks?: Array<{ frame: number; lm: [number, number, number][] }>;
+
+  /** "Hold the world" — motion-key selective freeze. `appliedByEdith` gates the manual panel. */
+  selectiveFreeze?: {
+    mode: 'world-frozen' | 'subject-frozen' | 'full';
+    start: number;
+    end: number;
+    appliedByEdith?: boolean;
+  };
+
+  /** "Speed that lives inside the clip" — per-region time-remap. `appliedByEdith` gates refinement. */
+  regionalSpeed?: {
+    speed: number;
+    region: string;
+    start: number;
+    end: number;
+    invert?: boolean;
+    appliedByEdith?: boolean;
+  };
 }

@@ -32,3 +32,12 @@ pyinstaller>=6.0.0
 # Requires PyTorch 2.8.x and torchaudio 2.8.x for compatibility
 deepfilternet>=0.5.6
 torchaudio==2.8.0
+
+# rembg - AI background removal for images (U2Net model)
+rembg>=2.0.50
+
+# MediaPipe - real-time selfie segmentation for video background removal
+mediapipe>=0.10.0
+
+# OpenCV - video I/O for background removal pipeline
+opencv-python-headless>=4.8.0

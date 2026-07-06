@@ -118,6 +118,34 @@ let currentProcess: ChildProcess | null = null;
  * 2. Bundled resources (legacy bundled installation)
  * 3. System Python (development mode)
  */
+/**
+ * Confirm a dividr-tools binary can actually launch. A file existing on disk is
+ * not enough on Windows: Smart App Control / WDAC / AppLocker can block an
+ * unsigned binary, which surfaces at spawn time as "spawn UNKNOWN". When that
+ * happens we must skip the binary and fall back to Python instead of returning
+ * an executable that will never run.
+ */
+const canLaunchExecutable = (exePath: string): boolean => {
+  try {
+    execSync(`"${exePath}" --version`, {
+      timeout: 8000,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch (e: any) {
+    // Timed out → it WAS running (just slow to bootstrap). Runnable.
+    if (e?.code === 'ETIMEDOUT' || e?.signal) return true;
+    // Exited with a numeric status → it launched, just disliked the args. Runnable.
+    if (typeof e?.status === 'number') return true;
+    // Spawn-level failure (UNKNOWN from App Control, ENOENT, EACCES) → cannot launch.
+    console.warn(
+      `⚠️ dividr-tools present but cannot launch (${e?.code || e?.message}). ` +
+      `Likely blocked by Windows Application Control. Falling back to Python.`,
+    );
+    return false;
+  }
+};
+
 const detectMediaToolsExecutable = (): {
   executable: string;
   executableArgs: string[];
@@ -127,6 +155,18 @@ const detectMediaToolsExecutable = (): {
   const platform = process.platform;
   const exeName = isWindows ? 'dividr-tools.exe' : 'dividr-tools';
 
+  // Priority 0 (dev): the project venv is the intended dev runtime and is always
+  // launchable, whereas the bundled .exe can be blocked by Windows Application
+  // Control (→ "spawn UNKNOWN"). In development, prefer the venv outright so a
+  // blocked binary can never break transcription/noise-reduce.
+  if (!app.isPackaged) {
+    const devPython = detectPythonEnvironment();
+    if (devPython) {
+      console.log('✅ Dev mode — using Python venv for media-tools (skipping bundled .exe)');
+      return devPython;
+    }
+  }
+
   // Priority 1: Check userData first (on-demand download location)
   const userDataPath = path.join(
     app.getPath('userData'),
@@ -135,7 +175,7 @@ const detectMediaToolsExecutable = (): {
     exeName,
   );
 
-  if (fs.existsSync(userDataPath)) {
+  if (fs.existsSync(userDataPath) && canLaunchExecutable(userDataPath)) {
     console.log(`✅ Found downloaded dividr-tools at: ${userDataPath}`);
     return {
       executable: userDataPath,
@@ -152,7 +192,7 @@ const detectMediaToolsExecutable = (): {
     ];
 
     for (const exePath of bundledExePaths) {
-      if (fs.existsSync(exePath)) {
+      if (fs.existsSync(exePath) && canLaunchExecutable(exePath)) {
         console.log(`✅ Found bundled dividr-tools at: ${exePath}`);
         return {
           executable: exePath,
@@ -578,7 +618,9 @@ const runMediaToolsCommand = async <T>(
     });
 
     proc.on('close', (code) => {
-      currentProcess = null;
+      // Only clear the global if it still points at THIS process — a kill-previous
+      // + re-spawn can otherwise null out the new run's handle (breaks cancel/status).
+      if (currentProcess === proc) currentProcess = null;
 
       if (code !== 0) {
         console.error(`❌ ${command} exited with code:`, code);
@@ -618,7 +660,7 @@ const runMediaToolsCommand = async <T>(
     });
 
     proc.on('error', (error) => {
-      currentProcess = null;
+      if (currentProcess === proc) currentProcess = null;
       reject(new Error(`${command} spawn error: ${error.message}`));
     });
   });

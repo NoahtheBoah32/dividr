@@ -51,6 +51,7 @@ const persistentMediaUpdateKeys = new Set<string>([
   'mimeType',
   'type',
   'category',
+  'folder',
   'spriteSheetDisabled',
   'hasGeneratedKaraoke',
   'cachedKaraokeSubtitles',
@@ -108,6 +109,15 @@ export interface MediaLibrarySlice {
   ) => void;
   getMediaLibraryItem: (mediaId: string) => MediaLibraryItem | undefined;
   clearMediaLibrary: () => void;
+  /**
+   * Apply an EDITH "organize my media" plan in ONE undoable step. `assignments`
+   * maps mediaId -> folder name; any non-reference item missing from the map is
+   * cleared back to loose. Wrapped in a single recordAction so one undo reverts
+   * the whole organization, and folders persist because they live on the items.
+   */
+  applyMediaOrganization: (assignments: Record<string, string>) => void;
+  /** Remove all media folders (back to a flat library) in one undoable step. */
+  clearMediaOrganization: () => void;
   getSpriteSheetsBySource: (
     source: string,
   ) => MediaLibraryItem['spriteSheets'] | undefined;
@@ -456,6 +466,40 @@ export const createMediaLibrarySlice: StateCreator<
     }));
 
     const state = get() as any;
+    state.markUnsavedChanges?.();
+  },
+
+  applyMediaOrganization: (assignments) => {
+    const state = get() as any;
+    // Snapshot BEFORE mutating so the entire organize collapses to a single undo
+    // entry (recordAction captures current state; one undo restores this mediaLibrary).
+    state.recordAction?.('Organize Media');
+
+    set((s: any) => ({
+      mediaLibrary: s.mediaLibrary.map((item: MediaLibraryItem) => {
+        // Style-reference items never appear in the library grid, so never folder them.
+        if (item.category === 'reference') return item;
+        const folder = assignments[item.id];
+        // A fresh organize replaces any prior one: items not in the plan go loose.
+        return { ...item, folder: folder || undefined };
+      }),
+    }));
+
+    state.markUnsavedChanges?.();
+  },
+
+  clearMediaOrganization: () => {
+    const state = get() as any;
+    const hasFolders = state.mediaLibrary.some(
+      (item: MediaLibraryItem) => item.folder,
+    );
+    if (!hasFolders) return;
+    state.recordAction?.('Clear Media Folders');
+    set((s: any) => ({
+      mediaLibrary: s.mediaLibrary.map((item: MediaLibraryItem) =>
+        item.folder ? { ...item, folder: undefined } : item,
+      ),
+    }));
     state.markUnsavedChanges?.();
   },
 

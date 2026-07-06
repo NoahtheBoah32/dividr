@@ -685,9 +685,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       const tracksEl = tracksRef.current;
       if (!tracksEl) return;
 
-      // Scroll so the bottom of the track area is visible
+      // Scroll to top so the newly added track (always row 0 or near top) is visible
       requestAnimationFrame(() => {
-        tracksEl.scrollTop = tracksEl.scrollHeight;
+        tracksEl.scrollTop = 0;
       });
     }, [tracks.length]);
 
@@ -1258,10 +1258,12 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           const trackLeft = track.startFrame * frameWidth;
           const trackRight = track.endFrame * frameWidth;
 
-          // Find the row bounds for this track
-          const trackRowId = getTrackRowId(track);
+          // Find the row bounds for this track. Match against the clamped/rounded
+          // index (mirroring migrateTracksWithRowIndex), so a track persisted with a
+          // negative/fractional index still resolves to a real row and stays selectable.
+          const rounded = Math.max(0, Math.round((track as any).trackRowIndex ?? 0));
           const trackRowBounds = rowBounds.find(
-            (rb) => rb.rowId === trackRowId,
+            (rb: any) => rb.type === track.type && rb.rowIndex === rounded,
           );
 
           if (!trackRowBounds) return;

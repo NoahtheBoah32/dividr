@@ -26,6 +26,7 @@ export interface TrackInfo {
   duckingFadeDuration?: number; // Attack/release ramp in seconds (default: 0.3)
   duckingPrimary?: boolean; // This track triggers ducking on duckingEnabled tracks
   duckingSpeechIntervals?: { start: number; end: number }[]; // Explicit speech intervals (seconds) — overrides primary-track detection
+  voiceIsolationEq?: string; // Precomputed ffmpeg EQ chain (bass/equalizer/treble) baking the voice-isolation separation curve. Empty/undefined = no effect.
   trackType?: 'video' | 'audio' | 'image' | 'subtitle' | 'text' | 'both'; // Type of the track
   visible?: boolean; // Whether this track's video should be visible (if false, show black)
   gapType?: 'video' | 'audio' | 'both';
@@ -54,6 +55,9 @@ export interface TrackInfo {
    * Used during FFmpeg overlay filter chain construction
    */
   layerIndex?: number;
+  /** Motion blur intensity 0–100. Maps to tmix frame blending at export. */
+  motionBlur?: number;
+
   /** PiP frame config — when set on the base layer (layer 0), renders it as a floating frame over B-roll */
   pipFrame?: {
     style: 'circle' | 'rounded-square' | 'square';

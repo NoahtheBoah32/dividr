@@ -10,7 +10,9 @@ export const useUnsavedChangesWarning = () => {
   // Browser beforeunload warning
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges || isSaving) {
+      // Test mode bypasses the warning so the CDP harness can navigate freely (a baked clip
+      // counts as "unsaved" and would otherwise abort page.goto with net::ERR_ABORTED).
+      if (!(window as any).__dividrTestMode && (hasUnsavedChanges || isSaving)) {
         e.preventDefault();
         // Modern browsers ignore custom messages, but setting returnValue triggers the dialog
         e.returnValue = '';
@@ -24,6 +26,7 @@ export const useUnsavedChangesWarning = () => {
   // React Router navigation blocker
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
+      !(window as any).__dividrTestMode &&
       (hasUnsavedChanges || isSaving) &&
       currentLocation.pathname !== nextLocation.pathname,
   );

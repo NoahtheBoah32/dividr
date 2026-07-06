@@ -364,6 +364,18 @@ export function processAudioTimeline(
         console.log(`🔇 Muted audio segment ${segmentIndex}`);
       }
 
+      // Voice isolation: bake the separation curve as a per-band EQ chain.
+      // Matches the live Web Audio preview (same band mapping). Applied after
+      // volume so the dB cuts are relative to the user's level.
+      if (trackInfo.voiceIsolationEq && trackInfo.voiceIsolationEq.length > 0) {
+        const voiceIsoRef = `[a${segmentIndex}_voiceiso]`;
+        audioFilters.push(
+          `${currentAudioRef}${trackInfo.voiceIsolationEq}${voiceIsoRef}`,
+        );
+        currentAudioRef = voiceIsoRef;
+        console.log(`🎙️ Applied voice isolation EQ to audio segment ${segmentIndex}`);
+      }
+
       // Add delay to position audio at correct timeline position
       const delayMs = Math.round(segment.startTime * 1000);
       const delayedRef = `[a${segmentIndex}_delayed]`;

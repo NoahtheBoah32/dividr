@@ -679,7 +679,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
         onMaxWidthMeasured={handleMaxContainerWidthMeasured}
       />
       {/* VIDEO LAYERS */}
-      {USE_FRAME_DRIVEN_PLAYBACK ? (
+      {USE_FRAME_DRIVEN_PLAYBACK && (
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
@@ -705,8 +705,9 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
             baseVideoHeight={baseVideoHeight}
           />
         </div>
-      ) : (
-        videoRenderInfos.map((info, index) => (
+      )}
+
+{!USE_FRAME_DRIVEN_PLAYBACK && videoRenderInfos.map((info, index) => (
           <div
             key={info.stableKey}
             className="absolute inset-0 pointer-events-none"
@@ -783,7 +784,7 @@ export const UnifiedOverlayRenderer: React.FC<UnifiedOverlayRendererProps> = ({
             </VideoTransformBoundary>
           </div>
         ))
-      )}
+      }
 
       {(activeIndependentAudioTracks?.length || independentAudioTrack) && (
         <MultiAudioPlayer

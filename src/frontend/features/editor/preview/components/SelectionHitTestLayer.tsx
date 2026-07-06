@@ -435,9 +435,14 @@ export const SelectionHitTestLayer: React.FC<SelectionHitTestLayerProps> = ({
         return;
       }
 
-      // Get the topmost element among those that were hit
-      // (elementsAtPoint is already sorted by z-index descending)
-      const topElement = elementsAtPoint[0];
+      // Prefer an already-selected element under the cursor so it keeps manipulation
+      // priority — you can move/drag the clip you selected in the timeline even when a
+      // higher-z element (e.g. a foreground subject) overlaps it. Falls back to the
+      // topmost hit element otherwise. Matches CapCut/Premiere program-monitor behavior.
+      const selectedHit = elementsAtPoint.find((el) =>
+        selectedTrackIds.includes(el.trackId),
+      );
+      const topElement = selectedHit ?? elementsAtPoint[0];
 
       // Double-click detection for text editing
       const now = Date.now();

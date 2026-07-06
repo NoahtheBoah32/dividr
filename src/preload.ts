@@ -545,6 +545,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('transcode:progress');
     ipcRenderer.removeAllListeners('transcode:completed');
   },
+
+  // AI background removal (rembg)
+  removeBackground: (payload: { inputPath: string; outputDir: string; model?: string }) =>
+    ipcRenderer.invoke('media:removeBackground', { filePath: payload.inputPath }) as Promise<{
+      success: boolean;
+      filePath?: string;
+      error?: string;
+    }>,
 });
 
 // =========================================================================

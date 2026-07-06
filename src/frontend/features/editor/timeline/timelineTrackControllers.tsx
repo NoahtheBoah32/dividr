@@ -133,6 +133,32 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
       });
     }, [tracks, toggleTrackMute]);
 
+    // A video row's sound lives on its LINKED audio track, so the mute toggle on a
+    // video row must act on those linked audio tracks.
+    const linkedAudioIds = useMemo(() => {
+      if (!rowDef.trackTypes.includes('video')) return [] as string[];
+      const ids: string[] = [];
+      tracks.forEach((t) => {
+        if (t.type === 'video' && t.isLinked && t.linkedTrackId) {
+          ids.push(t.linkedTrackId);
+        }
+      });
+      return ids;
+    }, [rowDef.id, tracks]);
+
+    const hasAudibleLinkedAudio = useMemo(
+      () =>
+        linkedAudioIds.some((id) => {
+          const a = allTracks.find((t) => t.id === id);
+          return a && !a.muted;
+        }),
+      [linkedAudioIds, allTracks],
+    );
+
+    const handleToggleLinkedMute = useCallback(() => {
+      linkedAudioIds.forEach((id) => toggleTrackMute(id));
+    }, [linkedAudioIds, toggleTrackMute]);
+
     const handleDeleteAllTracks = useCallback(() => {
       // Batch delete: collect all track IDs including linked tracks
       const trackIdsToDelete = new Set<string>();
@@ -339,6 +365,31 @@ const TrackControllerRow: React.FC<TrackControllerRowProps> = React.memo(
               </TooltipTrigger>
               <TooltipContent>
                 {hasVisibleTracks ? 'Hide tracks' : 'Show tracks'}
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Mute the linked audio from a video row (video tracks carry their sound
+              on a separate linked audio track, which has no controller of its own) */}
+          {hasLinkedAudioVideo && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={handleToggleLinkedMute}
+                  disabled={tracks.length === 0}
+                >
+                  {hasAudibleLinkedAudio ? (
+                    <Volume2 className="h-3 w-3" />
+                  ) : (
+                    <VolumeX className="h-3 w-3 text-muted-foreground/50" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {hasAudibleLinkedAudio ? 'Mute audio' : 'Unmute audio'}
               </TooltipContent>
             </Tooltip>
           )}

@@ -390,12 +390,16 @@ export const createTracksSlice: StateCreator<
         trackData.trackRowIndex ??
         getNextAvailableRowIndex(state.tracks, 'video');
 
-      // For consecutive clip placement, find where the last video clip ends
-      // If startFrame is 0 (default), place after the last clip of this type
+      // For consecutive clip placement, find where the last video clip ends.
+      // If startFrame is 0 (default), place after the last clip of this type — UNLESS the
+      // caller set explicitStart (e.g. a b-roll deliberately placed at 0:00 as an opening
+      // shot), in which case honor the exact startFrame even when it is 0.
       const consecutiveVideoStart =
-        trackData.startFrame === 0
-          ? findLastEndFrameForType(state.tracks, 'video')
-          : trackData.startFrame;
+        (trackData as any).explicitStart
+          ? trackData.startFrame
+          : trackData.startFrame === 0
+            ? findLastEndFrameForType(state.tracks, 'video')
+            : trackData.startFrame;
 
       const videoStartFrame = findNearestAvailablePositionInRow(
         consecutiveVideoStart,
@@ -462,7 +466,7 @@ export const createTracksSlice: StateCreator<
         linkedTrackId: id,
         isLinked: true,
         source: extractedAudio?.audioPath || trackData.source,
-        previewUrl: extractedAudio?.previewUrl || undefined,
+        previewUrl: extractedAudio?.previewUrl || trackData.previewUrl || undefined,
         trackRowIndex: audioRowIndex,
         // Audio processing defaults (see AudioMetadata in track.types.ts)
         volumeDb: 0, // Unity gain
@@ -945,6 +949,9 @@ export const createTracksSlice: StateCreator<
       startFrame,
       endFrame: startFrame + duration,
       sourceStartTime: 0,
+      // Inherit source chapters/provenance so the timeline can show chapter markers on full-video imports
+      ...(mediaItem.chapters?.length ? { chapters: mediaItem.chapters } : {}),
+      ...(mediaItem.origin ? { origin: mediaItem.origin } : {}),
       visible: true,
       locked: false,
       color: getTrackColor(state.tracks.length),
@@ -1003,6 +1010,17 @@ export const createTracksSlice: StateCreator<
         selectedTrackIds: state.timeline.selectedTrackIds.filter(
           (id: string) => !tracksToRemove.has(id),
         ),
+        // Drop transitions that referenced a removed clip and clear a match-cut whose target
+        // was removed — both are harmlessly ignored at render, but pruning avoids dangling refs.
+        transitions: (state.timeline.transitions ?? []).filter(
+          (tr: any) =>
+            !tracksToRemove.has(tr.fromClipId) && !tracksToRemove.has(tr.toClipId),
+        ),
+        matchCut:
+          state.timeline.matchCut &&
+          tracksToRemove.has(state.timeline.matchCut.targetClipId)
+            ? null
+            : state.timeline.matchCut,
       },
     }));
 
@@ -1867,6 +1885,14 @@ export const createTracksSlice: StateCreator<
 
     const splitTimeInSeconds = (frame - track.startFrame) / state.timeline.fps;
     const originalSourceStartTime = track.sourceStartTime || 0;
+    const splitSourceTime = originalSourceStartTime + splitTimeInSeconds;
+
+    // Scene markers store absolute SOURCE time. Hand each piece only the cuts inside its own
+    // source window so they don't both carry the full set (the render filters by window too,
+    // this just keeps the stored state clean and unambiguous).
+    const allMarkers = (track as any).sceneMarkers as
+      | Array<{ atSeconds: number; fraction: number }>
+      | undefined;
 
     const firstPart: VideoTrack = {
       ...track,
@@ -1874,7 +1900,10 @@ export const createTracksSlice: StateCreator<
       duration: frame - track.startFrame,
       sourceStartTime: originalSourceStartTime,
       sourceDuration: track.sourceDuration, // Preserve original source duration
-    };
+      ...(allMarkers
+        ? { sceneMarkers: allMarkers.filter((m) => m.atSeconds < splitSourceTime) }
+        : {}),
+    } as VideoTrack;
 
     const secondPartId = uuidv4();
     const secondPart: VideoTrack = {
@@ -1884,9 +1913,12 @@ export const createTracksSlice: StateCreator<
       startFrame: frame,
       endFrame: track.endFrame,
       duration: track.endFrame - frame,
-      sourceStartTime: originalSourceStartTime + splitTimeInSeconds,
+      sourceStartTime: splitSourceTime,
       sourceDuration: track.sourceDuration, // Preserve original source duration
-    };
+      ...(allMarkers
+        ? { sceneMarkers: allMarkers.filter((m) => m.atSeconds >= splitSourceTime) }
+        : {}),
+    } as VideoTrack;
 
     let linkedTrackSecondPartId: string | undefined;
     if (track.isLinked && track.linkedTrackId) {
@@ -1894,7 +1926,14 @@ export const createTracksSlice: StateCreator<
         (t: VideoTrack) => t.id === track.linkedTrackId,
       );
 
-      if (linkedTrack) {
+      // Only split the linked partner if the split frame is genuinely inside its
+      // bounds — otherwise duration goes negative/zero (data loss). If the linked
+      // track is out of range (e.g. after unlink/drift), split the primary only.
+      if (
+        linkedTrack &&
+        frame > linkedTrack.startFrame &&
+        frame < linkedTrack.endFrame
+      ) {
         const linkedSplitTimeInSeconds =
           (frame - linkedTrack.startFrame) / state.timeline.fps;
         const linkedOriginalSourceStartTime = linkedTrack.sourceStartTime || 0;

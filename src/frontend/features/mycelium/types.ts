@@ -111,8 +111,32 @@ export type Op =
   | { type: 'renameProject'; title: string }
   | { type: 'placeSFX'; file: string; atTime: number; volume?: number; trackName?: string }
   | { type: 'scanVideo'; clipName: string; description: string; intervalSec?: number; maxFrames?: number }
+  | { type: 'detectScenes'; clipId?: string; clipName?: string; threshold?: number }
+  | {
+      type: 'addTransition';
+      fromClipId?: string;
+      toClipId?: string;
+      fromClipName?: string;
+      toClipName?: string;
+      cutIndex?: number; // 1-based cut to target (left→right). Omit = leftmost cut without a transition.
+      transitionType?: 'dissolve' | 'dip' | 'wipe' | 'push' | 'slide' | 'zoom' | 'whip';
+      durationSeconds?: number; // transition length, default 1.5s
+      direction?: 'left' | 'right' | 'up' | 'down';
+      color?: string; // dip color
+    }
+  | { type: 'removeTransition'; fromClipId?: string; toClipId?: string; fromClipName?: string; toClipName?: string }
+  | {
+      type: 'matchCut';
+      clipId?: string; // the target clip to ghost
+      clipName?: string;
+      atSeconds?: number; // source time of the target frame to align to
+      opacity?: number; // ghost opacity, default 0.45
+      enable?: boolean; // default true; false clears the overlay
+    }
   | { type: 'duck'; musicClipName: string; targetDb?: number; fadeDuration?: number }
   | { type: 'unduck'; musicClipName: string }
+  | { type: 'isolateVoice'; preset?: 'studio' | 'podcast' | 'ambiance' | 'light' }
+  | { type: 'separateStems' }
   | {
       type: 'setSpeed';
       clipId: string;
@@ -135,6 +159,45 @@ export type Op =
       detect?: string;        // comma-separated: 'punch,jump,energy,speaker' — default all
       autoIsolate?: boolean;  // if true, delete original and insert isolated segments after analysis
       windowSeconds?: number; // seconds of context around each event (default 1.5)
+    }
+  | {
+      // "Hold the world, let one thing move" — motion-key selective freeze (no matte).
+      type: 'selectiveFreeze';
+      clipId?: string;
+      clipName?: string;
+      startSeconds: number;
+      endSeconds: number;
+      mode?: 'world-frozen' | 'subject-frozen' | 'full'; // world-frozen = subject keeps moving (default); full = plain freeze-frame
+      freezeAt?: number;          // source second to hold the world at (default: region start)
+      box?: string;               // region box: "rect:x,y,w,h" | "yolo:<class>" (normalized)
+      lasso?: [number, number][]; // closed polygon (normalized) to constrain the live region
+      subjectClass?: string;      // YOLO class to localize the moving subject (car, person, dog…)
+    }
+  | {
+      // "Speed that lives inside the clip" — region-locked time-remap (no cut-out).
+      type: 'regionalSpeed';
+      clipId?: string;
+      clipName?: string;
+      startSeconds: number;
+      endSeconds: number;
+      speed?: number;      // region speed (0.35 = slow, 2 = fast)
+      region?: string;     // "x,y,w,h" | "ellipse:cx,cy,rx,ry" | "lasso:[[x,y],..]" normalized
+      lasso?: [number, number][]; // closed polygon (normalized); becomes region "lasso:..."
+      invert?: boolean;    // slow everything EXCEPT the region (keep the drawn subject real-time)
+      feather?: number;
+    }
+  | {
+      // "Find me the moment" — CTRL-F for video. Jumps the playhead.
+      type: 'findMoment';
+      clipId?: string;
+      clipName?: string;
+      query?: string;      // spoken-words search (instant transcript jump)
+      target?: string;     // visual object: car, dog, person, bicycle... or "motion"
+      interval?: number;
+    }
+  | {
+      // "Organize my media" — sort the media library into folders (name pass + frame reference).
+      type: 'organizeMedia';
     };
 
 export type OpStatus = 'pending' | 'running' | 'applied' | 'failed' | 'undone';

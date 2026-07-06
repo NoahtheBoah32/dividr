@@ -2,6 +2,7 @@
 import { KaraokeIcon } from '@/frontend/assets/icons/karaoke';
 import { RuntimeDownloadModal } from '@/frontend/components/custom/RuntimeDownloadModal';
 import { Button } from '@/frontend/components/ui/button';
+import { VersionHistoryButton } from '@/frontend/features/editor/components/VersionHistoryButton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,7 +24,9 @@ import {
   ChevronDown,
   CopyPlus,
   Link,
+  ListTree,
   Magnet,
+  Scissors,
   Maximize,
   Minimize,
   MousePointer2,
@@ -956,6 +959,33 @@ export const TimelineControls: React.FC = React.memo(
       (state) => state.timeline.snapEnabled,
     );
     const toggleSnap = useVideoEditorStore((state) => state.toggleSnap);
+    const showChapters = useVideoEditorStore(
+      (state) => state.timeline.showChapters !== false,
+    );
+    const toggleChapters = useVideoEditorStore((state) => state.toggleChapters);
+    const showSceneMarkers = useVideoEditorStore(
+      (state) => state.timeline.showSceneMarkers !== false,
+    );
+    const toggleSceneMarkers = useVideoEditorStore((state) => state.toggleSceneMarkers);
+    const hasSceneMarkers = useVideoEditorStore((state) =>
+      state.tracks.some(
+        (t) =>
+          t.type === 'video' &&
+          (t as unknown as { sceneMarkers?: unknown[] }).sceneMarkers?.length,
+      ),
+    );
+    // Only surface the chapter toggle when a video clip carries chapters — on the track
+    // itself or on its matching media item (resilient to a missed track copy).
+    const hasChapters = useVideoEditorStore((state) =>
+      state.tracks.some((t) => {
+        if (t.type !== 'video') return false;
+        if ((t as unknown as { chapters?: unknown[] }).chapters?.length) return true;
+        const m = (state.mediaLibrary as unknown as Array<{ id: string; source: string; chapters?: unknown[] }>).find(
+          (mi) => mi.source === t.source || (t.mediaId && mi.id === t.mediaId),
+        );
+        return !!m?.chapters?.length;
+      }),
+    );
     const isRendering = useVideoEditorStore(
       (state) => state.render.isRendering,
     );
@@ -1033,8 +1063,41 @@ export const TimelineControls: React.FC = React.memo(
                 {snapShortcutText ? ` (${snapShortcutText})` : ''}
               </TooltipContent>
             </Tooltip>
+            {hasChapters && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="native"
+                    onClick={toggleChapters}
+                    className={showChapters ? 'text-[#FFB800]' : ''}
+                  >
+                    <ListTree className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {showChapters ? 'Chapters Shown' : 'Chapters Hidden'}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {hasSceneMarkers && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="native"
+                    onClick={toggleSceneMarkers}
+                    className={showSceneMarkers ? 'text-[hsl(29_98%_58%)]' : ''}
+                  >
+                    <Scissors className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {showSceneMarkers ? 'Scene cuts shown' : 'Scene cuts hidden'}
+                </TooltipContent>
+              </Tooltip>
+            )}
             <LinkUnlinkButton />
             <GenerateKaraokeButton />
+            <VersionHistoryButton />
           </div>
         </div>
 

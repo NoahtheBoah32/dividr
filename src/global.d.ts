@@ -142,7 +142,15 @@ declare global {
         startSeconds?: number;
         endSeconds?: number;
         downloadDir?: string;
-      }) => Promise<{ success: boolean; filePath?: string; fileType?: string; error?: string }>;
+      }) => Promise<{
+        success: boolean;
+        filePath?: string;
+        fileType?: string;
+        error?: string;
+        title?: string;
+        origin?: string;
+        chapters?: Array<{ start: number; title: string }>;
+      }>;
       cancelDownload: (jobId: string) => Promise<{ success: boolean }>;
 
       ffmpegRun: (job: VideoEditJob) => Promise<{
@@ -691,6 +699,25 @@ declare global {
        * Remove transcode listeners
        */
       removeTranscodeListeners: () => void;
+
+      // ========================================================================
+      // Background Removal API
+      // ========================================================================
+
+      /**
+       * Remove background from a video file using AI (rembg / mediapipe).
+       * Returns a path to the pre-generated alpha mask written by the backend.
+       */
+      removeBackground: (options: {
+        inputPath: string;
+        outputDir: string;
+        model?: 'rembg' | 'mediapipe';
+      }) => Promise<{
+        success: boolean;
+        maskPath?: string;
+        previewUrl?: string;
+        error?: string;
+      }>;
     };
     appControl: {
       showWindow: () => Promise<boolean>;

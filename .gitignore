@@ -172,6 +172,13 @@ dividr-tools-bin/*
 # ML model weights (download separately)
 *.pt
 *.task
+*.onnx
+# DeepFilterNet speech-enhancement binary (downloaded on prestart / first use)
+deep-filter.exe
+deep-filter
+# Baked voice/background stems (regenerated per session)
+voice_*.wav
+background_*.wav
 
 # Test output
 test-results/

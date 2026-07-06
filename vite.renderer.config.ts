@@ -6,7 +6,17 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
     port: 5173,
-    strictPort: true,
+    strictPort: false,
+    // Boot speed: pre-transform the renderer's whole static module graph the moment the
+    // Vite dev server starts (which happens while electron-forge is still launching
+    // Electron), instead of waiting for the browser to discover and request ~400 modules
+    // one waterfall level at a time after the window loads. Warming the entry crawls its
+    // static imports via preTransformRequests, so by the time the Electron window loads,
+    // the modules are already transformed and served from cache — collapsing the boot's
+    // dominant renderer-load phase. Dev-only; no effect on production builds.
+    warmup: {
+      clientFiles: ['./src/renderer.tsx'],
+    },
   },
   resolve: {
     alias: {
@@ -17,7 +27,7 @@ export default defineConfig(({ mode }) => ({
     global: 'globalThis',
   },
   optimizeDeps: {
-    exclude: ['ffmpeg-static', 'ffprobe-static', 'child_process'],
+    exclude: ['ffmpeg-static', 'ffprobe-static', 'child_process', 'onnxruntime-web'],
   },
   build: {
     rollupOptions: {

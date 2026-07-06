@@ -14,6 +14,7 @@ import {
   runFfmpegWithProgress,
 } from './backend/ffmpeg/export/ffmpegRunner';
 import { VideoEditJob } from './backend/ffmpeg/schema/ffmpegConfig';
+import { parseSceneTimestamps } from './shared/sceneDetection';
 
 // Import unified media-tools runner (transcription + noise reduction)
 import type {
@@ -255,7 +256,9 @@ function killCurrentFfmpegProcess(reason: string): boolean {
         console.warn('âš ï¸ Failed to send SIGKILL to FFmpeg:', error);
       }
     }
-    clearCurrentFfmpegProcess();
+    // Only clear if the global still points at the process we just killed — a new
+    // ffmpeg may have started in the 2s window and must not be orphaned.
+    if (currentFfmpegProcess === proc) clearCurrentFfmpegProcess();
   }, 2000);
 
   return true;
@@ -455,7 +458,8 @@ function runQueuedFfmpeg(
         if (ffmpeg.stdout) ffmpeg.stdout.removeAllListeners();
         if (ffmpeg.stderr) ffmpeg.stderr.removeAllListeners();
         ffmpeg.removeAllListeners();
-        clearCurrentFfmpegProcess();
+        // Only clear if the global still points at THIS ffmpeg — a newer run may own it now.
+        if (currentFfmpegProcess === ffmpeg) clearCurrentFfmpegProcess();
       };
 
       ffmpeg.on('close', (code, signal) => {
@@ -1197,6 +1201,13 @@ function createMediaServer() {
   });
 }
 
+// Test-only: expose the renderer over CDP so Playwright can drive a real session
+// (real EDITH + real python bakes). Gated by an env var; no effect in normal use.
+if (process.env.DIVIDR_CDP) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.DIVIDR_CDP);
+  app.commandLine.appendSwitch('remote-allow-origins', '*');
+}
+
 // Start media server when app is ready
 app.whenReady().then(() => {
   createMediaServer();
@@ -1428,9 +1439,14 @@ ipcMain.handle(
     // Use priority queue with HIGHEST priority (1) for audio extraction
     // This ensures audio extracts before sprite sheets to prevent waveform delays
     return (async () => {
-      // Create a unique output directory for extracted audio files
+      // Create a unique output directory for extracted audio files.
+      // MUST be persistent (userData), NOT os.tmpdir(): extracted audio is referenced
+      // by saved projects indefinitely, and the temp cleanup prunes tmpdir files after
+      // 1 day. Storing here previously caused saved projects to lose audio (video kept
+      // playing because the video uses the user's original file; audio is a separate
+      // extracted track) once the temp WAV was pruned.
       const audioOutputDir =
-        outputDir || path.join(os.tmpdir(), 'dividr-audio-extracts');
+        outputDir || path.join(app.getPath('userData'), 'audio-extracts');
 
       // Use fileIOManager for directory creation with EMFILE protection
       await fileIOManager.mkdir(audioOutputDir, 'normal');
@@ -3901,6 +3917,51 @@ ipcMain.handle('media:has-audio', async (event, filePath: string) => {
   }
 });
 
+// SCENE DETECTION
+// FFmpeg-native shot detection: the select='gt(scene,T)' filter scores each frame's
+// visual difference from the previous; showinfo prints pts_time for frames above the
+// threshold. Single pass, no ML, no API — cheap and fast.
+ipcMain.handle(
+  'media:detectScenes',
+  async (
+    _event,
+    { filePath, threshold = 0.4 }: { filePath: string; threshold?: number },
+  ): Promise<{ success: boolean; scenes?: number[]; error?: string }> => {
+    if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available' };
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+    const t = Math.max(0.05, Math.min(0.95, Number(threshold) || 0.4));
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = (r: { success: boolean; scenes?: number[]; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        resolve(r);
+      };
+      const proc = spawn(
+        ffmpegPath!,
+        ['-i', filePath, '-filter:v', `select='gt(scene,${t})',showinfo`, '-an', '-f', 'null', '-'],
+        { shell: false },
+      );
+      let stderr = '';
+      const timer = setTimeout(() => {
+        try { proc.kill(); } catch { /* already gone */ }
+        settle({ success: false, error: 'Scene detection timed out' });
+      }, 120000);
+      proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+      proc.on('close', () => {
+        clearTimeout(timer);
+        settle({ success: true, scenes: parseSceneTimestamps(stderr) });
+      });
+      proc.on('error', (err: Error) => {
+        clearTimeout(timer);
+        settle({ success: false, error: err.message });
+      });
+    });
+  },
+);
+
 // =============================================================================
 // TRANSCODE SERVICE - AVI to MP4 background transcoding
 // =============================================================================
@@ -4497,6 +4558,14 @@ const createWindow = () => {
       logStartupPerf();
     });
 
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+      console.error('[CRASH] Renderer process gone:', details.reason, details.exitCode);
+    });
+
+    mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      if (level === 3) console.error(`[RENDERER ERROR] ${sourceId}:${line} — ${message}`);
+    });
+
     mainWindow.webContents.once('dom-ready', () => {
       logStartupPerf();
       // DOM is ready, loader HTML is already visible from index.html
@@ -4725,6 +4794,55 @@ function getYtdlpPath(): string {
   } catch {}
 
   return 'yt-dlp'; // last resort — may still fail if not in Electron's PATH
+}
+
+export interface VideoChapter {
+  start: number; // seconds into the source
+  title: string;
+}
+
+/**
+ * Fetch YouTube/source chapters without downloading the video.
+ * Uses `yt-dlp --print "%(chapters)j"` which prints the chapters array as JSON
+ * (or "NA"/empty when the video has none). Returns null when there are no chapters
+ * so callers can cheaply gate the timeline overlay on "does this source have chapters".
+ */
+async function fetchSourceChapters(
+  ytdlp: string,
+  url: string,
+  extraArgs: string[] = [],
+): Promise<VideoChapter[] | null> {
+  try {
+    const raw: string = await new Promise((res, rej) => {
+      let out = '';
+      let err = '';
+      const p = spawn(
+        ytdlp,
+        [url, '--print', '%(chapters)j', '--skip-download', '--no-warnings', ...extraArgs],
+        { shell: false },
+      );
+      p.stdout?.on('data', (c: Buffer) => { out += c.toString(); });
+      p.stderr?.on('data', (c: Buffer) => { err += c.toString(); });
+      p.on('close', (code) =>
+        code === 0 ? res(out) : rej(new Error(err.trim().split('\n').pop() || `exit ${code}`)),
+      );
+      p.on('error', rej);
+      // Hard cap — never let a metadata probe stall the download flow
+      setTimeout(() => { try { p.kill(); } catch {} rej(new Error('timed out')); }, 25000);
+    });
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === 'NA' || trimmed === 'null') return null;
+    const parsed = JSON.parse(trimmed) as Array<{ start_time?: number; title?: string }>;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const chapters = parsed
+      .filter((c) => typeof c.start_time === 'number')
+      .map((c, i) => ({ start: Math.max(0, c.start_time as number), title: (c.title ?? `Chapter ${i + 1}`).trim() }))
+      .sort((a, b) => a.start - b.start);
+    return chapters.length ? chapters : null;
+  } catch (e) {
+    // Re-throw so the caller can surface why it failed; caller treats it as "no chapters".
+    throw e instanceof Error ? e : new Error(String(e));
+  }
 }
 
 function inferFileType(filePath: string): 'video' | 'audio' | 'image' {
@@ -5334,6 +5452,8 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
 
 
     const hasSections = startSeconds !== undefined && endSeconds !== undefined;
+    const videoOrigin: 'youtube' | 'url' = /youtu\.?be/i.test(url) ? 'youtube' : 'url';
+    let videoChapters: VideoChapter[] | null = null;
 
     // YouTube authentication â€” scan Downloads for any YouTube cookies file the extension may have saved
     const cookieArgs: string[] = [];
@@ -5373,7 +5493,7 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
       for (const browser of browserOrder) {
         try {
           const testResult = _execSync(
-            `”${ytdlp}” --cookies-from-browser ${browser} --simulate --quiet “https://www.youtube.com” 2>&1`,
+            `"${ytdlp}" --cookies-from-browser ${browser} --simulate --quiet "https://www.youtube.com" 2>&1`,
             { timeout: 8000, encoding: 'utf8' },
           );
           if (!testResult.toLowerCase().includes('error')) {
@@ -5388,6 +5508,29 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
         sendMsg('â†³ No browser cookies available — downloading without auth (may fail for age-restricted videos)');
       }
     }
+
+    // â”€â”€ CHAPTERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // EDITH sometimes routes a real video URL through her b-roll/search path, so `url` arrives
+    // as "ytsearch:<watch url>". Strip any search prefix and, if what's left is a real video
+    // URL, probe THAT for chapters regardless of the b-roll flags — this was the case being
+    // silently skipped. Probe runs AFTER cookies so auth-gated videos still return chapters.
+    const cleanUrl = url.replace(/^(ytdl:)?ytsearch\d*:/i, '').trim();
+    const looksLikeVideoUrl = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)/i.test(cleanUrl);
+    if (looksLikeVideoUrl || (!isSearchQuery && !isStockFootage && !hasSections)) {
+      sendMsg('â†³ Checking for chaptersâ€¦');
+      try {
+        videoChapters = await fetchSourceChapters(ytdlp, cleanUrl, cookieArgs);
+        sendMsg(
+          videoChapters?.length
+            ? `âœ“ Found ${videoChapters.length} chapters`
+            : 'â†³ No chapters in this video',
+        );
+      } catch (chErr) {
+        sendMsg(`âš  Chapter check failed: ${String((chErr as Error)?.message ?? chErr).slice(0, 120)}`);
+      }
+    }
+    // A video with chapters is long-form content the user wants whole — never auto-trim it.
+    const keepFull = !!(videoChapters && videoChapters.length && !hasSections);
 
     // Use %(id)s instead of %(title)s — title can contain colons/quotes/slashes
     // that Windows mangles into unpredictable filenames the Electron player can't load.
@@ -5413,12 +5556,12 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
 
     const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
-    return new Promise<{ success: boolean; filePath?: string; fileType?: string; error?: string }>((resolve) => {
+    return new Promise<{ success: boolean; filePath?: string; fileType?: string; error?: string; chapters?: VideoChapter[]; origin?: string; title?: string }>((resolve) => {
       let finalPath = '';
       let stderrBuf = '';
       let settled = false;
 
-      const settle = (result: { success: boolean; filePath?: string; fileType?: string; error?: string }) => {
+      const settle = (result: { success: boolean; filePath?: string; fileType?: string; error?: string; chapters?: VideoChapter[]; origin?: string; title?: string }) => {
         if (settled) return;
         settled = true;
         ytdlpProcesses.delete(jobId);
@@ -5430,7 +5573,7 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
 
       const timer = setTimeout(() => {
         proc.kill();
-        sendMsg('âœ— Download timed out after 3 minutes â€” try a shorter clip or different URL.');
+        sendMsg(`âœ— Download timed out after ${Math.round(DOWNLOAD_TIMEOUT_MS / 60000)} minutes â€” try a shorter clip or different URL.`);
         settle({ success: false, error: 'Download timed out' });
       }, DOWNLOAD_TIMEOUT_MS);
 
@@ -5525,13 +5668,14 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
               const ok = await runFrameCheck(usePath);
               if (!ok) return;
               sendMsg('âœ“ Download complete â€” review the clip below.');
-              settle({ success: true, filePath: usePath, fileType: inferFileType(usePath), title: topic });
+              settle({ success: true, filePath: usePath, fileType: inferFileType(usePath), title: topic, origin: videoOrigin });
             });
           } else {
             (async () => {
-              // For YouTube downloads, scan frames and trim to the best 20s segment
+              // For YouTube downloads, scan frames and trim to the best 20s segment.
+              // Skip when the video has chapters — that's long-form content the user wants whole.
               const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
-              if (!isStockFootage && anthropicApiKey && ffmpegPath) {
+              if (!isStockFootage && !keepFull && anthropicApiKey && ffmpegPath) {
                 const segmentPath = await findBestYouTubeSegment(finalPath, ffmpegPath, anthropicApiKey, topic || verify || '', sendMsg);
                 if (segmentPath !== finalPath) {
                   try { fs.unlinkSync(finalPath); } catch {}
@@ -5541,7 +5685,7 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
               const ok = await runFrameCheck(finalPath);
               if (!ok) return;
               sendMsg('âœ” Download complete â€” review the clip below.');
-              settle({ success: true, filePath: finalPath, fileType: inferFileType(finalPath), title: topic });
+              settle({ success: true, filePath: finalPath, fileType: inferFileType(finalPath), title: topic, chapters: videoChapters ?? undefined, origin: videoOrigin });
             })();
           }
         } else {
@@ -5736,6 +5880,41 @@ ipcMain.handle(
   },
 );
 
+// One-time probe: does this machine's ffmpeg + GPU driver actually encode with
+// h264_nvenc? (Listing the encoder isn't enough — Blackwell/driver combos can list
+// it but fail at runtime.) We test a tiny encode and cache the verdict.
+let _nvencWorks: boolean | null = null;
+async function nvencWorks(): Promise<boolean> {
+  if (_nvencWorks !== null) return _nvencWorks;
+  if (!ffmpegPath) return false;
+  _nvencWorks = await new Promise<boolean>((resolve) => {
+    try {
+      const p = spawn(ffmpegPath!, [
+        '-hide_banner', '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1',
+        '-c:v', 'h264_nvenc', '-f', 'null', '-',
+      ]);
+      let settled = false;
+      const done = (v: boolean) => { if (!settled) { settled = true; try { p.kill(); } catch {} resolve(v); } };
+      // Hard timeout — never let a hung probe stall the first encode.
+      const t = setTimeout(() => done(false), 5000);
+      p.on('close', (code) => { clearTimeout(t); done(code === 0); });
+      p.on('error', () => { clearTimeout(t); done(false); });
+    } catch {
+      resolve(false);
+    }
+  });
+  console.log(`🎞️ NVENC GPU encoding ${_nvencWorks ? 'available' : 'unavailable'} — reverse/encode will use ${_nvencWorks ? 'GPU' : 'CPU (libx264 veryfast)'}`);
+  return _nvencWorks;
+}
+
+// Build the video+audio encode args for re-encoding ops, preferring GPU NVENC.
+async function buildVideoEncodeArgs(): Promise<string[]> {
+  if (await nvencWorks()) {
+    return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '20', '-c:a', 'aac', '-b:a', '192k', '-ar', '44100'];
+  }
+  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', '-ar', '44100'];
+}
+
 // media:setSpeed — change playback speed of a clip via ffmpeg
 ipcMain.handle(
   'media:setSpeed',
@@ -5869,6 +6048,140 @@ ipcMain.handle(
       return { success: true, filePath: outputFile, duration };
     } catch (err: any) {
       console.error('media:setSpeed error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:reverse — reverse a whole clip, or only the [startSeconds, endSeconds] segment.
+// Duration is unchanged (reverse preserves length). Mirrors media:setSpeed's
+// trim → process-middle → concat structure.
+ipcMain.handle(
+  'media:reverse',
+  async (
+    _event,
+    { filePath, startSeconds, endSeconds, segmentOnly }: { filePath: string; startSeconds?: number; endSeconds?: number; segmentOnly?: boolean },
+  ): Promise<{ success: boolean; filePath?: string; duration?: number; error?: string }> => {
+    if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available' };
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+
+    try {
+      const ext = path.extname(filePath) || '.mp4';
+      const outputFile = path.join(path.dirname(filePath), `reverse_${Date.now()}${ext}`);
+
+      const origDuration = await new Promise<number>((resolve) => {
+        let out = '';
+        const p = spawn(ffprobePath!.path, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath]);
+        p.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+        p.on('close', () => resolve(parseFloat(out.trim()) || 0));
+        p.on('error', () => resolve(0));
+      });
+
+      const runSeg = (a: string[]) => new Promise<void>((resolve, reject) => {
+        const p = spawn(ffmpegPath!, a);
+        let errOut = '';
+        p.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+        p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${errOut.slice(-300)}`))));
+        p.on('error', reject);
+      });
+
+      // Detect whether the input has a video stream (linked-audio tracks are audio-only).
+      const hasVideo = await new Promise<boolean>((resolve) => {
+        let out = '';
+        const p = spawn(ffprobePath!.path, ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=index', '-of', 'csv=p=0', filePath]);
+        p.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+        p.on('close', () => resolve(out.trim().length > 0));
+        p.on('error', () => resolve(true));
+      });
+
+      const maps = hasVideo ? ['-map', '0:v', '-map', '0:a?'] : ['-map', '0:a'];
+      const revFilters = hasVideo ? ['-vf', 'reverse', '-af', 'areverse'] : ['-af', 'areverse'];
+      // GPU NVENC encode when available (huge speedup vs CPU libx264); audio-only → pcm.
+      const enc = hasVideo ? await buildVideoEncodeArgs() : ['-c:a', 'pcm_s16le', '-ar', '44100'];
+      const hasRange =
+        startSeconds !== undefined && endSeconds !== undefined && endSeconds > startSeconds;
+
+      const tmpDir = path.dirname(filePath);
+      const ts = Date.now();
+
+      // Reverse [rStart, rStart+rDur] of the input into outFile WITHOUT loading the
+      // whole span into RAM: split into small chunks, reverse each in its own ffmpeg
+      // process (memory freed between chunks), then concat the chunks in reverse order.
+      // FFmpeg's `reverse`/`areverse` are in-memory filters, so a long single-pass
+      // reverse OOMs — chunking keeps peak memory bounded by one chunk.
+      const CHUNK = 8; // seconds per chunk — each reverses in its own process, memory freed between
+      const chunkReverse = async (rStart: number, rDur: number, outFile: string) => {
+        const n = Math.max(1, Math.ceil(rDur / CHUNK));
+        const parts: string[] = [];
+        for (let i = 0; i < n; i++) {
+          const cs = rStart + i * CHUNK;
+          const cd = Math.min(CHUNK, rStart + rDur - cs);
+          if (cd <= 0.01) break;
+          const cf = path.join(tmpDir, `revchunk_${ts}_${i}${ext}`);
+          await runSeg(['-y', '-ss', String(cs), '-t', String(cd), '-i', filePath, ...maps, ...revFilters, ...enc, cf]);
+          parts.push(cf);
+        }
+        if (parts.length === 1) {
+          // Single chunk — it IS the reversed output; just move it (no concat pass).
+          try { fs.renameSync(parts[0], outFile); } catch { fs.copyFileSync(parts[0], outFile); try { fs.unlinkSync(parts[0]); } catch {} }
+          return;
+        }
+        const list = path.join(tmpDir, `revlist_${ts}_${Math.round(rStart * 1000)}.txt`);
+        fs.writeFileSync(
+          list,
+          parts.slice().reverse().map((f) => `file '${f.replace(/\\/g, '/')}'\n`).join(''),
+        );
+        // Stream-copy the concat — chunks already share codec params, so no re-encode.
+        await runSeg(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', ...(hasVideo ? ['-movflags', '+faststart'] : []), outFile]);
+        for (const f of [...parts, list]) {
+          try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+        }
+      };
+
+      if (hasRange && segmentOnly) {
+        // Reverse ONLY [start, end] and return just that segment (length = end-start).
+        // Used by the timeline-split reverse path — the before/after live as untouched
+        // sibling clips, so we never re-encode the rest of the video.
+        const clampedEnd = Math.min(endSeconds!, origDuration || endSeconds!);
+        await chunkReverse(startSeconds!, clampedEnd - startSeconds!, outputFile);
+        return { success: true, filePath: outputFile, duration: clampedEnd - startSeconds! };
+      }
+
+      if (hasRange) {
+        const clampedEnd = Math.min(endSeconds!, origDuration || endSeconds!);
+        const segBefore = path.join(tmpDir, `rev_before_${ts}${ext}`);
+        const segMiddle = path.join(tmpDir, `rev_mid_${ts}${ext}`);
+        const segAfter  = path.join(tmpDir, `rev_after_${ts}${ext}`);
+        const concatList = path.join(tmpDir, `concat_rev_${ts}.txt`);
+
+        if (startSeconds! > 0.01) {
+          await runSeg(['-y', '-i', filePath, '-t', String(startSeconds), ...maps, ...enc, segBefore]);
+        }
+        await chunkReverse(startSeconds!, clampedEnd - startSeconds!, segMiddle);
+        const afterDur = (origDuration || clampedEnd) - clampedEnd;
+        if (afterDur > 0.01) {
+          await runSeg(['-y', '-ss', String(clampedEnd), '-i', filePath, ...maps, ...enc, segAfter]);
+        }
+
+        let concatContent = '';
+        if (startSeconds! > 0.01 && fs.existsSync(segBefore)) concatContent += `file '${segBefore.replace(/\\/g, '/')}'\n`;
+        if (fs.existsSync(segMiddle)) concatContent += `file '${segMiddle.replace(/\\/g, '/')}'\n`;
+        if (afterDur > 0.01 && fs.existsSync(segAfter)) concatContent += `file '${segAfter.replace(/\\/g, '/')}'\n`;
+        fs.writeFileSync(concatList, concatContent);
+
+        await runSeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatList, ...maps, ...enc, ...(hasVideo ? ['-movflags', '+faststart'] : []), outputFile]);
+
+        for (const f of [segBefore, segMiddle, segAfter, concatList]) {
+          try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* ignore */ }
+        }
+      } else {
+        // Whole clip reversed — chunked so even a 20-min clip stays within memory.
+        await chunkReverse(0, origDuration, outputFile);
+      }
+
+      return { success: true, filePath: outputFile, duration: origDuration };
+    } catch (err: any) {
+      console.error('media:reverse error:', err);
       return { success: false, error: err.message ?? String(err) };
     }
   },
@@ -6158,6 +6471,238 @@ ipcMain.handle(
       return { success: true, outputPath: result.outputPath };
     } catch (err: any) {
       console.error('media:renderSkeleton error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// ─── New nuanced skills: helper to run a main.py subcommand and parse RESULT| ───
+const runPythonSkill = async (
+  command: string,
+  flags: string[],
+  tag: string,
+): Promise<any> => {
+  const isWindows = process.platform === 'win32';
+  const venvPython = isWindows
+    ? path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'Scripts', 'python.exe')
+    : path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'bin', 'python');
+  const mainPy = path.join(process.cwd(), 'src', 'backend', 'python', 'main.py');
+  const pythonExe = fs.existsSync(venvPython) ? venvPython : (isWindows ? 'python' : 'python3');
+
+  return new Promise<any>((resolve, reject) => {
+    const proc = spawn(pythonExe, [mainPy, command, ...flags]);
+    let stdoutBuf = '';
+    let errOut = '';
+    proc.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+    proc.stdout?.on('data', (d: Buffer) => { stdoutBuf += d.toString(); });
+    proc.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`${command} exit ${code}: ${errOut.slice(-500)}`));
+      let resultJson: string | null = null;
+      for (const line of stdoutBuf.split('\n')) {
+        if (line.startsWith('PROGRESS|')) console.log(`[${tag}]`, line);
+        else if (line.startsWith('RESULT|')) resultJson = line.slice(7);
+      }
+      if (!resultJson) return reject(new Error(`${command} produced no RESULT line`));
+      try { resolve(JSON.parse(resultJson)); } catch (e) { reject(e); }
+    });
+    proc.on('error', reject);
+  });
+};
+
+// media:selectiveFreeze — "hold the world, let one thing move" (seamless selective freeze)
+ipcMain.handle(
+  'media:selectiveFreeze',
+  async (
+    _event,
+    { filePath, startSeconds, endSeconds, mode = 'world-frozen', freezeAt = -1, box = '' }:
+    { filePath: string; startSeconds: number; endSeconds: number; mode?: string; freezeAt?: number; box?: string },
+  ): Promise<{ success: boolean; filePath?: string; mode?: string; duration?: number; reason?: string; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    try {
+      // Map the op's mode vocabulary to the motion-key script's enum.
+      const modeMap: Record<string, string> = {
+        'world-frozen': 'freezeWorld', 'subject-frozen': 'freezeSubject', 'full': 'freezeAll',
+        freezeWorld: 'freezeWorld', freezeSubject: 'freezeSubject', freezeAll: 'freezeAll',
+      };
+      const pyMode = modeMap[mode] ?? 'freezeWorld';
+      const ext = path.extname(filePath) || '.mp4';
+      const outputFile = path.join(path.dirname(filePath), `mfreeze_${Date.now()}${ext}`);
+      const flags = [
+        '--input', filePath, '--output', outputFile,
+        '--start', String(startSeconds), '--end', String(endSeconds),
+        '--mode', pyMode, '--freeze-at', String(freezeAt),
+      ];
+      if (box) flags.push('--box', box);
+      const result = await runPythonSkill('motion-freeze', flags, 'selectiveFreeze');
+      if (!result?.success) return { success: false, error: result?.error ?? 'Selective freeze failed', reason: result?.reason };
+      return result;
+    } catch (err: any) {
+      console.error('media:selectiveFreeze error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:regionalSpeed — "speed that lives inside the clip" (per-region time-remap)
+ipcMain.handle(
+  'media:regionalSpeed',
+  async (
+    _event,
+    { filePath, startSeconds, endSeconds, speed = 0.5, region = '0,0,1,1', feather = 24, invert = false }:
+    { filePath: string; startSeconds: number; endSeconds: number; speed?: number; region?: string; feather?: number; invert?: boolean },
+  ): Promise<{ success: boolean; filePath?: string; speed?: number; duration?: number; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    try {
+      const ext = path.extname(filePath) || '.mp4';
+      const outputFile = path.join(path.dirname(filePath), `regionspeed_${Date.now()}${ext}`);
+      const flags = [
+        '--input', filePath, '--output', outputFile,
+        '--start', String(startSeconds), '--end', String(endSeconds),
+        '--speed', String(speed), '--region', region, '--feather', String(feather),
+      ];
+      if (invert) flags.push('--invert');
+      const result = await runPythonSkill('regional-speed', flags, 'regionalSpeed');
+      if (!result?.success) return { success: false, error: result?.error ?? 'Regional speed failed' };
+      return result;
+    } catch (err: any) {
+      console.error('media:regionalSpeed error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:findMoment — "CTRL-F for video" visual/object search (API-free, early-exit)
+ipcMain.handle(
+  'media:findMoment',
+  async (
+    _event,
+    { filePath, target, interval = 0.5, start = 0, findAll = false }:
+    { filePath: string; target: string; interval?: number; start?: number; findAll?: boolean },
+  ): Promise<{ success: boolean; foundAtSec?: number | null; label?: string; confidence?: number; allMatchesSec?: number[]; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    const flags = ['--input', filePath, '--target', target, '--interval', String(interval), '--start', String(start)];
+    if (findAll) flags.push('--find-all');
+    // The vision scan spawns the Claude subscription CLI; a transient spawn/boot failure must NOT
+    // masquerade as "moment not found" — the user can't tell a broken tool from a genuine miss.
+    // Retry once on an EXEC failure only. A clean {foundAtSec:null} is a real miss (not a throw),
+    // so it returns as-is and is never retried.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await runPythonSkill('find-moment', flags, 'findMoment');
+      } catch (err: any) {
+        if (attempt === 0) { console.warn('media:findMoment exec failed, retrying once:', err?.message ?? err); continue; }
+        console.error('media:findMoment error:', err);
+        return { success: false, error: err.message ?? String(err) };
+      }
+    }
+    return { success: false, error: 'find-moment: unreachable' };
+  },
+);
+
+// media:organizeMedia — plan how to sort the media library into folders.
+// Receives the library inventory, runs the name + frame-reference passes in Python,
+// and returns {assignments: {mediaId: folderName}, folders, summary}. The renderer
+// applies it in one undoable step — this handler only computes the plan.
+ipcMain.handle(
+  'media:organizeMedia',
+  async (
+    _event,
+    { inventory, noVision = false }: { inventory: unknown[]; noVision?: boolean },
+  ): Promise<{
+    success: boolean;
+    assignments?: Record<string, string>;
+    folders?: Array<{ name: string; count: number }>;
+    summary?: unknown;
+    error?: string;
+  }> => {
+    if (!Array.isArray(inventory) || inventory.length === 0) {
+      return { success: false, error: 'No media to organize' };
+    }
+    const tmpPath = path.join(os.tmpdir(), `dividr_org_${Date.now()}.json`);
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(inventory), 'utf-8');
+      const flags = ['--input', tmpPath];
+      if (noVision) flags.push('--no-vision');
+      return await runPythonSkill('organize-media', flags, 'organizeMedia');
+    } catch (err: any) {
+      console.error('media:organizeMedia error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    } finally {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* temp file cleanup is best-effort */
+      }
+    }
+  },
+);
+
+// media:voiceSeparate — true 2-stem source separation (voice + background).
+// One-time offline bake per clip via the MDX-Net ONNX model (CPU). Produces two
+// WAV stems the editor mixes LIVE with a gain crossfade (the separation curve),
+// so dragging the mix is real-time. Progress is forwarded to the renderer because
+// the bake is CPU-heavy and can take from seconds to a couple of minutes.
+ipcMain.handle(
+  'media:voiceSeparate',
+  async (
+    event,
+    { filePath, model = '' }: { filePath: string; model?: string },
+  ): Promise<{ success: boolean; filePath?: string; instrumentalPath?: string; duration?: number; sampleRate?: number; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    try {
+      const isWindows = process.platform === 'win32';
+      const venvPython = isWindows
+        ? path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'Scripts', 'python.exe')
+        : path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'bin', 'python');
+      const mainPy = path.join(process.cwd(), 'src', 'backend', 'python', 'main.py');
+      const pythonExe = fs.existsSync(venvPython) ? venvPython : (isWindows ? 'python' : 'python3');
+
+      const dir = path.dirname(filePath);
+      const base = path.basename(filePath, path.extname(filePath));
+      const stamp = Date.now();
+      const voiceOut = path.join(dir, `voice_${base}_${stamp}.wav`);
+      const bgOut = path.join(dir, `background_${base}_${stamp}.wav`);
+
+      const result = await new Promise<any>((resolve, reject) => {
+        const args = [
+          mainPy, 'voice-separate',
+          '--input', filePath,
+          '--output', voiceOut,
+          '--instrumental', bgOut,
+        ];
+        if (model) args.push('--model', model);
+        const proc = spawn(pythonExe, args);
+        let stdoutBuf = '';
+        let errOut = '';
+        proc.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+        proc.stdout?.on('data', (d: Buffer) => {
+          stdoutBuf += d.toString();
+          // Forward progress lines live — separation is slow, keep the UI moving.
+          for (const line of d.toString().split('\n')) {
+            if (line.startsWith('PROGRESS|')) {
+              try {
+                if (!event.sender.isDestroyed())
+                  event.sender.send('media:voiceSeparate-progress', JSON.parse(line.slice(9)));
+              } catch { /* ignore malformed progress */ }
+            }
+          }
+        });
+        proc.on('close', (code) => {
+          if (code !== 0) return reject(new Error(`voice-separate exit ${code}: ${errOut.slice(-500)}`));
+          let resultJson: string | null = null;
+          for (const line of stdoutBuf.split('\n')) {
+            if (line.startsWith('RESULT|')) resultJson = line.slice(7);
+          }
+          if (!resultJson) return reject(new Error('voice-separate produced no RESULT line'));
+          try { resolve(JSON.parse(resultJson)); } catch (e) { reject(e); }
+        });
+        proc.on('error', reject);
+      });
+
+      if (!result?.success) return { success: false, error: result?.error ?? 'Voice separation failed' };
+      return result;
+    } catch (err: any) {
+      console.error('media:voiceSeparate error:', err);
       return { success: false, error: err.message ?? String(err) };
     }
   },

@@ -5,6 +5,7 @@
 import { TrackInfo, VideoEditJob } from '@/backend/ffmpeg/schema/ffmpegConfig';
 import { useCallback } from 'react';
 import { NoiseReductionCache } from '../../editor/preview/services/NoiseReductionCache';
+import { buildFfmpegVoiceChain } from '../../editor/preview/utils/voiceIsolationCurve';
 import {
   useVideoEditorStore,
   VideoTrack,
@@ -545,6 +546,16 @@ function convertTracksToFFmpegInputs(
       duckingFadeDuration: track.duckingFadeDuration,
       duckingPrimary: track.duckingPrimary,
       duckingSpeechIntervals: track.duckingSpeechIntervals,
+      // Bake voice isolation so the exported audio matches the live preview:
+      // the separation-curve EQ PLUS the voice-forward chain (high-pass +
+      // presence + compressor + makeup). The real-time RNNoise denoise is
+      // prepended in the main process (where the model path lives).
+      voiceIsolationEq:
+        track.type === 'audio' &&
+        (track as any).voiceIsolation?.enabled &&
+        (track as any).voiceIsolation?.nodes?.length
+          ? buildFfmpegVoiceChain((track as any).voiceIsolation.nodes)
+          : undefined,
       trackType: track.type,
       visible: track.visible,
       width: track.width,
@@ -559,6 +570,7 @@ function convertTracksToFFmpegInputs(
       pipFrame: (track as any).pipFrame?.style && (track as any).pipFrame.style !== 'none'
         ? (track as any).pipFrame
         : undefined,
+      motionBlur: (track as any).motionBlur ?? undefined,
     };
 
     console.log('Track Info: ', trackInfo);

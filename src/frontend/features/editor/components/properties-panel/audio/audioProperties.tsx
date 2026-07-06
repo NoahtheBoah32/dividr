@@ -37,6 +37,8 @@ import {
   NoiseReductionEngine,
   NoiseReductionEngineModal,
 } from './NoiseReductionEngineModal';
+import { TranscriptEditor } from './TranscriptEditor';
+import { VoiceIsolationCurve } from './VoiceIsolationCurve';
 
 interface AudioPropertiesProps {
   selectedTrackIds: string[];
@@ -59,6 +61,12 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   const isPlaying = useVideoEditorStore((state) => state.playback.isPlaying);
   const play = useVideoEditorStore((state) => state.play);
   const pause = useVideoEditorStore((state) => state.pause);
+  const isTranscribing = useVideoEditorStore(
+    (state) => (state as any).isTranscribing ?? false,
+  );
+  const transcribingMediaId = useVideoEditorStore(
+    (state) => (state as any).currentTranscribingMediaId ?? null,
+  );
 
   // Action subscriptions (these don't cause re-renders)
   const updateTrackAudio = useVideoEditorStore(
@@ -553,7 +561,7 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   }, [updateAudioProperties, beginAudioUpdate, endAudioUpdate]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4">
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-4">
       {/* Audio Section Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -821,6 +829,36 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
           Mark this as a narration track to trigger ducking on music tracks
         </p>
       </div>
+
+      {/* Transcript editor — appears after EDITH transcribes; delete words to cut the video */}
+      {!isMultipleSelected && (
+        <>
+          <Separator />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold text-foreground">
+                Transcript
+              </label>
+            </div>
+            <TranscriptEditor
+              track={selectedTrack}
+              isTranscribing={isTranscribing}
+              transcribingMediaId={transcribingMediaId}
+            />
+          </div>
+
+          {/* Voice isolation separation curve — unlocked by EDITH's isolateVoice op */}
+          <Separator />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold text-foreground">
+                Voice Isolation
+              </label>
+            </div>
+            <VoiceIsolationCurve track={selectedTrack} />
+          </div>
+        </>
+      )}
 
       {isMultipleSelected && (
         <div className="pt-4">

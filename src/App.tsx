@@ -28,6 +28,18 @@ function App() {
     useProjectStore();
 
   useEffect(() => {
+    // Visual-test harness: skip the projects-route startup gate so the editor renders
+    // immediately. Guarded by __dividrTestMode, which is ONLY set by tests/visual/run.mjs —
+    // never in the real app, so production startup is unchanged.
+    if ((window as any).__dividrTestMode) {
+      setIsAppReady(true);
+      setStartupStage('app-ready');
+      setStartupProgress(100);
+      // Remove the static HTML loader overlay (index.html) so the editor canvas is visible.
+      const htmlLoader = document.getElementById('startup-loader');
+      if (htmlLoader) htmlLoader.remove();
+      return;
+    }
     // Subscribe to startup progress
     const unsubscribe = startupManager.subscribe((stage, progress) => {
       setStartupStage(stage);

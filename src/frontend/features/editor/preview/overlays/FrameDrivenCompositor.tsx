@@ -16,12 +16,16 @@ import {
   useRef,
 } from 'react';
 import { VideoTrack } from '../../stores/videoEditor/index';
+import { useVideoEditorStore } from '../../stores/videoEditor/index';
 import {
   FrameRequest,
   getVideoSource,
   hasVisibleClipsAtFrame,
   resolveFrameRequests,
+  resolveDipOverlay,
 } from '../services/FrameResolver';
+import { applyCSSColorGrade, GRADE_FILTER_ID } from '../utils/colorGradeUtils';
+import { gradeCompare } from '../utils/gradeCompareState';
 
 export interface FrameDrivenCompositorRef {
   getCanvas: () => HTMLCanvasElement | null;
@@ -100,6 +104,56 @@ export const FrameDrivenCompositor = forwardRef<
       [tracks],
     );
 
+    // Apply color grade as a CSS SVG filter on the canvas — fires once per grade change, not per frame
+    const mainGrade = useMemo(() => {
+      const main = videoTracks.find(
+        (t) => (t as any).trackRowIndex === 0 || videoTracks.indexOf(t) === 0,
+      );
+      return (main as any)?.colorGrade ?? null;
+    }, [videoTracks]);
+
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const applyFilter = () => {
+        if (gradeCompare.enabled) {
+          canvas.style.filter = '';
+        } else {
+          applyCSSColorGrade(canvas, mainGrade);
+        }
+      };
+
+      applyFilter();
+      window.addEventListener('dividr:gradeCompare', applyFilter);
+      return () => {
+        canvas.style.filter = '';
+        window.removeEventListener('dividr:gradeCompare', applyFilter);
+      };
+    }, [mainGrade]);
+
+    const mainMotionBlur = useMemo(() => {
+      const main = videoTracks.find(
+        (t) => (t as any).trackRowIndex === 0 || videoTracks.indexOf(t) === 0,
+      );
+      return (main as any)?.motionBlur ?? 0;
+    }, [videoTracks]);
+
+    const motionBlurRef = useRef<number>(0);
+
+    useEffect(() => {
+      motionBlurRef.current = mainMotionBlur;
+    }, [mainMotionBlur]);
+
+    // Ghost canvas for motion blur — holds the previous composited frame.
+    // Separate from the main canvas so canvas-to-canvas copy is always reliable.
+    const ghostCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const ghostCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+
+    // Temp canvas for compare mode — captures ungraded pixels before grade is drawn on left side
+    const tmpCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const tmpCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+
     // Canvas setup
     useEffect(() => {
       const canvas = canvasRef.current;
@@ -107,15 +161,40 @@ export const FrameDrivenCompositor = forwardRef<
 
       canvas.width = width;
       canvas.height = height;
-      ctxRef.current = canvas.getContext('2d', {
-        alpha: false,
-        desynchronized: true,
-      });
+      ctxRef.current = canvas.getContext('2d', { alpha: false });
+
+      // Ghost canvas: same size, no desync — canvas-to-canvas copy must be synchronous
+      const ghost = document.createElement('canvas');
+      ghost.width = width;
+      ghost.height = height;
+      ghostCanvasRef.current = ghost;
+      ghostCtxRef.current = ghost.getContext('2d', { alpha: false }) as CanvasRenderingContext2D;
+
+      // Temp canvas for compare mode pixel capture
+      const tmp = document.createElement('canvas');
+      tmp.width = width;
+      tmp.height = height;
+      tmpCanvasRef.current = tmp;
+      tmpCtxRef.current = tmp.getContext('2d', { alpha: false }) as CanvasRenderingContext2D;
 
       return () => {
         ctxRef.current = null;
+        ghostCanvasRef.current = null;
+        ghostCtxRef.current = null;
+        tmpCtxRef.current = null;
       };
     }, [width, height]);
+
+    // Force re-render when compare split changes so the canvas updates immediately
+    useEffect(() => {
+      const handler = () => {
+        if (!isPlayingRef.current) {
+          compositeFrameRef.current(currentFrameRef.current, false);
+        }
+      };
+      window.addEventListener('dividr:gradeCompare', handler);
+      return () => window.removeEventListener('dividr:gradeCompare', handler);
+    }, []);
 
     // Video element management
     const getOrCreateVideoForClip = useCallback(
@@ -127,6 +206,8 @@ export const FrameDrivenCompositor = forwardRef<
             managed.element.src = sourceUrl;
             managed.sourceUrl = sourceUrl;
             managed.isReady = false;
+            managed.lastDrawnFrame?.close();
+            managed.lastDrawnFrame = null;
           }
           return managed;
         }
@@ -241,16 +322,24 @@ export const FrameDrivenCompositor = forwardRef<
         const safeRotation = Number.isFinite(transform.rotation)
           ? transform.rotation
           : 0;
-        const safeOpacity = Number.isFinite(opacity)
-          ? Math.max(0, Math.min(1, opacity))
-          : 1;
+        // Transition fx (dissolve opacity / zoom scale / push-slide translate / wipe reveal).
+        // Identity when no transition is active on this clip at this frame.
+        const tfx = request.tfx;
+        const tScaleMul = tfx?.scaleMul ?? 1;
+        const tOpacity = tfx?.opacity ?? 1;
 
-        const drawWidth = safeWidth * scale * safeScale;
-        const drawHeight = safeHeight * scale * safeScale;
+        const safeOpacity =
+          (Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1) *
+          Math.max(0, Math.min(1, tOpacity));
+
+        const drawWidth = safeWidth * scale * safeScale * tScaleMul;
+        const drawHeight = safeHeight * scale * safeScale * tScaleMul;
         const centerX = canvasWidth / 2;
         const centerY = canvasHeight / 2;
-        const offsetX = safeX * (canvasWidth / 2);
-        const offsetY = safeY * (canvasHeight / 2);
+        const offsetX =
+          safeX * (canvasWidth / 2) + (tfx?.translateXFrac ?? 0) * canvasWidth;
+        const offsetY =
+          safeY * (canvasHeight / 2) + (tfx?.translateYFrac ?? 0) * canvasHeight;
         const drawX = centerX + offsetX - drawWidth / 2;
         const drawY = centerY + offsetY - drawHeight / 2;
 
@@ -275,6 +364,23 @@ export const FrameDrivenCompositor = forwardRef<
         ctx.globalAlpha = safeOpacity;
         if (filter) ctx.filter = filter;
 
+        // Wipe transition: clip the incoming clip to a growing region from one edge.
+        if (tfx?.wipe) {
+          const { direction, revealFrac } = tfx.wipe;
+          const r = Math.max(0, Math.min(1, revealFrac));
+          ctx.beginPath();
+          if (direction === 'right') {
+            ctx.rect(0, 0, canvasWidth * r, canvasHeight);
+          } else if (direction === 'left') {
+            ctx.rect(canvasWidth * (1 - r), 0, canvasWidth * r, canvasHeight);
+          } else if (direction === 'down') {
+            ctx.rect(0, 0, canvasWidth, canvasHeight * r);
+          } else {
+            ctx.rect(0, canvasHeight * (1 - r), canvasWidth, canvasHeight * r);
+          }
+          ctx.clip();
+        }
+
         if (safeRotation !== 0) {
           const rotationCenterX = drawX + drawWidth / 2;
           const rotationCenterY = drawY + drawHeight / 2;
@@ -289,7 +395,7 @@ export const FrameDrivenCompositor = forwardRef<
             ctx.drawImage(video, drawX, drawY, drawWidth, drawHeight);
             ctx.restore();
 
-            // Capture frame for fallback (async, non-blocking)
+            // Capture current frame for fallback (async, non-blocking)
             createImageBitmap(video)
               .then((bitmap) => {
                 managed.lastDrawnFrame?.close();
@@ -421,9 +527,15 @@ export const FrameDrivenCompositor = forwardRef<
         const ctx = ctxRef.current;
         const canvas = canvasRef.current;
         if (!ctx || !canvas) return false;
+        // Canvas not sized yet (mount race / hidden panel). drawImage with a 0x0 source or
+        // target throws a DOMException that crashes the whole editor subtree via the error
+        // boundary — which also kills the EDITH panel. Skip this frame; it re-runs once sized.
+        if (!canvas.width || !canvas.height) return false;
 
         const startTime = performance.now();
-        const requests = resolveFrameRequests(frameNumber, tracks, fps);
+        const transitions =
+          useVideoEditorStore.getState().timeline?.transitions ?? [];
+        const requests = resolveFrameRequests(frameNumber, tracks, fps, transitions);
         const hasClips = hasVisibleClipsAtFrame(frameNumber, tracks);
 
         if (!hasClips) {
@@ -446,8 +558,13 @@ export const FrameDrivenCompositor = forwardRef<
           const video = managed.element;
           const targetTime = request.sourceTime;
           const diff = Math.abs(video.currentTime - targetTime);
+          // Reversed clips can't be driven by native play() (it runs forward). We advance them
+          // by seeking to the resolved (decreasing) sourceTime EVERY frame, and keep the element
+          // paused so play() never pushes them forward.
+          const isReversed = !!(request.track as any)?.reversed;
+          const effectiveTolerance = isReversed ? 0 : seekTolerance;
 
-          if ((forceSync || diff > seekTolerance) && video.readyState >= 1) {
+          if ((forceSync || diff > effectiveTolerance) && video.readyState >= 1) {
             video.currentTime = targetTime;
             managed.lastSeekTime = targetTime;
           }
@@ -456,7 +573,7 @@ export const FrameDrivenCompositor = forwardRef<
             video.playbackRate = playbackRate;
           }
 
-          if (isPlaying) {
+          if (isPlaying && !isReversed) {
             if (video.paused && video.readyState >= 2) {
               video.play().catch(() => {
                 // Ignore autoplay errors
@@ -518,6 +635,71 @@ export const FrameDrivenCompositor = forwardRef<
             drawn = drawVideoFrame(ctx, managed, request, canvas.width, canvas.height);
           }
           if (drawn) renderedAny = true;
+        }
+
+        // Dip-to-color transition: full-frame flash peaking at the overlap midpoint.
+        const dip = resolveDipOverlay(frameNumber, tracks, transitions, fps);
+        if (dip && dip.alpha > 0) {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, Math.min(1, dip.alpha));
+          ctx.fillStyle = dip.color;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.restore();
+        }
+
+        // Motion blur preview — draw the previous composited frame (ghostCanvas) on top
+        // of the current frame at reduced opacity. No async capture needed: ghost canvas
+        // is updated synchronously at the end of each compositeFrame call.
+        // Static scenes: ghost ≈ current → blend is invisible.
+        // Moving scenes: ghost is spatially offset → visible directional smear.
+        if (renderedAny && isPlaying && motionBlurRef.current > 0 && ghostCanvasRef.current
+            && ghostCanvasRef.current.width > 0 && ghostCanvasRef.current.height > 0) {
+          const intensity = motionBlurRef.current / 100;
+          // ghostAlpha: 0.4 (subtle) → 0.8 (heavy) as intensity goes 0→1
+          const ghostAlpha = 0.4 + intensity * 0.4;
+          ctx.globalAlpha = ghostAlpha;
+          ctx.drawImage(ghostCanvasRef.current, 0, 0, canvas.width, canvas.height);
+          ctx.globalAlpha = 1;
+        }
+
+        // Capture this frame into the ghost canvas for use in the next frame
+        if (ghostCtxRef.current) {
+          ghostCtxRef.current.drawImage(canvas, 0, 0);
+        }
+
+        // Compare mode: draw graded left half + ungraded right half + split line on canvas
+        if (gradeCompare.enabled && tmpCtxRef.current && tmpCanvasRef.current) {
+          const tmp = tmpCanvasRef.current;
+          const tmpCtx = tmpCtxRef.current;
+          const splitX = Math.round(gradeCompare.split * canvas.width);
+
+          // Capture the current ungraded frame
+          tmpCtx.drawImage(canvas, 0, 0);
+
+          // Draw the graded left portion using ctx.filter (SVG filter already in DOM)
+          try {
+            ctx.save();
+            ctx.filter = `url(#${GRADE_FILTER_ID})`;
+            ctx.beginPath();
+            ctx.rect(0, 0, splitX, canvas.height);
+            ctx.clip();
+            ctx.drawImage(tmp, 0, 0);
+            ctx.restore();
+          } catch {
+            // ctx.filter unsupported — skip grade on left half
+          }
+
+          // Draw split line
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = 'rgba(0,0,0,0.5)';
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+          ctx.moveTo(splitX, 0);
+          ctx.lineTo(splitX, canvas.height);
+          ctx.stroke();
+          ctx.restore();
         }
 
         // Global fallback
@@ -597,12 +779,19 @@ export const FrameDrivenCompositor = forwardRef<
     // Re-composite when tracks change (catches pipFrame style/size/position changes).
     // No isPlaying guard — during playback the rAF loop overrides immediately anyway.
     useEffect(() => {
-      // Two rAFs: first lets React flush, second lets compositeFrameRef update
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+      // Two rAFs: first lets React flush, second lets compositeFrameRef update.
+      // Cancel both on unmount so the closure can't run after teardown.
+      let r1 = 0;
+      let r2 = 0;
+      r1 = requestAnimationFrame(() => {
+        r2 = requestAnimationFrame(() => {
           compositeFrameRef.current(currentFrameRef.current, true);
         });
       });
+      return () => {
+        cancelAnimationFrame(r1);
+        if (r2) cancelAnimationFrame(r2);
+      };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tracks]);
 
@@ -656,7 +845,11 @@ export const FrameDrivenCompositor = forwardRef<
           const y = transform?.y ?? 0;
           const scale = transform?.scale ?? 1;
           const rotation = transform?.rotation ?? 0;
-          return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''},${t.proxyBlockedMessage ?? ''}`;
+          const cg = t.colorGrade;
+          const gradeKey = cg
+            ? `${cg.temperature ?? 0},${cg.tint ?? 0},${cg.hue ?? 0},${cg.shadows ?? 0},${cg.midtones ?? 0},${cg.highlights ?? 0},${cg.curves ? '1' : '0'}`
+            : '';
+          return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''},${t.proxyBlockedMessage ?? ''},${gradeKey},${(t as any).motionBlur ?? 0}`;
         })
         .join('|');
 
@@ -718,7 +911,7 @@ export const FrameDrivenCompositor = forwardRef<
           height: '100%',
           display: 'block',
           backgroundColor: '#000000',
-          pointerEvents: 'none', // Ensure canvas doesn't capture clicks
+          pointerEvents: 'none',
         }}
         aria-label="Video preview canvas"
       />

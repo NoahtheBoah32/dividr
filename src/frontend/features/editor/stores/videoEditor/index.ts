@@ -77,6 +77,8 @@ export const useVideoEditorStore = create<VideoEditorStore>()(
             fps: state.timeline.fps,
             zoom: state.timeline.zoom,
             snapEnabled: state.timeline.snapEnabled,
+            showChapters: state.timeline.showChapters,
+            showSceneMarkers: state.timeline.showSceneMarkers,
             visibleTrackRows: state.timeline.visibleTrackRows,
           },
           preview: {

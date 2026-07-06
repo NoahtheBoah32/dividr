@@ -776,6 +776,19 @@ export function processLayerSegments(
         // Note: Aspect ratio cropping is now applied to the final output video
         // after all compositing is complete, not per-segment
 
+        // Motion blur — tmix frame blending (non-destructive, baked at export)
+        const mb = trackInfo.motionBlur ?? 0;
+        if (mb > 0) {
+          const mbRef = `[${uniqueIndex}_mb]`;
+          let frames: number, weights: string;
+          if (mb <= 33)       { frames = 2; weights = '1 1'; }
+          else if (mb <= 66)  { frames = 3; weights = '1 2 1'; }
+          else if (mb <= 85)  { frames = 4; weights = '1 2 2 1'; }
+          else                { frames = 5; weights = '1 2 3 2 1'; }
+          videoFilters.push(`${videoStreamRef}tmix=frames=${frames}:weights='${weights}'${mbRef}`);
+          videoStreamRef = mbRef;
+        }
+
         concatInputs.push(videoStreamRef);
       } else {
         console.warn(

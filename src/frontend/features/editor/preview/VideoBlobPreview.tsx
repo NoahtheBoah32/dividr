@@ -27,6 +27,9 @@ import {
   useZoomPan,
 } from './hooks';
 import { CanvasOverlay, UnifiedOverlayRenderer } from './overlays';
+import { GradeSplitOverlay } from './overlays/GradeSplitOverlay';
+import { MatchCutGhostOverlay } from './overlays/MatchCutGhostOverlay';
+import { LassoOverlay } from './overlays/LassoOverlay';
 import { SkeletonOverlay } from './overlays/SkeletonOverlay';
 import { TransformBoundaryLayer } from './overlays/TransformBoundaryLayer';
 import {
@@ -60,6 +63,7 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     tracks,
     timeline,
     playback,
+    pause,
     preview,
     textStyle,
     getTextStyleForSubtitle,
@@ -160,12 +164,11 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
     const lastTrack = visibleTracks[visibleTracks.length - 1];
 
     if (lastTrack && timeline.currentFrame >= lastTrack.endFrame) {
-      playback.isPlaying = false;
-      if (videoRef.current && !videoRef.current.paused) {
-        videoRef.current.pause();
-      }
+      // Use the store action — mutating playback.isPlaying in place never fires
+      // Zustand, so the compositor's rAF loop never stops.
+      pause();
     }
-  }, [timeline.currentFrame, tracks, playback, videoRef]);
+  }, [timeline.currentFrame, tracks, playback, pause]);
 
   // Resize observer
   useEffect(() => {
@@ -1031,6 +1034,30 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
             onDragStateChange={handleDragStateChange}
             onEditModeChange={handleEditModeChange}
             getTopElementAtPoint={getTopElementAtPoint}
+          />
+
+          {/* Grade split-compare overlay — must be last child so it's above all other layers */}
+          <GradeSplitOverlay
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={preview.panX}
+            panY={preview.panY}
+          />
+
+          {/* Match-cut ghost alignment overlay (self-contained, paused video). */}
+          <MatchCutGhostOverlay
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={preview.panX}
+            panY={preview.panY}
+          />
+
+          {/* Lasso region selector for the nuanced skills (armed from the properties panel). */}
+          <LassoOverlay
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={preview.panX}
+            panY={preview.panY}
           />
 
           {/* Alignment Guides */}

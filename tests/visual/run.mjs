@@ -20,7 +20,7 @@
  */
 
 import { chromium } from 'playwright';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
@@ -115,32 +115,101 @@ async function runScenario(browser, scenario, fixtureBuffer) {
     });
   }
 
-  // Inject test mode flag + electronAPI mock BEFORE navigation
+  // Local media server emulation: serve real files from disk WITH HTTP range support, exactly
+  // like the real app's media server (port 3001). Lets us test that a b-roll placed by EDITH
+  // actually decodes + renders in the canvas through the true load path.
+  await page.route('**/__media/**', (route) => {
+    try {
+      const u = new URL(route.request().url());
+      const filePath = decodeURIComponent(u.pathname.split('/__media/')[1] || '');
+      if (!existsSync(filePath)) return route.fulfill({ status: 404, body: '' });
+      const size = statSync(filePath).size;
+      const rangeHeader = route.request().headers()['range'];
+      const m = rangeHeader && /bytes=(\d+)-(\d*)/.exec(rangeHeader);
+      const start = m ? parseInt(m[1], 10) : 0;
+      const CHUNK = 6 * 1024 * 1024;
+      const end = m && m[2] ? parseInt(m[2], 10) : Math.min(start + CHUNK, size - 1);
+      const fd = openSync(filePath, 'r');
+      const buf = Buffer.alloc(end - start + 1);
+      readSync(fd, buf, 0, buf.length, start);
+      closeSync(fd);
+      route.fulfill({
+        status: 206,
+        headers: {
+          'Content-Range': `bytes ${start}-${end}/${size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(buf.length),
+          'Content-Type': 'video/mp4',
+        },
+        body: buf,
+      });
+    } catch (e) {
+      route.fulfill({ status: 500, body: String(e) });
+    }
+  });
+
+  // Inject test mode flag + electronAPI mock BEFORE navigation.
+  // Uses a Proxy so ANY method the app calls (removeListener, onTranscodeProgress, etc.)
+  // resolves to a harmless noop instead of crashing a render hook.
   await page.addInitScript(() => {
     window.__dividrTestMode = true;
     const noop = () => Promise.resolve(null);
-    window.electronAPI = {
+    const overrides = {
       getProjects: () => Promise.resolve([]),
-      getProject: noop,
-      saveProject: noop,
-      deleteProject: noop,
-      openFile: noop,
-      importMedia: noop,
-      downloadFromUrl: noop,
-      transcodeVideo: noop,
-      getVideoMetadata: noop,
-      openSaveDialog: noop,
-      openDirectory: noop,
+      getProject: () => Promise.resolve(null),
       getDuration: () => Promise.resolve(30),
-      createPreviewUrl: (p) => Promise.resolve(p),
-      on: () => {},
-      off: () => {},
-      send: () => {},
-      invoke: noop,
+      getVideoDimensions: () => Promise.resolve({ width: 1920, height: 1080 }),
+      // Mirror the real app: a file path becomes a media-server URL the browser can stream.
+      createPreviewUrl: (p) =>
+        Promise.resolve(
+          /^https?:|^blob:|^data:/.test(p)
+            ? p
+            : `http://localhost:5174/__media/${encodeURIComponent(p)}`,
+        ),
+      // Channel-aware IPC mock — return canned results for media ops so ops that hit the
+      // main process (which doesn't exist headless) still apply against the store.
+      invoke: (channel, args) => {
+        if (channel === 'media:detectScenes') {
+          return Promise.resolve({ success: true, scenes: [7.5, 15, 22.5] });
+        }
+        // New nuanced skills — canned main-process results so the renderer op path
+        // (invoke → store update) can be exercised headless.
+        if (channel === 'media:selectiveFreeze') {
+          return Promise.resolve({
+            success: true, filePath: (args?.filePath || 'clip') + '__freeze.mp4',
+            mode: args?.mode || 'world-frozen',
+            regionStart: args?.startSeconds ?? 0, regionEnd: args?.endSeconds ?? 0, duration: 9,
+          });
+        }
+        if (channel === 'media:regionalSpeed') {
+          return Promise.resolve({
+            success: true, filePath: (args?.filePath || 'clip') + '__rs.mp4',
+            speed: args?.speed ?? 0.5,
+            regionStart: args?.startSeconds ?? 0, regionEnd: args?.endSeconds ?? 0, duration: 9,
+          });
+        }
+        if (channel === 'media:findMoment') {
+          return Promise.resolve({ success: true, foundAtSec: 3.0, label: args?.target || 'car' });
+        }
+        return Promise.resolve(null);
+      },
       ffmpegPath: 'ffmpeg',
       ffprobePath: 'ffprobe',
       platform: 'win32',
     };
+    const makeProxy = () =>
+      new Proxy(overrides, {
+        get(target, prop) {
+          if (prop in target) return target[prop];
+          // Unknown property → a no-op function (covers on/off/removeListener/onX/invoke/send/etc.)
+          return noop;
+        },
+      });
+    window.electronAPI = makeProxy();
+    window.appControl = new Proxy(
+      {},
+      { get: () => () => {} },
+    );
   });
 
   page.on('console', (msg) => {
@@ -206,15 +275,40 @@ async function runScenario(browser, scenario, fixtureBuffer) {
     }
     await page.screenshot({ path: join(outDir, 'after-ops-full.png') });
 
+    // Optional interaction step (hover/click sequences that ops can't express).
+    if (typeof scenario.interact === 'function') {
+      const screenshot = async (name) => {
+        await page.screenshot({ path: join(outDir, `${name}.png`) });
+      };
+      try {
+        const interactResult = await scenario.interact(page, { outDir, screenshot });
+        if (interactResult) {
+          writeFileSync(
+            join(outDir, 'interact.json'),
+            JSON.stringify(interactResult, null, 2),
+          );
+          console.log(`  [interact] ${JSON.stringify(interactResult)}`);
+        }
+      } catch (err) {
+        console.log(`  [interact] FAILED: ${err.message}`);
+      }
+    }
+
     // Save store snapshot (serializable subset)
     const snapshot = await page.evaluate(() => {
       const s = window.__dividrTest.getStoreSnapshot();
       return {
         tracks: (s.tracks ?? []).map((t) => ({
-          id: t.id, type: t.type,
+          id: t.id, type: t.type, name: t.name,
           startFrame: t.startFrame, endFrame: t.endFrame,
+          trackRowIndex: t.trackRowIndex, layer: t.layer, muted: t.muted,
           filter: t.filter, proxyBlockedMessage: t.proxyBlockedMessage,
+          // New-feature fields for verification:
+          sceneMarkers: t.sceneMarkers, reversed: t.reversed,
+          reverseSegments: t.reverseSegments, transitionType: t.transitionType,
         })),
+        transitions: s.timeline?.transitions ?? null,
+        matchCut: s.timeline?.matchCut ?? null,
         preview: s.preview ? { canvasWidth: s.preview.canvasWidth, canvasHeight: s.preview.canvasHeight } : null,
       };
     });

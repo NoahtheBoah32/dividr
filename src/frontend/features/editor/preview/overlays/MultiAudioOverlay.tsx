@@ -10,6 +10,8 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { VideoTrack } from '../../stores/videoEditor/index';
 import { resolveAudioFrameRequests } from '../services/FrameResolver';
 import { NoiseReductionCache } from '../services/NoiseReductionCache';
+import { SeparationCache } from '../services/SeparationCache';
+import { VoiceIsolationEngine } from '../services/VoiceIsolationEngine';
 import { USE_FRAME_DRIVEN_PLAYBACK } from './UnifiedOverlayRenderer';
 
 export interface MultiAudioPlayerProps {
@@ -79,6 +81,13 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
       }
 
       const audio = new Audio();
+      // Voice isolation taps this element with the Web Audio API
+      // (createMediaElementSource). The media server is cross-origin
+      // (http://localhost:<mediaPort> vs the renderer origin) and sends
+      // Access-Control-Allow-Origin: *, so we MUST opt into CORS before
+      // setting src — otherwise the tapped source is tainted and Web Audio
+      // emits pure silence. Mirrors VideoPreview / FrameDrivenCompositor.
+      audio.crossOrigin = 'anonymous';
       audio.preload = 'auto';
       audio.src = previewUrl;
 
@@ -293,6 +302,29 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
     >
   >(new Map());
 
+  // Source-separation stem playback: when a source has baked stems and the mix
+  // is enabled, we play the VOICE and BACKGROUND stems as two synced <audio>
+  // elements instead of the original. The browser sums their outputs, so the
+  // mix is just two volume levels (no Web Audio tap needed — fully real-time).
+  const stemAudioElementsRef = useRef<
+    Map<
+      string,
+      { voice: HTMLAudioElement; bg: HTMLAudioElement; voiceUrl: string; bgUrl: string }
+    >
+  >(new Map());
+
+  const teardownStems = useCallback((sourceId: string) => {
+    const stems = stemAudioElementsRef.current.get(sourceId);
+    if (!stems) return;
+    VoiceIsolationEngine.teardownStems(sourceId);
+    for (const el of [stems.voice, stems.bg]) {
+      el.pause();
+      el.src = '';
+      el.load();
+    }
+    stemAudioElementsRef.current.delete(sourceId);
+  }, []);
+
   // Tolerance for detecting continuous playback (prevents unnecessary seeks)
   const CONTINUITY_TOLERANCE = 0.15; // 150ms - covers frame timing variance
   const PLAYBACK_SYNC_TOLERANCE = 0.3; // 300ms during playback
@@ -324,6 +356,31 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
         audio.muted = shouldMute;
         audio.volume = shouldMute ? 0 : Math.min(volume * linearVolume, 1);
       }
+    });
+
+    // Mirror track volume/mute onto any active stem elements (pre-graph). The
+    // curve's per-stem mix lives in the engine, not here, so this only carries
+    // the track's own volume slider.
+    stemAudioElementsRef.current.forEach((stems, sourceId) => {
+      const track = audioTracks.find((t) => {
+        const url = t.previewUrl;
+        if (!url) return false;
+        try {
+          if (url.startsWith('blob:')) return url === sourceId;
+          return decodeURIComponent(new URL(url, window.location.origin).pathname) === sourceId;
+        } catch {
+          return url === sourceId;
+        }
+      });
+      if (!track) return;
+      const volumeDb = track.volumeDb ?? 0;
+      const linearVolume = volumeDb <= -60 ? 0 : Math.pow(10, volumeDb / 20);
+      const shouldMute = isMuted || track.muted;
+      const baseVol = shouldMute ? 0 : Math.min(volume * linearVolume, 1);
+      stems.voice.muted = shouldMute;
+      stems.bg.muted = shouldMute;
+      stems.voice.volume = baseVol;
+      stems.bg.volume = baseVol;
     });
   }, [audioTracks, volumeSignature, isMuted, volume, useSourceRegistry]);
 
@@ -362,6 +419,107 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
         curr.trackRowIndex > best.trackRowIndex ? curr : best,
       );
 
+      // ── Voice isolation via real source separation (two-stem live mix) ──────
+      // When EDITH has baked stems for this source AND voice isolation is on,
+      // play the VOICE + BACKGROUND stems as two synced elements routed through
+      // the isolation engine. The curve drives the mix (its left side = the
+      // background stem level, right side = the voice stem level) AND the EQ on
+      // the voice stem, so pulling the left side down truly removes background.
+      const vi = (request.track as any).voiceIsolation as
+        | { enabled?: boolean; nodes?: { x: number; y: number }[] }
+        | undefined;
+      const sep = (request.track as any).separation as
+        | { status?: string }
+        | undefined;
+      let voiceStemUrl: string | null = null;
+      let bgStemUrl: string | null = null;
+      if (vi?.enabled && sep?.status === 'cached') {
+        voiceStemUrl = SeparationCache.getVoiceUrl(sourceId);
+        bgStemUrl = SeparationCache.getBackgroundUrl(sourceId);
+      }
+
+      if (voiceStemUrl && bgStemUrl) {
+        // Silence the original-mix element while the stems play.
+        const primary = sourceAudioElementsRef.current.get(sourceId);
+        if (primary && !primary.paused) primary.pause();
+
+        let stems = stemAudioElementsRef.current.get(sourceId);
+        if (!stems || stems.voiceUrl !== voiceStemUrl || stems.bgUrl !== bgStemUrl) {
+          if (stems) teardownStems(sourceId);
+          const voice = new Audio();
+          voice.crossOrigin = 'anonymous';
+          voice.preload = 'auto';
+          voice.src = voiceStemUrl;
+          const bg = new Audio();
+          bg.crossOrigin = 'anonymous';
+          bg.preload = 'auto';
+          bg.src = bgStemUrl;
+          stems = { voice, bg, voiceUrl: voiceStemUrl, bgUrl: bgStemUrl };
+          stemAudioElementsRef.current.set(sourceId, stems);
+        }
+
+        // Track volume/mute apply to BOTH stem ELEMENTS (pre-graph); the curve
+        // drives the per-stem mix + the voice-stem EQ inside the engine.
+        const shouldMute = isMuted || request.muted;
+        const baseVol = shouldMute ? 0 : Math.min(volume * request.volume, 1);
+        stems.voice.muted = shouldMute;
+        stems.bg.muted = shouldMute;
+        stems.voice.volume = baseVol;
+        stems.bg.volume = baseVol;
+        const rate = Math.max(0.25, Math.min(playbackRate, 4));
+        stems.voice.playbackRate = rate;
+        stems.bg.playbackRate = rate;
+
+        VoiceIsolationEngine.applyStems(
+          sourceId,
+          stems.voice,
+          stems.bg,
+          vi?.nodes ?? [],
+          !!vi?.enabled,
+        );
+
+        // Seek decision — same continuity logic, referenced to the voice stem
+        // as the master clock; the background stem is slaved to it.
+        const lastState = sourceAudioStateRef.current.get(sourceId);
+        const targetSourceTime = request.sourceTime;
+        const diff = Math.abs(stems.voice.currentTime - targetSourceTime);
+        let shouldSeek = false;
+        if (!lastState) shouldSeek = true;
+        else if (isLargeSeek) shouldSeek = diff > CONTINUITY_TOLERANCE;
+        else if (playStateChanged && !isPlaying) shouldSeek = diff > CONTINUITY_TOLERANCE;
+        else if (isPlaying) shouldSeek = diff > PLAYBACK_SYNC_TOLERANCE;
+        else shouldSeek = diff > CONTINUITY_TOLERANCE;
+
+        if (shouldSeek && stems.voice.readyState >= 1) {
+          stems.voice.currentTime = targetSourceTime;
+        }
+        if (
+          stems.bg.readyState >= 1 &&
+          Math.abs(stems.bg.currentTime - stems.voice.currentTime) > CONTINUITY_TOLERANCE
+        ) {
+          stems.bg.currentTime = stems.voice.currentTime;
+        }
+
+        if (isPlaying) {
+          for (const el of [stems.voice, stems.bg]) {
+            if (el.paused && el.readyState >= 2) el.play().catch(() => {});
+          }
+        } else {
+          for (const el of [stems.voice, stems.bg]) if (!el.paused) el.pause();
+        }
+
+        sourceAudioStateRef.current.set(sourceId, {
+          lastSourceTime: targetSourceTime,
+          lastClipId: request.clipId,
+          expectedNextTime: targetSourceTime + 1 / fps,
+          isPlaying,
+        });
+        return; // handled — skip the single-element path
+      }
+
+      // Not in stem mode: drop any stem elements left from a previous mix.
+      if (stemAudioElementsRef.current.has(sourceId)) teardownStems(sourceId);
+
       // Determine the audio source URL - use processed version if available
       let resolvedSourceUrl = request.sourceUrl;
       if (request.track.noiseReductionEnabled) {
@@ -380,6 +538,11 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
       let audio = sourceAudioElementsRef.current.get(sourceId);
       if (!audio) {
         audio = new Audio();
+        // Opt into CORS BEFORE setting src so the Web Audio voice-isolation
+        // tap (createMediaElementSource) gets real samples instead of a
+        // tainted-silence source. The cross-origin media server sends
+        // Access-Control-Allow-Origin: *; native playback is unaffected.
+        audio.crossOrigin = 'anonymous';
         audio.preload = 'auto';
         audio.src = resolvedSourceUrl;
         sourceAudioElementsRef.current.set(sourceId, audio);
@@ -393,6 +556,21 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
       audio.muted = shouldMute;
       audio.volume = shouldMute ? 0 : Math.min(volume * request.volume, 1);
       audio.playbackRate = Math.max(0.25, Math.min(playbackRate, 4));
+
+      // Voice isolation EQ fallback (no baked stems yet): tap this element with
+      // the Web Audio graph when the effect is enabled, and re-apply the
+      // (possibly just-dragged) curve each frame so changes are heard in real
+      // time. `vi` was resolved above for the stem branch. volume/mute apply
+      // pre-graph, so they keep working. Once tapped we keep applying (flat when
+      // disabled) so toggling off is transparent without a reconnect race.
+      if (vi?.enabled || VoiceIsolationEngine.isTapped(sourceId)) {
+        VoiceIsolationEngine.apply(
+          sourceId,
+          audio,
+          vi?.nodes ?? [],
+          !!vi?.enabled,
+        );
+      }
 
       const lastState = sourceAudioStateRef.current.get(sourceId);
       const currentAudioTime = audio.currentTime;
@@ -467,6 +645,11 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
       if (!audio.paused) audio.pause();
       sourceAudioStateRef.current.delete(sourceId);
     });
+    // Pause stem elements for sources no longer active (kept for seamless resume).
+    stemAudioElementsRef.current.forEach((stems, sourceId) => {
+      if (activeSourceIds.has(sourceId)) return;
+      for (const el of [stems.voice, stems.bg]) if (!el.paused) el.pause();
+    });
 
     // Update refs for next frame comparison
     prevFrameRef.current = currentFrame;
@@ -509,6 +692,7 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
 
     sourceAudioElementsRef.current.forEach((audio, sourceId) => {
       if (!activeSourceIds.has(sourceId)) {
+        VoiceIsolationEngine.teardown(sourceId);
         audio.pause();
         audio.src = '';
         audio.load();
@@ -516,18 +700,32 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
         sourceAudioStateRef.current.delete(sourceId);
       }
     });
-  }, [audioTracks, useSourceRegistry]);
+
+    stemAudioElementsRef.current.forEach((_stems, sourceId) => {
+      if (!activeSourceIds.has(sourceId)) teardownStems(sourceId);
+    });
+  }, [audioTracks, useSourceRegistry, teardownStems]);
 
   // Cleanup on unmount (frame-driven mode)
   useEffect(() => {
+    const stemElements = stemAudioElementsRef.current;
     return () => {
-      sourceAudioElementsRef.current.forEach((audio) => {
+      sourceAudioElementsRef.current.forEach((audio, sourceId) => {
+        VoiceIsolationEngine.teardown(sourceId);
         audio.pause();
         audio.src = '';
         audio.load();
       });
       sourceAudioElementsRef.current.clear();
       sourceAudioStateRef.current.clear();
+      stemElements.forEach((stems) => {
+        for (const el of [stems.voice, stems.bg]) {
+          el.pause();
+          el.src = '';
+          el.load();
+        }
+      });
+      stemElements.clear();
     };
   }, []);
 

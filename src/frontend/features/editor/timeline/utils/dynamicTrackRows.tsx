@@ -1001,7 +1001,6 @@ export function detectInsertionPoint(
   const INSERTION_THRESHOLD = 0.1;
 
   const isDraggingAudio = AUDIO_GROUP_TYPES.includes(draggedTrackType);
-  const isVideoType = draggedTrackType === 'video';
 
   // Separate rows by type for boundary checks
   const nonAudioRows = rowBounds.filter(
@@ -1051,11 +1050,13 @@ export function detectInsertionPoint(
     // Target index: below the lowest visual non-audio index
     const minVisualIndex = Math.min(...nonAudioRows.map((r) => r.rowIndex));
 
-    // For video, can't go below 0
+    // Dropping below the bottom row should land BEHIND it (lower index).
+    // Use a negative fractional index so normalizeAfterDrop reassigns this track
+    // to index 0 (back) and bumps the existing track(s) up. Applies to video too —
+    // this is what lets you drop a background underneath the main video.
     let targetIndex: number;
     if (minVisualIndex === 0) {
-      // Already at the bottom, use fractional to indicate "just above" the floor
-      targetIndex = isVideoType ? 0.5 : -0.5;
+      targetIndex = -0.5;
     } else {
       // Halfway between min and 0 (or next lower)
       targetIndex = minVisualIndex / 2;
@@ -1170,11 +1171,10 @@ export function detectInsertionPoint(
       let targetIndex: number;
 
       if (!nextRow) {
-        // This is the bottommost row - insert below it
+        // This is the bottommost row - insert below it (behind, lower index).
+        // Negative for video too, so a background can land underneath the main video.
         if (row.rowIndex === 0) {
-          // At floor, use fractional
-          targetIndex =
-            isVideoType && draggedTrackType === 'video' ? 0.5 : -0.5;
+          targetIndex = -0.5;
         } else {
           targetIndex = row.rowIndex / 2;
         }
@@ -1188,13 +1188,9 @@ export function detectInsertionPoint(
         if (midpoint >= row.rowIndex) {
           // Same indices or midpoint would be at/above current row
           // Create fractional index below the current row (but above the next row conceptually)
-          // Use a small offset below current row
+          // Use a small offset below current row (negative = behind, allowed for
+          // video too so a background can be dropped underneath the main video).
           targetIndex = row.rowIndex - 0.5;
-
-          // Ensure we don't go below minAllowed for video
-          if (isVideoType && draggedTrackType === 'video' && targetIndex < 0) {
-            targetIndex = 0.5; // Stay just above base
-          }
         } else {
           targetIndex = midpoint;
         }

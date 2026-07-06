@@ -310,11 +310,10 @@ export const ImageTransformBoundary: React.FC<ImageTransformBoundaryProps> = ({
         return;
       }
 
-      // CRITICAL: Check if another element should receive this click
-      // This enables proper spatial hit-testing - a higher z-index element
-      // visible at this position should be selected instead
-      // NOTE: This only applies to content area clicks, not handles (checked above)
-      if (getTopElementAtPoint) {
+      // Check if another element should receive this click — but ONLY when this
+      // element isn't already selected, so a selected clip keeps drag priority even
+      // when a higher-z element overlaps it.
+      if (!isSelected && getTopElementAtPoint) {
         const topElementId = getTopElementAtPoint(e.clientX, e.clientY);
         if (topElementId && topElementId !== track.id) {
           // Another element is above this one at the cursor position

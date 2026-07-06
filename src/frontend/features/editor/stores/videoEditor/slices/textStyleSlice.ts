@@ -17,13 +17,22 @@ const applyStyleUpdate = (state: any, updateKey: string, newValue: any) => {
   const mode = state.textStyle.styleApplicationMode;
   const selectedTrackIds = state.timeline?.selectedTrackIds || [];
 
-  // If 'all' mode or no selection, update globally
+  // If 'all' mode or no selection, update globally AND clear per-track overrides for this key.
+  // Without clearing per-track values, the merge { ...globalControls, ...track.subtitleStyle }
+  // means a hardcoded track-level fontSize will always beat the global panel value.
   if (mode === 'all' || selectedTrackIds.length === 0) {
-    // Record action for undo/redo - textStyle.globalControls is now in UndoableState
-    // This captures the current state BEFORE the mutation so undo can restore it
     state.recordAction?.(`Update Subtitle Style: ${updateKey}`);
 
+    const updatedTracks = state.tracks.map((track: any) => {
+      if (track.type === 'subtitle' && track.subtitleStyle?.[updateKey] !== undefined) {
+        const { [updateKey]: _removed, ...rest } = track.subtitleStyle;
+        return { ...track, subtitleStyle: rest };
+      }
+      return track;
+    });
+
     return {
+      tracks: updatedTracks,
       textStyle: {
         ...state.textStyle,
         globalControls: {

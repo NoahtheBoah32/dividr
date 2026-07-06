@@ -18,6 +18,23 @@ export interface TimelineSlice {
   setOutPoint: (frame?: number) => void;
   setSelectedTracks: (trackIds: string[]) => void;
   toggleSnap: () => void;
+  toggleChapters: () => void;
+  toggleSceneMarkers: () => void;
+  /** Add or replace the transition between an ordered clip pair (fromClipId, toClipId). */
+  upsertTransition: (transition: import('../types/timeline.types').Transition) => void;
+  /** Remove the transition between a clip pair. */
+  removeTransition: (fromClipId: string, toClipId: string) => void;
+  /** Create a transition by overlapping two same-row clips and storing the type. */
+  createTransitionBetween: (
+    fromId: string,
+    toId: string,
+    type?: import('../types/timeline.types').TransitionType,
+    durationSeconds?: number,
+  ) => void;
+  /** Enable/disable the match-cut ghost overlay (null to clear). */
+  setMatchCut: (
+    matchCut: import('../types/timeline.types').TimelineState['matchCut'],
+  ) => void;
   toggleSplitMode: () => void;
   setSplitMode: (active: boolean) => void;
 
@@ -75,6 +92,8 @@ export const createTimelineSlice: StateCreator<
     selectedTrackIds: [],
     playheadVisible: true,
     snapEnabled: true,
+    showChapters: true,
+    showSceneMarkers: true,
     isSplitModeActive: false,
     visibleTrackRows: ['video', 'audio', 'subtitle', 'text', 'image'],
   },
@@ -168,6 +187,76 @@ export const createTimelineSlice: StateCreator<
         snapEnabled: !state.timeline.snapEnabled,
       },
     })),
+
+  toggleChapters: () =>
+    set((state) => ({
+      timeline: {
+        ...state.timeline,
+        showChapters: !state.timeline.showChapters,
+      },
+    })),
+
+  toggleSceneMarkers: () =>
+    set((state) => ({
+      timeline: {
+        ...state.timeline,
+        showSceneMarkers: state.timeline.showSceneMarkers === false,
+      },
+    })),
+
+  upsertTransition: (transition) =>
+    set((state) => {
+      const existing = state.timeline.transitions ?? [];
+      const filtered = existing.filter(
+        (t) =>
+          !(t.fromClipId === transition.fromClipId && t.toClipId === transition.toClipId),
+      );
+      return {
+        timeline: { ...state.timeline, transitions: [...filtered, transition] },
+      };
+    }),
+
+  removeTransition: (fromClipId, toClipId) =>
+    set((state) => ({
+      timeline: {
+        ...state.timeline,
+        transitions: (state.timeline.transitions ?? []).filter(
+          (t) => !(t.fromClipId === fromClipId && t.toClipId === toClipId),
+        ),
+      },
+    })),
+
+  setMatchCut: (matchCut) =>
+    set((state) => ({
+      timeline: { ...state.timeline, matchCut: matchCut ?? null },
+    })),
+
+  createTransitionBetween: (fromId, toId, type = 'dissolve', durationSeconds = 1.5) => {
+    const state = get() as any;
+    const a = state.tracks.find((t: VideoTrack) => t.id === fromId);
+    const b = state.tracks.find((t: VideoTrack) => t.id === toId);
+    if (!a || !b) return;
+    if ((a.trackRowIndex ?? 0) !== (b.trackRowIndex ?? 0)) return;
+    const earlier = a.startFrame <= b.startFrame ? a : b;
+    const later = a.startFrame <= b.startFrame ? b : a;
+    const fps = state.timeline?.fps ?? 30;
+    // Non-destructive: the clips do NOT move. Clamp the duration so the fade window fits
+    // inside the outgoing clip and the incoming clip can supply a pre-roll handle.
+    const earlierDur = earlier.endFrame - earlier.startFrame;
+    const laterDur = later.endFrame - later.startFrame;
+    const durFrames = Math.max(
+      2,
+      Math.min(Math.round((durationSeconds ?? 1.5) * fps), earlierDur - 1, laterDur - 1),
+    );
+    (get() as any).upsertTransition({
+      id: `tr_${earlier.id}_${later.id}`,
+      fromClipId: earlier.id,
+      toClipId: later.id,
+      type,
+      durationFrames: durFrames,
+      params: {},
+    });
+  },
 
   toggleSplitMode: () =>
     set((state) => ({

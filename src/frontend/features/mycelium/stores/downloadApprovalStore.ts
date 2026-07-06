@@ -8,6 +8,10 @@ export interface PendingDownload {
   fileType: 'video' | 'audio' | 'image';
   sourceUrl: string;
   title?: string;
+  /** Source chapters (e.g. YouTube) captured at download — carried onto the media item. */
+  chapters?: Array<{ start: number; title: string }>;
+  /** Provenance recorded at download time. */
+  origin?: string;
 }
 
 interface DownloadApprovalState {
@@ -65,6 +69,8 @@ async function importFileIntoLibrary(item: PendingDownload): Promise<void> {
     mimeType,
     metadata,
     spriteSheetDisabled: duration > 300,
+    ...(item.chapters?.length ? { chapters: item.chapters } : {}),
+    ...(item.origin ? { origin: item.origin as any } : {}),
   });
 
   if (item.fileType === 'video' && duration <= 300) {

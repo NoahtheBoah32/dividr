@@ -29,6 +29,8 @@ export const createUtilitySlice: StateCreator<
         selectedTrackIds: [],
         playheadVisible: true,
         snapEnabled: true,
+        showChapters: true,
+        showSceneMarkers: true,
         isSplitModeActive: false,
         inPoint: undefined,
         outPoint: undefined,

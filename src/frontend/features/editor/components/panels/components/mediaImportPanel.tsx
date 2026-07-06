@@ -18,14 +18,9 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/frontend/components/ui/context-menu';
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/frontend/components/ui/tabs';
 import { cn } from '@/frontend/utils/utils';
 import {
+  ChevronLeft,
   Clock,
   ClosedCaption,
   File,
@@ -69,6 +64,7 @@ interface MediaItem {
   duration?: number;
   isOnTimeline?: boolean;
   trackId?: string;
+  folder?: string;
   isGeneratingSprites?: boolean;
   isGeneratingWaveform?: boolean;
   isGeneratingSubtitles?: boolean;
@@ -103,9 +99,10 @@ const formatDuration = (seconds: number): string => {
 };
 
 const getFileIcon = (type: string, fileName?: string) => {
-  if (type.startsWith('video/')) return <Video className="size-6 text-black" />;
-  if (type.startsWith('audio/')) return <Music className="size-6 text-black" />;
-  if (type.startsWith('image/')) return <Image className="size-6 text-black" />;
+  const t = type || '';
+  if (t.startsWith('video/')) return <Video className="size-6 text-black" />;
+  if (t.startsWith('audio/')) return <Music className="size-6 text-black" />;
+  if (t.startsWith('image/')) return <Image className="size-6 text-black" />;
   if (fileName && isSubtitleFile(fileName)) {
     return <ClosedCaption className="size-6 text-black" />;
   }
@@ -113,8 +110,8 @@ const getFileIcon = (type: string, fileName?: string) => {
 };
 
 const MediaCover: React.FC<{ file: MediaItem }> = React.memo(({ file }) => {
-  const isVideo = file.type.startsWith('video/');
-  const isImage = file.type.startsWith('image/');
+  const isVideo = (file.type || '').startsWith('video/');
+  const isImage = (file.type || '').startsWith('image/');
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
@@ -390,8 +387,8 @@ const FileItem: React.FC<FileItemProps> = React.memo(
             <PlusCircle className="h-4 w-4" />
             <span>Add to Timeline</span>
           </ContextMenuItem>
-          {(file.type.startsWith('video/') ||
-            file.type.startsWith('audio/')) && (
+          {((file.type || '').startsWith('video/') ||
+            (file.type || '').startsWith('audio/')) && (
             <ContextMenuItem
               disabled={file.isGeneratingSubtitles || isAnyTranscribing}
               onClick={() => onGenerateKaraokeSubtitles(file.id)}
@@ -436,20 +433,77 @@ const FileItem: React.FC<FileItemProps> = React.memo(
   },
 );
 
-const getTabLabel = (tabType: string, count: number) => {
-  switch (tabType) {
-    case 'videos':
-      return `Video Files (${count})`;
-    case 'audio':
-      return `Audio Files (${count})`;
-    case 'images':
-      return `Image Files (${count})`;
-    case 'subtitles':
-      return `Subtitle Files (${count})`;
-    default:
-      return `Uploaded Files (${count})`;
-  }
+// Canonical folder order (mirrors organize_media.py). Known folders first, then any
+// unknown names alphabetically, with Miscellaneous always pinned last.
+const MEDIA_FOLDER_ORDER = [
+  'Camera Footage',
+  'Screen Recordings',
+  'Generated',
+  'Stock Footage',
+  'B-Roll',
+  'Stills',
+  'Audio',
+  'Subtitles',
+  'Miscellaneous',
+];
+
+const orderMediaFolders = (names: string[]): string[] => {
+  const set = new Set(names);
+  const known = MEDIA_FOLDER_ORDER.filter(
+    (f) => f !== 'Miscellaneous' && set.has(f),
+  );
+  const unknown = names
+    .filter((n) => !MEDIA_FOLDER_ORDER.includes(n))
+    .sort((a, b) => a.localeCompare(b));
+  const misc = set.has('Miscellaneous') ? ['Miscellaneous'] : [];
+  return [...known, ...unknown, ...misc];
 };
+
+// Manila folder glyph — matches the reference media panel's folder look.
+const FolderGlyph: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 48 40"
+    className={className}
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M3 9.5A3.5 3.5 0 0 1 6.5 6h9.7a3 3 0 0 1 2.4 1.2l1.5 2A3 3 0 0 0 22.5 10H41.5A3.5 3.5 0 0 1 45 13.5V15H3V9.5Z"
+      fill="#C7B393"
+    />
+    <path
+      d="M3 14h42v18.5A3.5 3.5 0 0 1 41.5 36h-35A3.5 3.5 0 0 1 3 32.5V14Z"
+      fill="#E3D6BC"
+    />
+    <path d="M3 14h42v2.2H3z" fill="#D6C7A6" />
+  </svg>
+);
+
+// A folder card in the library grid — same footprint as a FileItem so folders and
+// loose clips align. The count sits in the top-right corner, like the reference.
+const FolderTile: React.FC<{
+  name: string;
+  count: number;
+  onOpen: () => void;
+}> = React.memo(({ name, count, onOpen }) => (
+  <div className="flex flex-col space-y-2">
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group relative h-[98px] w-full rounded-md overflow-hidden bg-muted/40 hover:bg-muted/70 transition-all duration-200 flex items-center justify-center cursor-pointer"
+      title={`${name} — ${count} item${count === 1 ? '' : 's'}`}
+    >
+      <FolderGlyph className="w-14 h-14 drop-shadow-sm" />
+      <span className="absolute top-2 right-2.5 text-[11px] font-semibold text-white/90 tabular-nums">
+        {count}
+      </span>
+    </button>
+    <div className="px-1">
+      <p className="text-xs font-medium text-foreground truncate">{name}</p>
+    </div>
+  </div>
+));
 
 export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
   const importMediaFromDialog = useVideoEditorStore(
@@ -1069,38 +1123,20 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     [dragActive, importMediaFromDialog, handleFileInputChange],
   );
 
-  const fileListContent = (files: MediaItem[], tabType: string) => (
-    <div
-      className="w-full h-full overflow-y-auto relative"
-      onDragEnter={handleDragIn}
-      onDragLeave={handleDragOut}
-      onDragOver={handleDrag}
-      onDrop={handleDrop}
-    >
-      <div className="w-full">
-        <h4 className="text-xs font-semibold text-muted-foreground mb-3">
-          {getTabLabel(tabType, files.length)}
-        </h4>
-        <div className="grid grid-cols-2 gap-3">
-          {files.map((file) => (
-            <FileItem
-              key={file.id}
-              file={file}
-              isAnyTranscribing={isAnyTranscribing}
-              onAddToTimeline={handleAddToTimeline}
-              onMediaDragStart={handleMediaDragStart}
-              onRemove={removeFile}
-              onGenerateKaraokeSubtitles={handleGenerateKaraokeSubtitles}
-            />
-          ))}
-        </div>
-      </div>
-      {dragActive && (
-        <div className="absolute inset-0 border-2 border-dashed flex items-center justify-center border-secondary bg-secondary/10 rounded-lg pointer-events-none z-10">
-          <p className="text-sm text-muted-foreground">Drop files to import</p>
-        </div>
-      )}
-    </div>
+  // Which folder is drilled into (null = top level). Reset to root when the folder
+  // no longer exists (e.g. after an undo) is handled at render time.
+  const [openFolder, setOpenFolder] = useState<string | null>(null);
+
+  const renderMediaCard = (file: MediaItem) => (
+    <FileItem
+      key={file.id}
+      file={file}
+      isAnyTranscribing={isAnyTranscribing}
+      onAddToTimeline={handleAddToTimeline}
+      onMediaDragStart={handleMediaDragStart}
+      onRemove={removeFile}
+      onGenerateKaraokeSubtitles={handleGenerateKaraokeSubtitles}
+    />
   );
 
   const sourceToTrackMap = useMemo(() => {
@@ -1143,6 +1179,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
         duration: item.duration,
         isOnTimeline: isUsed,
         trackId: trackId,
+        folder: item.folder,
         isGeneratingSprites:
           item.type === 'video' ? isGeneratingSpriteSheet(item.id) : false,
         isGeneratingWaveform:
@@ -1175,44 +1212,83 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
     transcriptionProgress,
   ]);
 
-  const getFilteredFiles = useCallback(
-    (type: 'all' | 'videos' | 'audio' | 'images' | 'subtitles') => {
-      return getMediaItems.filter((item) => {
-        switch (type) {
-          case 'videos':
-            return item.type.startsWith('video/');
-          case 'audio':
-            return item.type.startsWith('audio/');
-          case 'images':
-            return item.type.startsWith('image/');
-          case 'subtitles':
-            return item.type.startsWith('text/') || isSubtitleFile(item.name);
-          default:
-            return true;
-        }
-      });
-    },
-    [getMediaItems],
-  );
+  // Group the library into folders (a folder is just items sharing a `folder` name)
+  // plus loose items. Folders render first, then loose clips, in one grid — matching
+  // the reference panel. Total count includes everything (foldered + loose).
+  const libraryItems = getMediaItems;
+  const folderCounts: Record<string, number> = {};
+  for (const item of libraryItems) {
+    if (item.folder) {
+      folderCounts[item.folder] = (folderCounts[item.folder] || 0) + 1;
+    }
+  }
+  const folderNames = orderMediaFolders(Object.keys(folderCounts));
+  const looseItems = libraryItems.filter((item) => !item.folder);
+  // Guard against a stale drill-in (folder emptied by undo/delete).
+  const effectiveOpen =
+    openFolder && folderCounts[openFolder] ? openFolder : null;
 
-  const getTabContent = useCallback(
-    (type: 'all' | 'videos' | 'audio' | 'images' | 'subtitles') => {
-      const filteredFiles = getFilteredFiles(type);
-      return filteredFiles.length > 0
-        ? fileListContent(filteredFiles, type)
-        : uploadArea;
-    },
-    [
-      getMediaItems,
-      getFilteredFiles,
-      uploadArea,
-      dragActive,
-      handleDragIn,
-      handleDragOut,
-      handleDrag,
-      handleDrop,
-    ],
-  );
+  const libraryView =
+    libraryItems.length === 0 ? (
+      uploadArea
+    ) : (
+      <div
+        className="w-full h-full overflow-y-auto relative"
+        onDragEnter={handleDragIn}
+        onDragLeave={handleDragOut}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+      >
+        {effectiveOpen ? (
+          <div className="w-full">
+            <button
+              type="button"
+              onClick={() => setOpenFolder(null)}
+              className="flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground mb-3 transition-colors"
+            >
+              <ChevronLeft className="size-3.5" />
+              {effectiveOpen}
+              <span className="font-normal text-muted-foreground/60">
+                · {folderCounts[effectiveOpen]}
+              </span>
+            </button>
+            <div className="grid grid-cols-2 gap-3">
+              {libraryItems
+                .filter((item) => item.folder === effectiveOpen)
+                .map(renderMediaCard)}
+            </div>
+          </div>
+        ) : (
+          <div className="w-full">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-xs font-semibold text-muted-foreground">
+                Library
+              </h4>
+              <span className="text-xs text-muted-foreground/70">
+                {libraryItems.length} item
+                {libraryItems.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {folderNames.map((name) => (
+                <FolderTile
+                  key={`folder:${name}`}
+                  name={name}
+                  count={folderCounts[name]}
+                  onOpen={() => setOpenFolder(name)}
+                />
+              ))}
+              {looseItems.map(renderMediaCard)}
+            </div>
+          </div>
+        )}
+        {dragActive && (
+          <div className="absolute inset-0 border-2 border-dashed flex items-center justify-center border-secondary bg-secondary/10 rounded-lg pointer-events-none z-10">
+            <p className="text-sm text-muted-foreground">Drop files to import</p>
+          </div>
+        )}
+      </div>
+    );
 
   return (
     <>
@@ -1241,44 +1317,7 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
             <PlusCircle className="size-4" />
           </Button>
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-            <Tabs
-              defaultValue="all"
-              className="flex-1 min-h-0 gap-4 flex flex-col"
-            >
-              <TabsList variant="text" className="w-full justify-start">
-                <TabsTrigger value="all" variant="text">
-                  All
-                </TabsTrigger>
-                <TabsTrigger value="videos" variant="text">
-                  Videos
-                </TabsTrigger>
-                <TabsTrigger value="audio" variant="text">
-                  Audio
-                </TabsTrigger>
-                <TabsTrigger value="images" variant="text">
-                  Images
-                </TabsTrigger>
-                <TabsTrigger value="subtitles" variant="text">
-                  Subtitles
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="all" className="flex-1 min-h-0">
-                {getTabContent('all')}
-              </TabsContent>
-              <TabsContent value="videos" className="flex-1 min-h-0">
-                {getTabContent('videos')}
-              </TabsContent>
-              <TabsContent value="audio" className="flex-1 min-h-0">
-                {getTabContent('audio')}
-              </TabsContent>
-              <TabsContent value="images" className="flex-1 min-h-0">
-                {getTabContent('images')}
-              </TabsContent>
-              <TabsContent value="subtitles" className="flex-1 min-h-0">
-                {getTabContent('subtitles')}
-              </TabsContent>
-            </Tabs>
+            {libraryView}
           </div>
         </div>
       </BasePanel>

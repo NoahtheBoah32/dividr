@@ -330,11 +330,12 @@ export const VideoTransformBoundary: React.FC<VideoTransformBoundaryProps> = ({
         return;
       }
 
-      // CRITICAL: Check if another element should receive this click
-      // This enables proper spatial hit-testing - a higher z-index element
-      // visible at this position should be selected instead
-      // NOTE: This only applies to content area clicks, not handles (checked above)
-      if (getTopElementAtPoint) {
+      // Check if another element should receive this click — but ONLY when this
+      // element isn't already selected. An already-selected clip keeps drag priority
+      // so you can move it even when a higher-z element (e.g. a foreground subject)
+      // overlaps it. Without the !isSelected guard, clicking a selected background
+      // under your face would re-select the face instead of dragging the background.
+      if (!isSelected && getTopElementAtPoint) {
         const topElementId = getTopElementAtPoint(e.clientX, e.clientY);
         if (topElementId && topElementId !== track.id) {
           // Another element is above this one at the cursor position

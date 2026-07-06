@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { projectService } from '@/backend/services/projectService';
+import { versionHistoryService } from '@/backend/services/versionHistoryService';
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
 import { StateCreator } from 'zustand';
 import { AUTO_SAVE_CONFIG } from '../utils/constants';
@@ -95,6 +96,12 @@ export interface ProjectSlice {
   setCurrentProjectId: (projectId: string | null) => void;
   loadProjectData: (projectId: string) => Promise<void>;
   saveProjectData: () => Promise<void>;
+  /** List version snapshots for the current project (newest first). */
+  listProjectVersions: () => Promise<
+    import('@/backend/services/versionHistoryService').ProjectVersion[]
+  >;
+  /** Restore the editor state from a version snapshot (same-session). */
+  restoreProjectVersion: (versionId: string) => Promise<void>;
   setAutoSave: (enabled: boolean) => void;
   markUnsavedChanges: () => void;
   clearUnsavedChanges: () => void;
@@ -380,6 +387,15 @@ export const createProjectSlice: StateCreator<
       // Save to IndexedDB
       await projectService.updateProject(updatedProject);
 
+      // Record a throttled version snapshot (isolated DB, fire-and-forget — never blocks save).
+      versionHistoryService
+        .recordSnapshot(
+          state.currentProjectId,
+          updatedProject.videoEditor,
+          updatedProject.metadata?.title ?? 'Auto-saved',
+        )
+        .catch(() => {});
+
       // Update local state
       set({
         hasUnsavedChanges: false,
@@ -397,6 +413,45 @@ export const createProjectSlice: StateCreator<
       console.error('Failed to save project data:', error);
       set({ isSaving: false });
       throw error;
+    }
+  },
+
+  listProjectVersions: async () => {
+    const state = get() as any;
+    if (!state.currentProjectId) return [];
+    return versionHistoryService.listVersions(state.currentProjectId);
+  },
+
+  restoreProjectVersion: async (versionId: string) => {
+    const version = await versionHistoryService.getVersion(versionId);
+    if (!version) return;
+    const ve = version.videoEditor as any;
+    if (!ve) return;
+    set((state: any) => ({
+      ...state,
+      ...(Array.isArray(ve.tracks) ? { tracks: ve.tracks } : {}),
+      ...(Array.isArray(ve.mediaLibrary) ? { mediaLibrary: ve.mediaLibrary } : {}),
+      timeline: { ...state.timeline, ...(ve.timeline ?? {}) },
+      preview: { ...state.preview, ...(ve.preview ?? {}) },
+      textStyle: ve.textStyle
+        ? { ...state.textStyle, ...ve.textStyle }
+        : state.textStyle,
+      playback: {
+        ...state.playback,
+        isPlaying: false,
+        isDraggingTrack: false,
+        dragGhost: null,
+        magneticSnapFrame: null,
+      },
+      hasUnsavedChanges: true,
+      undoStack: [],
+      redoStack: [],
+    }));
+    // Persist the restored state so it survives reload.
+    try {
+      await (get() as any).saveProjectData();
+    } catch {
+      /* non-fatal */
     }
   },
 

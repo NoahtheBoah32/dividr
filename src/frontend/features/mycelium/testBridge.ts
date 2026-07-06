@@ -5,6 +5,7 @@
  */
 
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
+import { usePanelStore } from '@/frontend/features/editor/stores/PanelStore';
 import { operationEngine } from './operationEngine';
 import type { Op } from './types';
 
@@ -19,6 +20,8 @@ interface DividrTestBridge {
   waitForQueueDrained(): Promise<void>;
   /** Force a store re-render by bumping a no-op field. */
   ping(): string;
+  /** Open a dock panel by type (e.g. 'friday' to mount the EDITH chat panel). */
+  openPanel(panelType: string): void;
 }
 
 function initTestBridge() {
@@ -71,6 +74,10 @@ function initTestBridge() {
 
     ping() {
       return 'pong';
+    },
+
+    openPanel(panelType) {
+      (usePanelStore as any).getState().showPanel(panelType);
     },
   };
 

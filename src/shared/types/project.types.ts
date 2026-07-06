@@ -122,7 +122,10 @@ export const createDefaultProject = (
         selectedTrackIds: [],
         playheadVisible: true,
         snapEnabled: true, // Add this property
+        showChapters: true,
+        showSceneMarkers: true,
         isSplitModeActive: false, // Add this property
+        visibleTrackRows: ['video', 'audio', 'subtitle', 'text', 'image'],
       },
       preview: {
         canvasWidth: 800,

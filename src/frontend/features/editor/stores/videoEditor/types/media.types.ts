@@ -1,8 +1,26 @@
+/** A named timestamp within a source (e.g. YouTube chapter). `start` is seconds into the source. */
+export interface Chapter {
+  start: number;
+  title: string;
+}
+
 export interface MediaLibraryItem {
   id: string;
   name: string;
   type: 'video' | 'audio' | 'image' | 'subtitle';
   source: string;
+  /** Where this media came from — recorded at import, no analysis. */
+  origin?: 'youtube' | 'url' | 'user' | 'stock' | 'generated';
+  /**
+   * Media-library folder this item lives in (e.g. "Camera Footage", "Generated").
+   * Set by EDITH's "organize my media" pass; undefined = loose at the top level.
+   * A folder is just the set of items sharing this name — there is no separate
+   * folder record, so this rides inside `mediaLibrary` and is captured by undo
+   * and persisted with the project for free. Empty folders cannot exist by design.
+   */
+  folder?: string;
+  /** Source chapters (e.g. from YouTube). Present only when the source actually has them. */
+  chapters?: Chapter[];
   previewUrl?: string;
   originalFile?: File;
   tempFilePath?: string;

@@ -11,6 +11,19 @@ import { runQACheck, type QAClip, type QAReferenceInfo } from './qaChecker';
 import { addLesson, loadLessons, formatLessonsForPrompt, inferCategory } from './edithLessons';
 import { screenshotHtml, reviewGraphicDesign } from './graphicPreview';
 
+// Probe a media file's duration in seconds via ffprobe. Returns 0 on any failure.
+// (scanVideoFrames referenced this without it being defined → ReferenceError crash.)
+function getAudioDurationSec(filePath: string): Promise<number> {
+  let ffprobe = 'ffprobe';
+  try {
+    const s = require('ffprobe-static');
+    if (s?.path) ffprobe = s.path;
+  } catch {}
+  return execAsync(`"${ffprobe}" -v error -show_entries format=duration -of csv=p=0 "${filePath}"`)
+    .then((r) => parseFloat(String(r.stdout).trim()) || 0)
+    .catch(() => 0);
+}
+
 function formatTimestamp(seconds: number): string {
   const m = String(Math.floor(seconds / 60)).padStart(2, '0');
   const s = String(Math.floor(seconds % 60)).padStart(2, '0');
@@ -68,6 +81,7 @@ export interface TimelineClip {
   volume?: number;
   muted?: boolean;
   letterboxBlur?: boolean;
+  backgroundRemoved?: boolean; // true if this clip's background was already cut out
   captionText?: string; // for subtitle tracks
 }
 
@@ -307,6 +321,7 @@ function buildTimelineSection(snapshot?: TimelineSnapshot): string {
       if (c.muted) line += ' muted';
       if (c.volume !== undefined) line += ` vol:${c.volume}dB`;
       if (c.letterboxBlur) line += ' letterbox';
+      if (c.backgroundRemoved) line += ' bg-removed';
       ctx += line + '\n';
     }
   }
@@ -564,12 +579,11 @@ export async function spawnEdith(
 
     const naturalLines = edithLinesThisRun.filter((l) => !l.startsWith('PLAN:') && !l.startsWith('OP:'));
     const spokenText = naturalLines.join(' ').slice(0, 200);
-    const opSummary = opsThisRun.length
-      ? `[ops: ${[...new Set(opsThisRun)].join(', ')}]`
-      : '[no ops]';
     session.conversationHistory.splice(historyInsertIdx, session.conversationHistory.length - historyInsertIdx, {
       role: 'edith',
-      text: `${spokenText} ${opSummary}`.trim(),
+      // EDITH's own words only. (Op-tracking like "[ops: findMoment]" used to be appended here, but it
+      // leaked into the user-visible chat; the timeline state + her words already convey what she did.)
+      text: spokenText,
     });
     if (code !== 0 && code !== null) {
       const errLines = (stderrBuf.trim() || stdoutBuf.trim())
@@ -1047,7 +1061,10 @@ export function registerMyceliumIPC(
 
       const rawBuf = fs.readFileSync(tmpRaw);
       const sampleRate = 22050;
-      const samples = new Int16Array(rawBuf.buffer, rawBuf.byteOffset, rawBuf.length / 2);
+      // Force a fresh, 2-byte-aligned buffer: readFileSync can return a pooled slice
+      // with an odd byteOffset, which makes the Int16Array view throw a RangeError.
+      const aligned = Buffer.from(rawBuf);
+      const samples = new Int16Array(aligned.buffer, aligned.byteOffset, Math.floor(aligned.length / 2));
 
       // Short-time energy: 10ms window, 5ms hop
       const windowSamples = Math.floor(sampleRate * 0.010);
@@ -1136,6 +1153,79 @@ export function registerMyceliumIPC(
         } catch {
           resolve({ success: false, error: err.slice(-400) || out.slice(-300) || `exit ${code}` });
         }
+      });
+      proc.on('error', (e) => resolve({ success: false, error: e.message }));
+    });
+  });
+
+  // Reference-based color grading via color-matcher + K-Means 3D LUT
+  ipcMain.handle('grade:reference', async (_event, payload: {
+    targetPath: string;
+    referencePath: string;
+    method?: string;
+    refTimeSec?: number;
+    nColors?: number;
+  }) => {
+    const { targetPath, referencePath, method = 'hm', refTimeSec, nColors = 8 } = payload;
+    if (!fs.existsSync(targetPath)) return { success: false, error: `Target not found: ${targetPath}` };
+    if (!fs.existsSync(referencePath)) return { success: false, error: `Reference not found: ${referencePath}` };
+
+    const isWin = process.platform === 'win32';
+    const venvPython = path.join(
+      app.getAppPath(), 'src', 'backend', 'python', 'venv',
+      isWin ? 'Scripts\\python.exe' : 'bin/python',
+    );
+    const pythonBin = fs.existsSync(venvPython) ? venvPython : (isWin ? 'python' : 'python3');
+    const scriptPath = path.join(app.getAppPath(), 'src', 'backend', 'python', 'scripts', 'color_grade.py');
+    if (!fs.existsSync(scriptPath)) return { success: false, error: 'color_grade.py not found' };
+
+    const args = JSON.stringify({ targetPath, referencePath, method, refTimeSec, nColors });
+
+    return new Promise((resolve) => {
+      let out = '';
+      let err = '';
+      const proc = spawn(pythonBin, [scriptPath, args], { shell: false });
+      proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+      proc.stderr?.on('data', (d: Buffer) => { err += d.toString(); });
+      proc.on('close', () => {
+        const jsonLine = out.split('\n').find(l => l.trim().startsWith('{'));
+        try { resolve(JSON.parse(jsonLine ?? out.trim())); }
+        catch { resolve({ success: false, error: err.slice(-400) || out.slice(-200) }); }
+      });
+      proc.on('error', (e) => resolve({ success: false, error: e.message }));
+    });
+  });
+
+  // AI background removal — calls remove_background.py, returns processed file path
+  ipcMain.handle('media:removeBackground', async (_event, payload: {
+    filePath: string;
+  }): Promise<{ success: boolean; filePath?: string; error?: string }> => {
+    const { filePath } = payload;
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { success: false, error: `File not found: ${filePath}` };
+    }
+
+    const isWin = process.platform === 'win32';
+    const venvPython = path.join(
+      app.getAppPath(), 'src', 'backend', 'python', 'venv',
+      isWin ? 'Scripts\\python.exe' : 'bin/python',
+    );
+    const pythonBin = fs.existsSync(venvPython) ? venvPython : (isWin ? 'python' : 'python3');
+    const scriptPath = path.join(app.getAppPath(), 'src', 'backend', 'python', 'scripts', 'remove_background.py');
+    if (!fs.existsSync(scriptPath)) return { success: false, error: 'remove_background.py not found' };
+
+    const args = JSON.stringify({ filePath });
+
+    return new Promise((resolve) => {
+      let out = '';
+      let err = '';
+      const proc = spawn(pythonBin, [scriptPath, args], { shell: false });
+      proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+      proc.stderr?.on('data', (d: Buffer) => { err += d.toString(); });
+      proc.on('close', () => {
+        const jsonLine = out.split('\n').find(l => l.trim().startsWith('{'));
+        try { resolve(JSON.parse(jsonLine ?? out.trim())); }
+        catch { resolve({ success: false, error: err.slice(-400) || out.slice(-200) }); }
       });
       proc.on('error', (e) => resolve({ success: false, error: e.message }));
     });
