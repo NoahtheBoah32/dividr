@@ -19,6 +19,7 @@ import {
   VOICE_ISOLATION_PRESETS,
 } from '@/frontend/features/editor/preview/utils/voiceIsolationCurve';
 import { SeparationCache } from '@/frontend/features/editor/preview/services/SeparationCache';
+import { setSfxNames } from './sfxLibraryCache';
 import { DEFAULT_AGE_YEARS } from '@/frontend/features/editor/preview/utils/voiceAgeParams';
 import {
   estimateLight,
@@ -156,7 +157,12 @@ function kickStemSeparationBake(store: any, target: any): void {
 
 // SFX library cache — populated by FridayPanel on mount via scan-sfx-library IPC
 let _sfxLibrary: Array<{ name: string; path: string; durationSec: number; categories: string[] }> = [];
-export function setSfxLibraryCache(entries: typeof _sfxLibrary) { _sfxLibrary = entries; }
+export function setSfxLibraryCache(entries: typeof _sfxLibrary) {
+  _sfxLibrary = entries;
+  // Mirror the filenames into the lightweight cache the transcript asterisk-SFX
+  // trigger reads (so it can resolve *word* markers without importing storeAdapter).
+  setSfxNames(entries.map((e) => e.name));
+}
 
 // â”€â”€ GEMINI KILL SWITCH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Set to true during testing to prevent any Gemini API calls.
@@ -3154,10 +3160,12 @@ async function applyOp(op: Op): Promise<void> {
       const atTimeSec: number = (op as any).atTime ?? 0;
       const volumeDb: number = (op as any).volume ?? -3;
 
-      // Look up file in cached library (by name match)
-      const entry = _sfxLibrary.find(
-        (e) => e.name === sfxFileName || e.path === sfxFileName || e.name.includes(sfxFileName),
-      );
+      // Look up file in cached library. Prefer an EXACT name/path match so a precise
+      // filename ("pop.mp3") never resolves to a substring sibling ("bubble_pop.mp3");
+      // fall back to substring for EDITH's looser partial names.
+      const entry =
+        _sfxLibrary.find((e) => e.name === sfxFileName || e.path === sfxFileName) ??
+        _sfxLibrary.find((e) => e.name.includes(sfxFileName));
       if (!entry) throw new Error(`placeSFX: “${sfxFileName}” not found in SFX library`);
 
       const fps: number = (store as any).fps ?? (store as any).timeline?.fps ?? 30;
@@ -3195,6 +3203,7 @@ async function applyOp(op: Op): Promise<void> {
         store.generateWaveformForMedia(mediaId).catch(() => {});
       }
 
+      const sfxColor = (op as any).color as string | undefined;
       const placedSfxId = await store.addTrack({
         type: 'audio' as const,
         name: trackName,
@@ -3209,11 +3218,16 @@ async function applyOp(op: Op): Promise<void> {
         muted: false,
         visible: true,
         sourceStartTime: audioStart,
-      });
+        ...(sfxColor ? { color: sfxColor } : {}),
+      } as any);
       // addTrack treats startFrame === 0 as "append after the last clip" — pin to the
-      // requested time so an SFX meant for 0 lands at 0.
-      if (placedSfxId && atFrame === 0) {
-        store.updateTrack(placedSfxId, { startFrame: 0, endFrame: durationFrames } as any);
+      // requested time so an SFX meant for 0 lands at 0. Also re-assert the color, since
+      // addTrack auto-assigns one from the palette that would override our request.
+      if (placedSfxId) {
+        const patch: any = {};
+        if (atFrame === 0) { patch.startFrame = 0; patch.endFrame = durationFrames; }
+        if (sfxColor) patch.color = sfxColor;
+        if (Object.keys(patch).length) store.updateTrack(placedSfxId, patch);
       }
       break;
     }
@@ -3376,6 +3390,9 @@ export function initStoreAdapter() {
     stopEdithEditing();
   });
 }
+
+/** Test-only handle to the op applier so the SFX-placement suite can drive real ops. */
+export { applyOp as applyOpForTest };
 
 
 

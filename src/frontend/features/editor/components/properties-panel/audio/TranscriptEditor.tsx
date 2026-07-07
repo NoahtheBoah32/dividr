@@ -41,6 +41,9 @@ import {
   matchPhraseInWords,
 } from './transcriptEditUtils';
 import { pullPhrase, movePhrase } from './transcriptSurgery';
+import { operationEngine } from '../../../../mycelium/operationEngine';
+import { getSfxNames } from '../../../../mycelium/sfxLibraryCache';
+import { sfxOpForWord, SFX_MARKER_YELLOW } from './sfxTriggerUtils';
 import {
   applyDeletion,
   type EditWord,
@@ -246,6 +249,11 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
 
   const lines = useMemo(() => groupIntoLines(transcription), [transcription]);
   const allWords = useMemo(() => flattenWords(transcription), [transcription]);
+
+  // Live coverage ref so the asterisk-SFX commit can map a word → timeline frame
+  // without threading coverageClips through the stable input handlers.
+  const coverageClipsRef = useRef(coverageClips);
+  coverageClipsRef.current = coverageClips;
 
   const shownText = useCallback(
     (w: FlatWord) => edits[w.id] ?? w.text.trim(),
@@ -508,7 +516,108 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     ],
   );
 
-  // Native beforeinput: block insertions, intercept deletions.
+  // ---- Asterisk SFX markers --------------------------------------------------
+  // Typing a COMPLETE *word* that names a real library SFX drops that sound onto the
+  // timeline (overlay, green clip) at exactly this word's frame and turns the marker
+  // bright yellow. *whoosh (unclosed) or *divebomb* (not a real SFX) do nothing. Only
+  // asterisk markers are accepted — word typing stays blocked, so delete-only is intact.
+  const [sfxMarker, setSfxMarker] = useState<{ anchorWordId: string; text: string } | null>(null);
+  const sfxMarkerRef = useRef(sfxMarker);
+  sfxMarkerRef.current = sfxMarker;
+  const [sfxMsg, setSfxMsg] = useState<string | null>(null);
+  const sfxSeqRef = useRef(0);
+  const flashSfx = useCallback((m: string) => {
+    setSfxMsg(m);
+    window.setTimeout(() => setSfxMsg((c) => (c === m ? null : c)), 2400);
+  }, []);
+
+  const commitSfxMarker = useCallback(
+    (anchorWordId: string, word: string) => {
+      const names = getSfxNames();
+      if (!names.length) {
+        flashSfx('SFX library is still loading — try again in a moment.');
+        return;
+      }
+      const f = modelRef.current.fps;
+      const anchor = modelRef.current.words.find((w) => w.id === anchorWordId);
+      const range = anchor ? wordToTimelineRange(anchor, coverageClipsRef.current, f) : null;
+      const st = useVideoEditorStore.getState() as any;
+      const playhead = st.currentFrame ?? st.timeline?.currentFrame ?? 0;
+      const atFrame = range ? range.toFrame : playhead; // end of the word the marker follows
+      const op = sfxOpForWord(word, atFrame, f, names);
+      if (!op) {
+        flashSfx(`“${word}” isn't a sound effect in the library.`);
+        return;
+      }
+      operationEngine.enqueue(op as any);
+      const markers = [...(((track as any).sfxMarkers as any[]) ?? [])];
+      sfxSeqRef.current += 1;
+      updateTrack(track.id, {
+        sfxMarkers: [
+          ...markers,
+          { id: `sfx_${anchorWordId}_${sfxSeqRef.current}`, afterWordId: anchorWordId, word, file: op.file },
+        ],
+      } as any);
+      flashSfx(`Placed ${op.trackName} on the timeline.`);
+    },
+    [track, updateTrack, flashSfx],
+  );
+
+  // Feed typed characters into the marker state machine. Returns nothing; only
+  // asterisk-delimited markers are captured, everything else is ignored (no free typing).
+  const handleSfxInsert = useCallback(
+    (data: string) => {
+      if (!data) return;
+      let cur = sfxMarkerRef.current;
+      for (const c of data) {
+        if (!cur) {
+          if (c === '*') {
+            const sel = readSelection();
+            const anchorId =
+              sel?.focus.wordId ??
+              sel?.anchor.wordId ??
+              modelRef.current.words.find((w) =>
+                isWordPresent(w, coverageClipsRef.current, modelRef.current.fps),
+              )?.id ??
+              modelRef.current.words[0]?.id;
+            if (!anchorId) return;
+            cur = { anchorWordId: anchorId, text: '*' };
+          }
+          // else: a plain character with no marker open → ignore (delete-only for words)
+        } else if (c === '*') {
+          const word = cur.text.slice(1).trim(); // strip the opening asterisk
+          const anchorId = cur.anchorWordId;
+          cur = null;
+          if (word) commitSfxMarker(anchorId, word);
+        } else if (c === '\n') {
+          cur = null;
+        } else {
+          cur = { anchorWordId: cur.anchorWordId, text: cur.text + c };
+        }
+      }
+      sfxMarkerRef.current = cur;
+      setSfxMarker(cur);
+    },
+    [readSelection, commitSfxMarker],
+  );
+
+  const backspaceMarker = useCallback(() => {
+    const cur = sfxMarkerRef.current;
+    if (!cur) return;
+    const nt = cur.text.slice(0, -1);
+    const next = nt.length > 0 ? { anchorWordId: cur.anchorWordId, text: nt } : null;
+    sfxMarkerRef.current = next;
+    setSfxMarker(next);
+  }, []);
+
+  const cancelMarker = useCallback(() => {
+    if (!sfxMarkerRef.current) return;
+    sfxMarkerRef.current = null;
+    setSfxMarker(null);
+  }, []);
+
+  // Native beforeinput: only asterisk-SFX markers are accepted as input; deletions are
+  // intercepted (marker backspace while composing, else the word ripple-delete).
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
@@ -516,17 +625,32 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       const ie = e as InputEvent;
       const t = ie.inputType || '';
       e.preventDefault(); // we own all edits; nothing is applied natively
-      if (t.startsWith('delete')) handleDelete(t);
-      // every insert* / formatting type is simply swallowed (no additions)
+      if (t.startsWith('insert')) {
+        handleSfxInsert((ie.data ?? '') as string);
+        return;
+      }
+      if (t.startsWith('delete')) {
+        if (sfxMarkerRef.current) backspaceMarker();
+        else handleDelete(t);
+        return;
+      }
+      // every other formatting type is simply swallowed
     };
     el.addEventListener('beforeinput', onBeforeInput);
     return () => el.removeEventListener('beforeinput', onBeforeInput);
-  }, [handleDelete]);
+  }, [handleDelete, handleSfxInsert, backspaceMarker]);
 
-  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Enter would insert a paragraph; block it outright.
-    if (e.key === 'Enter') e.preventDefault();
-  }, []);
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      // Enter would insert a paragraph; block it outright.
+      if (e.key === 'Enter') e.preventDefault();
+      if (e.key === 'Escape' && sfxMarkerRef.current) {
+        e.preventDefault();
+        cancelMarker();
+      }
+    },
+    [cancelMarker],
+  );
 
   const restoreAllWords = useCallback(() => {
     updateTrack(track.id, { transcriptEdits: {} } as any);
@@ -638,6 +762,14 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
   const totalWords = allWords.length;
   const deletedCount = allWords.filter((w) => isDeleted(w)).length;
 
+  // Committed asterisk-SFX markers grouped by the word they follow (bright-yellow chips).
+  const sfxByWord = new Map<string, { id: string; word: string; file: string }[]>();
+  for (const mk of (((track as any).sfxMarkers as any[]) ?? [])) {
+    const arr = sfxByWord.get(mk.afterWordId) ?? [];
+    arr.push(mk);
+    sfxByWord.set(mk.afterWordId, arr);
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -728,8 +860,13 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
 
       <p className="text-[11px] leading-relaxed text-muted-foreground/70">
         Click into the text and backspace through a whole word to cut it from the
-        video. Partial edits stay until the word is fully removed.
+        video. Partial edits stay until the word is fully removed. Type a sound effect
+        in <span className="font-mono" style={{ color: SFX_MARKER_YELLOW }}>*asterisks*</span>{' '}
+        (e.g. <span className="font-mono">*whoosh*</span>) to drop it on the timeline at that word.
       </p>
+      {sfxMsg && (
+        <p className="text-[11px]" style={{ color: SFX_MARKER_YELLOW }}>{sfxMsg}</p>
+      )}
 
       <div
         ref={editorRef}
@@ -737,7 +874,7 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         suppressContentEditableWarning
         spellCheck={false}
         onKeyDown={onKeyDown}
-        onBlur={closeGroup}
+        onBlur={() => { closeGroup(); cancelMarker(); }}
         onPaste={(e) => e.preventDefault()}
         onDrop={(e) => e.preventDefault()}
         role="textbox"
@@ -787,6 +924,27 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
                     <span contentEditable={false} className="select-none">
                       {' '}
                     </span>
+                    {(sfxByWord.get(w.id) ?? []).map((mk) => (
+                      <span
+                        key={mk.id}
+                        contentEditable={false}
+                        className="mx-0.5 inline select-none font-mono text-[13px] font-bold"
+                        style={{ color: SFX_MARKER_YELLOW, textShadow: '0 0 6px rgba(255,230,0,0.45)' }}
+                        title={`SFX placed on the timeline: ${mk.file}`}
+                      >
+                        *{mk.word}*{' '}
+                      </span>
+                    ))}
+                    {sfxMarker?.anchorWordId === w.id && (
+                      <span
+                        contentEditable={false}
+                        className="mx-0.5 inline select-none font-mono text-[13px]"
+                        style={{ color: 'rgba(255,230,0,0.65)' }}
+                        title="Finish with a closing asterisk to place the SFX"
+                      >
+                        {sfxMarker.text}
+                      </span>
+                    )}
                   </React.Fragment>
                 );
               })}

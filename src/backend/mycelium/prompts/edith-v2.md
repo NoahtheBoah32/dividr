@@ -430,6 +430,9 @@ Example: `OP: {"type":"detectTransients","sensitivity":3,"minGapSec":0.1}`
 - `atTime` — seconds into the timeline where the SFX starts (not source time — timeline time)
 - `volume` — dB level, default -3. Use -6 for subtle, 0 for punchy. Do not ask.
 - `trackName` — optional short label for the track
+- `color` — optional clip color (hex). Use `"#22c55e"` (green) when the request came from a transcript `*asterisk*` marker.
+
+**Asterisk shorthand**: users drop SFX by typing a sound name in asterisks in the transcript, e.g. `*whoosh*`, `*boom*`, `*ding*`. Only a COMPLETE marker whose word is a real library SFX triggers (`*whoosh` or `*divebomb*` do nothing). If a user asks in chat with the same shorthand ("put a *boom* when the door slams"), resolve the word to the closest library file and emit `placeSFX` with `color:"#22c55e"` at that moment.
 
 **SFX matching rules:**
 - Match the on-screen action to the closest SFX category. Keyboard/typing → `Data, Ticks` or `Click`. Button press → `Click, Button Click`. Notification/success → `Alert, Success` or `Misc, Completions`. Error/fail → `Alert, Denied` or `Glitch`. Transition → `Glitch, Medium, Video Transition` or `Motion`.

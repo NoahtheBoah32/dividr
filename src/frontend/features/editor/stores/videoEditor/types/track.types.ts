@@ -389,6 +389,12 @@ export interface VideoTrack {
   /** Mirror this clip vertically. Non-destructive. */
   flipV?: boolean;
   /**
+   * Transcript asterisk-SFX markers on this clip. Typing a complete *word* that names
+   * a real library SFX places that sound on the timeline and records a bright-yellow
+   * marker here so it persists in the transcript.
+   */
+  sfxMarkers?: { id: string; afterWordId: string; word: string; file: string }[];
+  /**
    * Source separation (stems) bake state. Powers the voiceIsolation curve.
    *
    * A one-time offline bake (MDX-Net ONNX, CPU) splits the clip into a clean

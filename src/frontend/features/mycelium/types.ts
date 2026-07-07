@@ -109,7 +109,7 @@ export type Op =
   | { type: 'clearClipHighlight'; clipId: string }
   | { type: 'snapshotVerify'; atSeconds: number; reason: string }
   | { type: 'renameProject'; title: string }
-  | { type: 'placeSFX'; file: string; atTime: number; volume?: number; trackName?: string }
+  | { type: 'placeSFX'; file: string; atTime: number; volume?: number; trackName?: string; color?: string }
   | { type: 'scanVideo'; clipName: string; description: string; intervalSec?: number; maxFrames?: number }
   | { type: 'detectScenes'; clipId?: string; clipName?: string; threshold?: number }
   | {
