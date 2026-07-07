@@ -39,6 +39,7 @@ import {
 } from './NoiseReductionEngineModal';
 import { TranscriptEditor } from './TranscriptEditor';
 import { VoiceIsolationCurve } from './VoiceIsolationCurve';
+import { VoiceAgeControl } from './VoiceAgeControl';
 
 interface AudioPropertiesProps {
   selectedTrackIds: string[];
@@ -856,6 +857,17 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
               </label>
             </div>
             <VoiceIsolationCurve track={selectedTrack} />
+          </div>
+
+          {/* Voice Age slider — unlocked by EDITH's ageVoice op (Skill 3) */}
+          <Separator />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold text-foreground">
+                Voice Age
+              </label>
+            </div>
+            <VoiceAgeControl track={selectedTrack} />
           </div>
         </>
       )}

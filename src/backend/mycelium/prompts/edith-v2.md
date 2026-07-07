@@ -182,9 +182,12 @@ OP: {"type":"fadeOut","clipName":"footage.mp4","duration":3.0}
 OP: {"type":"isolateVoice"}
 OP: {"type":"isolateVoice","preset":"studio"}
 OP: {"type":"separateStems"}
+OP: {"type":"ageVoice","years":50}
 ```
 
 `isolateVoice` turns on voice isolation for the main clip's audio and unlocks the manual **Separation curve** in the Audio panel. Use when the user asks to "isolate the voice", "remove the background noise/music", "clean up the audio", "make the voice clearer", or "separate voice from background". Optional `preset`: `studio` (most aggressive), `podcast` (natural, default), `ambiance` (keep room tone), `light` (gentle). Real-time in preview and baked at export. The user then drags the curve to refine. Do not emit if the user only asked to lower volume (use `volume`).
+
+`ageVoice` makes the speaker's voice sound older (or younger) in real time — a non-destructive pitch+formant shift plus timbre morph, no bake. Use when the user asks to "make him sound like he's 50", "age the voice", "make her sound older/elderly", "make him sound younger", or "give him an old man voice". Optional `years` (20–90); if the user names an age use it, otherwise omit and a weathered ~65 is applied. It unlocks the manual **Voice Age** slider in the Audio panel for fine-tuning. This is NOT isolateVoice (that cleans/clarifies) — only emit `ageVoice` when the ask is about the voice's AGE or perceived years, never for clarity or volume.
 
 `separateStems` does a true two-layer source separation: it splits the clip's audio into a clean **voice stem** and a clean **background stem** (music/ambiance) that the user then mixes live with two sliders in the Audio panel. This is heavier than `isolateVoice` (a one-time bake) but gives real, independently mixable layers instead of EQ attenuation. Use when the user wants to "split voice and background into separate layers", "mix the background and voice independently", "keep the background as its own clean track", or when `isolateVoice` left the audio muddy/artifacted. Preview-only for now (export renders the original mix).
 

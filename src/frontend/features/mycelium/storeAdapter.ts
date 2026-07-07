@@ -19,6 +19,7 @@ import {
   VOICE_ISOLATION_PRESETS,
 } from '@/frontend/features/editor/preview/utils/voiceIsolationCurve';
 import { SeparationCache } from '@/frontend/features/editor/preview/services/SeparationCache';
+import { DEFAULT_AGE_YEARS } from '@/frontend/features/editor/preview/utils/voiceAgeParams';
 import {
   pullPhrase,
   movePhrase,
@@ -2049,6 +2050,34 @@ async function applyOp(op: Op): Promise<void> {
       window.dispatchEvent(
         new CustomEvent('edith:status', {
           detail: { text: 'Separating voice from background…' },
+        }),
+      );
+      break;
+    }
+
+    case 'ageVoice': {
+      // V2: {"type":"ageVoice"} | {"type":"ageVoice","years":50}
+      // Non-destructive real-time voice aging (pitch+formant shift + timbre morph).
+      // No bake needed in preview — the ager stage runs live in VoiceIsolationEngine;
+      // export bakes the same params via buildFfmpegAgeChain. Same audio-track
+      // resolution as isolateVoice (the preview ager taps audio elements only).
+      const main = findMainVideoTrack(store);
+      const target =
+        (store.tracks as any[]).find(
+          (t: any) => t.type === 'audio' && t.linkedTrackId === main?.id,
+        ) ?? (store.tracks as any[]).find((t: any) => t.type === 'audio');
+      if (!target)
+        throw new Error(
+          'ageVoice: no audio track to age — this clip has no separate audio track on the timeline',
+        );
+
+      const years = Math.max(20, Math.min(90, (op as any).years ?? DEFAULT_AGE_YEARS));
+      store.updateTrack(target.id, {
+        voiceAge: { enabled: true, appliedByEdith: true, ageYears: years },
+      });
+      window.dispatchEvent(
+        new CustomEvent('edith:status', {
+          detail: { text: `Aging the voice to ~${years}…` },
         }),
       );
       break;

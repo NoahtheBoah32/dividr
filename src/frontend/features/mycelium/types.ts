@@ -137,6 +137,7 @@ export type Op =
   | { type: 'unduck'; musicClipName: string }
   | { type: 'isolateVoice'; preset?: 'studio' | 'podcast' | 'ambiance' | 'light' }
   | { type: 'separateStems' }
+  | { type: 'ageVoice'; years?: number }
   | {
       type: 'setSpeed';
       clipId: string;

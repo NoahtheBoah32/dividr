@@ -336,6 +336,20 @@ export interface VideoTrack {
     appliedByEdith?: boolean;
   };
   /**
+   * Voice Ager (Skill 3) state for this track. Non-destructive: stored as a single
+   * ageYears dial, applied live in preview via the VoiceIsolationEngine ager stage
+   * (pitch+formant shift + timbre morph) and baked at export via buildFfmpegAgeChain.
+   * Gated: the manual age slider stays locked until EDITH runs `ageVoice` once.
+   */
+  voiceAge?: {
+    /** Master on/off for the effect on this track. */
+    enabled: boolean;
+    /** The single user-facing dial, 20..90 (≈30 = neutral). */
+    ageYears: number;
+    /** Set true once EDITH has applied it — unlocks the manual slider. */
+    appliedByEdith?: boolean;
+  };
+  /**
    * Source separation (stems) bake state. Powers the voiceIsolation curve.
    *
    * A one-time offline bake (MDX-Net ONNX, CPU) splits the clip into a clean

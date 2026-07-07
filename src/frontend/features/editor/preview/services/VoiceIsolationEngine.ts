@@ -30,6 +30,23 @@ import {
   EQ_BANDS,
 } from '../utils/voiceIsolationCurve';
 import { createRnnoiseNode } from './rnnoiseDenoiser';
+import { createFormantShiftNode, type FormantShiftNode } from './voiceAgerNode';
+import type { AgeParams } from '../utils/voiceAgeParams';
+
+/**
+ * Voice Ager (Skill 3) nodes, spliced AFTER makeup: makeup -> input -> [formant]
+ * -> body -> tilt -> brilliance -> throat -> comp -> analyser. Transparent (all
+ * gains 0, ratio 1) when disabled, so toggling never causes a reconnect race.
+ */
+interface AgerNodes {
+  input: GainNode;
+  formant: FormantShiftNode | null;
+  body: BiquadFilterNode;
+  tilt: BiquadFilterNode;
+  brilliance: BiquadFilterNode;
+  throat: BiquadFilterNode;
+  comp: DynamicsCompressorNode;
+}
 
 interface SourceGraph {
   element: HTMLMediaElement;
@@ -53,6 +70,8 @@ interface SourceGraph {
   /** Makeup gain so the voice gets LOUDER, not only quieter. */
   makeup: GainNode;
   analyser: AnalyserNode;
+  /** Optional real-time aging stage, spliced makeup -> [ager] -> analyser. */
+  ager?: AgerNodes;
 }
 
 /**
@@ -97,6 +116,10 @@ class VoiceIsolationEngineImpl {
   private lastNodes = new Map<string, CurveNode[]>();
   /** Sources whose real-time RNNoise node is mid-load (avoid double-attaching). */
   private denoiserLoading = new Set<string>();
+  /** Last age params applied per source (null = disabled), so a late formant node catches up. */
+  private lastAge = new Map<string, AgeParams | null>();
+  /** Sources whose formant worklet is mid-load (avoid double-attaching). */
+  private agerLoading = new Set<string>();
 
   private ensureContext(): AudioContext | null {
     if (this.ctx) return this.ctx;
@@ -614,6 +637,148 @@ class VoiceIsolationEngineImpl {
     return this.graphs.has(sourceId) || this.stemGraphs.has(sourceId);
   }
 
+  // ── Voice Ager (Skill 3) ───────────────────────────────────────────────────
+  // A real-time pitch+formant shift + timbre morph spliced AFTER makeup, so it
+  // warps the FINAL voice. Built lazily and kept connected (transparent when off)
+  // so toggling never causes a reconnect race — the exact denoiser discipline.
+
+  private buildAgerNodes(ctx: AudioContext): AgerNodes {
+    const input = ctx.createGain();
+    const body = ctx.createBiquadFilter();
+    body.type = 'lowshelf'; body.frequency.value = 180; body.gain.value = 0;
+    const tilt = ctx.createBiquadFilter();
+    tilt.type = 'highshelf'; tilt.frequency.value = 6000; tilt.gain.value = 0;
+    const brilliance = ctx.createBiquadFilter();
+    brilliance.type = 'peaking'; brilliance.frequency.value = 8000; brilliance.Q.value = 1; brilliance.gain.value = 0;
+    const throat = ctx.createBiquadFilter();
+    throat.type = 'peaking'; throat.frequency.value = 2200; throat.Q.value = 1.4; throat.gain.value = 0;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = 0; comp.ratio.value = 1; comp.knee.value = 6; comp.attack.value = 0.006; comp.release.value = 0.25;
+    // input -> body -> tilt -> brilliance -> throat -> comp (formant splices before body)
+    input.connect(body);
+    body.connect(tilt);
+    tilt.connect(brilliance);
+    brilliance.connect(throat);
+    throat.connect(comp);
+    return { input, formant: null, body, tilt, brilliance, throat, comp };
+  }
+
+  /** Splice the ager between makeup and analyser (idempotent, never silences). */
+  private attachAger(graph: SourceGraph, ctx: AudioContext): void {
+    if (graph.ager) return;
+    const ager = this.buildAgerNodes(ctx);
+    try {
+      graph.makeup.disconnect();          // was makeup -> analyser
+      graph.makeup.connect(ager.input);
+      ager.comp.connect(graph.analyser);  // ... -> comp -> analyser -> destination
+      graph.ager = ager;
+    } catch (e) {
+      try { graph.makeup.disconnect(); graph.makeup.connect(graph.analyser); } catch { /* best effort */ }
+      console.warn('[VoiceAger] attach failed:', e);
+    }
+  }
+
+  /** Splice the formant worklet in front of the ager EQ: input -> formant -> body. */
+  private ensureFormant(sourceId: string, ctx: AudioContext): void {
+    const graph = this.graphs.get(sourceId);
+    if (!graph?.ager || graph.ager.formant || this.agerLoading.has(sourceId)) return;
+    this.agerLoading.add(sourceId);
+    createFormantShiftNode(ctx)
+      .then((node) => {
+        this.agerLoading.delete(sourceId);
+        const g = this.graphs.get(sourceId);
+        if (!node || !g?.ager || g.ager.formant) return;
+        try {
+          g.ager.input.disconnect();
+          g.ager.input.connect(node);
+          node.connect(g.ager.body);
+          g.ager.formant = node;
+          const p = this.lastAge.get(sourceId);
+          if (p) this.setFormantParams(ctx, node, p); // catch the worklet up
+        } catch (e) {
+          try { g.ager.input.disconnect(); g.ager.input.connect(g.ager.body); } catch { /* best effort */ }
+          console.warn('[VoiceAger] formant splice failed:', e);
+        }
+      })
+      .catch(() => this.agerLoading.delete(sourceId));
+  }
+
+  private setFormantParams(ctx: AudioContext, node: FormantShiftNode, params: AgeParams | null): void {
+    const now = ctx.currentTime;
+    node.parameters.get('ratio')?.setTargetAtTime(params ? params.shiftRatio : 1, now, 0.03);
+    node.parameters.get('jitter')?.setTargetAtTime(params ? Math.min(0.1, params.jitterPct / 100) : 0, now, 0.05);
+  }
+
+  private setAgerParams(ctx: AudioContext, graph: SourceGraph, params: AgeParams | null): void {
+    const ager = graph.ager;
+    if (!ager) return;
+    const now = ctx.currentTime;
+    const S = 0.03; // click-free while dragging
+    if (!params) {
+      ager.body.gain.setTargetAtTime(0, now, S);
+      ager.tilt.gain.setTargetAtTime(0, now, S);
+      ager.brilliance.gain.setTargetAtTime(0, now, S);
+      ager.throat.gain.setTargetAtTime(0, now, S);
+      ager.comp.threshold.setValueAtTime(0, now);
+      ager.comp.ratio.setValueAtTime(1, now);
+    } else {
+      ager.body.gain.setTargetAtTime(params.bodyDb, now, S);
+      ager.tilt.gain.setTargetAtTime(params.tiltDb, now, S);
+      ager.brilliance.gain.setTargetAtTime(params.brillianceDb, now, S);
+      ager.throat.gain.setTargetAtTime(params.throatDb, now, S);
+      ager.comp.threshold.setValueAtTime(params.compThresholdDb, now);
+      ager.comp.ratio.setValueAtTime(params.compRatio, now);
+    }
+    if (ager.formant) this.setFormantParams(ctx, ager.formant, params);
+  }
+
+  /**
+   * Real-time Voice Ager. Ensures the source is tapped + the ager is spliced, then
+   * applies `params` (or transparent when disabled). Idempotent — safe every frame.
+   * Works whether or not voice isolation is on: both share this one owned tap.
+   */
+  applyAge(sourceId: string, element: HTMLMediaElement, params: AgeParams | null, enabled: boolean): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    let graph = this.graphs.get(sourceId);
+    if (graph && graph.element !== element) { this.teardown(sourceId); graph = undefined; }
+    if (!graph) {
+      graph = this.buildGraph(ctx, element) ?? undefined;
+      if (!graph) return; // tap failed — element stays on native output
+      this.graphs.set(sourceId, graph);
+    }
+    this.resume();
+    this.attachAger(graph, ctx);
+    const eff = enabled ? params : null;
+    this.lastAge.set(sourceId, eff);
+    this.setAgerParams(ctx, graph, eff);
+    if (enabled) this.ensureFormant(sourceId, ctx);
+  }
+
+  /** Zero-latency drag path — update the ager on an already-tapped source. */
+  updateAge(sourceId: string, params: AgeParams | null, enabled: boolean): void {
+    const eff = enabled ? params : null;
+    this.lastAge.set(sourceId, eff);
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const graph = this.graphs.get(sourceId);
+    if (graph?.ager) this.setAgerParams(ctx, graph, eff);
+  }
+
+  /** DEV/test read-back: the live ager params actually on the graph. Null if none. */
+  debugAgerState(
+    sourceId: string,
+  ): { bodyDb: number; tiltDb: number; brillianceDb: number; ratio: number | null } | null {
+    const ager = this.graphs.get(sourceId)?.ager;
+    if (!ager) return null;
+    return {
+      bodyDb: ager.body.gain.value,
+      tiltDb: ager.tilt.gain.value,
+      brillianceDb: ager.brilliance.gain.value,
+      ratio: ager.formant ? ager.formant.parameters.get('ratio')?.value ?? null : null,
+    };
+  }
+
   /**
    * Current per-band gains (dB) actually live on the graph — for DEV/tests to
    * objectively confirm the curve reached the audio. Null when not tapped.
@@ -638,12 +803,21 @@ class VoiceIsolationEngineImpl {
       graph.presence.disconnect();
       graph.compressor.disconnect();
       graph.makeup.disconnect();
+      graph.ager?.input.disconnect();
+      graph.ager?.formant?.disconnect();
+      graph.ager?.body.disconnect();
+      graph.ager?.tilt.disconnect();
+      graph.ager?.brilliance.disconnect();
+      graph.ager?.throat.disconnect();
+      graph.ager?.comp.disconnect();
       graph.analyser.disconnect();
     } catch {
       /* already gone */
     }
     this.graphs.delete(sourceId);
     this.denoiserLoading.delete(sourceId);
+    this.agerLoading.delete(sourceId);
+    this.lastAge.delete(sourceId);
   }
 }
 

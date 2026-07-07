@@ -376,6 +376,17 @@ export function processAudioTimeline(
         console.log(`🎙️ Applied voice isolation EQ to audio segment ${segmentIndex}`);
       }
 
+      // Voice Ager (Skill 3): bake the same pitch/formant + timbre chain the live
+      // preview applies, so exported audio ages identically. Applied after isolation.
+      if (trackInfo.voiceAgeChain && trackInfo.voiceAgeChain.length > 0) {
+        const voiceAgeRef = `[a${segmentIndex}_voiceage]`;
+        audioFilters.push(
+          `${currentAudioRef}${trackInfo.voiceAgeChain}${voiceAgeRef}`,
+        );
+        currentAudioRef = voiceAgeRef;
+        console.log(`👴 Applied voice aging to audio segment ${segmentIndex}`);
+      }
+
       // Add delay to position audio at correct timeline position
       const delayMs = Math.round(segment.startTime * 1000);
       const delayedRef = `[a${segmentIndex}_delayed]`;

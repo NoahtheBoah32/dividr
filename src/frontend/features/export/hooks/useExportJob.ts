@@ -6,6 +6,7 @@ import { TrackInfo, VideoEditJob } from '@/backend/ffmpeg/schema/ffmpegConfig';
 import { useCallback } from 'react';
 import { NoiseReductionCache } from '../../editor/preview/services/NoiseReductionCache';
 import { buildFfmpegVoiceChain } from '../../editor/preview/utils/voiceIsolationCurve';
+import { buildFfmpegAgeChain, ageToParams } from '../../editor/preview/utils/voiceAgeParams';
 import {
   useVideoEditorStore,
   VideoTrack,
@@ -555,6 +556,12 @@ function convertTracksToFFmpegInputs(
         (track as any).voiceIsolation?.enabled &&
         (track as any).voiceIsolation?.nodes?.length
           ? buildFfmpegVoiceChain((track as any).voiceIsolation.nodes)
+          : undefined,
+      // Bake the Voice Ager (Skill 3) so export matches the live preview: the same
+      // ageYears → pitch/formant + timbre chain the ager stage runs in real time.
+      voiceAgeChain:
+        track.type === 'audio' && (track as any).voiceAge?.enabled
+          ? buildFfmpegAgeChain(ageToParams((track as any).voiceAge.ageYears ?? 65)) || undefined
           : undefined,
       trackType: track.type,
       visible: track.visible,

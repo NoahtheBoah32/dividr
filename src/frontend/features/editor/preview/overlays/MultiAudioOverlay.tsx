@@ -12,6 +12,7 @@ import { resolveAudioFrameRequests } from '../services/FrameResolver';
 import { NoiseReductionCache } from '../services/NoiseReductionCache';
 import { SeparationCache } from '../services/SeparationCache';
 import { VoiceIsolationEngine } from '../services/VoiceIsolationEngine';
+import { ageToParams, DEFAULT_AGE_YEARS } from '../utils/voiceAgeParams';
 import { USE_FRAME_DRIVEN_PLAYBACK } from './UnifiedOverlayRenderer';
 
 export interface MultiAudioPlayerProps {
@@ -569,6 +570,22 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
           audio,
           vi?.nodes ?? [],
           !!vi?.enabled,
+        );
+      }
+
+      // Voice Ager (Skill 3): real-time pitch+formant + timbre morph. Independent of
+      // isolation — shares the same owned element tap. Applied every frame so slider
+      // drags are heard live; transparent (and cheap) once tapped when disabled. Only
+      // taps when actually enabled, so a never-aged clip is never touched.
+      const va = (request.track as any).voiceAge as
+        | { enabled?: boolean; ageYears?: number }
+        | undefined;
+      if (va?.enabled || (va && VoiceIsolationEngine.isTapped(sourceId))) {
+        VoiceIsolationEngine.applyAge(
+          sourceId,
+          audio,
+          va?.enabled ? ageToParams(va.ageYears ?? DEFAULT_AGE_YEARS) : null,
+          !!va?.enabled,
         );
       }
 
