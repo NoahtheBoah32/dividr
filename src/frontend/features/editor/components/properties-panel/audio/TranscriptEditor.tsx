@@ -22,8 +22,9 @@ import React, {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from 'react';
-import { Loader2, ScrollText, RotateCcw } from 'lucide-react';
+import { Loader2, ScrollText, RotateCcw, Scissors, MoveRight, Copy } from 'lucide-react';
 import { useVideoEditorStore } from '../../../stores/videoEditor/index';
 import type { VideoTrack } from '../../../stores/videoEditor/index';
 import {
@@ -35,7 +36,11 @@ import {
   formatTimestamp,
   isWordPresent,
   wordToTimelineRange,
+  resolvePhraseSpan,
+  extractQuotedPhrases,
+  matchPhraseInWords,
 } from './transcriptEditUtils';
+import { pullPhrase, movePhrase } from './transcriptSurgery';
 import {
   applyDeletion,
   type EditWord,
@@ -535,6 +540,73 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     [coverageClips, fps, setCurrentFrame],
   );
 
+  // ---- Transcript Surgery (opt-in mode, purely additive) ---------------------
+  // Reorder a scene by selecting its words and Moving them, or pull a scene by
+  // typing the spoken words in quotes. Both drop at the playhead and reuse the
+  // shared surgery core. The default delete-only editor is unaffected.
+  const [surgeryMode, setSurgeryMode] = useState(false);
+  const [pullText, setPullText] = useState('');
+  const [surgeryMsg, setSurgeryMsg] = useState<string | null>(null);
+  const currentFrame = useVideoEditorStore(
+    (s) => (s as any).currentFrame ?? (s as any).timeline?.currentFrame ?? 0,
+  );
+  const flash = useCallback((m: string) => {
+    setSurgeryMsg(m);
+    window.setTimeout(() => setSurgeryMsg((cur) => (cur === m ? null : cur)), 2800);
+  }, []);
+
+  const surgeonSelection = useCallback(
+    async (mode: 'move' | 'copy') => {
+      const src = subject.source;
+      if (!src) return;
+      const sel = readSelection();
+      if (!sel) {
+        flash('Select a phrase in the transcript first.');
+        return;
+      }
+      const span = resolvePhraseSpan(allWords, sel.anchor.wordId, sel.focus.wordId);
+      if (!span) {
+        flash('Could not read that selection.');
+        return;
+      }
+      const res =
+        mode === 'copy'
+          ? await pullPhrase(src, span.startSec, span.endSec, currentFrame, fps)
+          : await movePhrase(src, span.startSec, span.endSec, currentFrame, fps);
+      const label = span.words.map((w) => w.text).join(' ').slice(0, 42);
+      flash(
+        res.ok
+          ? `${mode === 'copy' ? 'Copied' : 'Moved'} “${label}…” to the playhead.`
+          : `Couldn't ${mode}: ${res.error}`,
+      );
+    },
+    [subject.source, readSelection, allWords, currentFrame, fps, flash],
+  );
+
+  const handlePull = useCallback(async () => {
+    const src = subject.source;
+    if (!src) return;
+    const quoted = extractQuotedPhrases(pullText);
+    if (!quoted.length) {
+      flash('Put the words in "quotes" to pull that scene.');
+      return;
+    }
+    let placed = 0;
+    for (const phrase of quoted) {
+      const match = matchPhraseInWords(allWords, phrase);
+      if (!match) {
+        flash(`“${phrase}” wasn't spoken in this video.`);
+        continue;
+      }
+      const res = await pullPhrase(src, match.startSec, match.endSec, currentFrame, fps);
+      if (res.ok) placed++;
+    }
+    if (placed) {
+      flash(`Pulled ${placed} scene${placed > 1 ? 's' : ''} to the playhead.`);
+      setPullText('');
+    }
+  }, [subject.source, pullText, allWords, currentFrame, fps, flash]);
+
   // ---- Locked / empty states -------------------------------------------------
   const showSpinner =
     !!isTranscribing &&
@@ -571,6 +643,20 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">{totalWords} words</span>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSurgeryMode((v) => !v)}
+            className={
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors ' +
+              (surgeryMode
+                ? 'bg-amber-500/20 text-amber-500'
+                : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground')
+            }
+            title="Surgery: reorder or pull scenes by their transcript words"
+          >
+            <Scissors className="size-3" />
+            surgery
+          </button>
           {deletedCount > 0 && (
             <span className="text-[11px] text-muted-foreground/70">
               {deletedCount} removed · ⌘Z to restore
@@ -589,6 +675,56 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
           )}
         </div>
       </div>
+
+      {surgeryMode && (
+        <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/[0.06] p-2.5">
+          <p className="text-[11px] leading-relaxed text-amber-500/90">
+            Move the playhead to where the scene should go, then either select a
+            phrase above and Move or Copy it — or type the exact spoken words in
+            quotes and Pull. The voice and its on-screen video move together.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void surgeonSelection('move')}
+              className="inline-flex items-center gap-1 rounded bg-muted/60 px-2 py-1 text-[11px] hover:bg-muted"
+              title="Relocate the selected phrase's scene to the playhead"
+            >
+              <MoveRight className="size-3" /> Move selection → playhead
+            </button>
+            <button
+              type="button"
+              onClick={() => void surgeonSelection('copy')}
+              className="inline-flex items-center gap-1 rounded bg-muted/60 px-2 py-1 text-[11px] hover:bg-muted"
+              title="Copy the selected phrase's scene to the playhead (original stays)"
+            >
+              <Copy className="size-3" /> Copy selection → playhead
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              value={pullText}
+              onChange={(e) => setPullText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handlePull();
+                }
+              }}
+              placeholder={'Pull a scene: type the spoken words in "quotes"'}
+              className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-[12px] outline-none focus:border-amber-500/50"
+            />
+            <button
+              type="button"
+              onClick={() => void handlePull()}
+              className="shrink-0 rounded bg-amber-500/20 px-2.5 py-1 text-[11px] font-medium text-amber-600 hover:bg-amber-500/30"
+            >
+              Pull
+            </button>
+          </div>
+          {surgeryMsg && <p className="text-[11px] text-muted-foreground">{surgeryMsg}</p>}
+        </div>
+      )}
 
       <p className="text-[11px] leading-relaxed text-muted-foreground/70">
         Click into the text and backspace through a whole word to cut it from the
