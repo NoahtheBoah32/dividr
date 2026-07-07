@@ -1,0 +1,242 @@
+[
+  {
+    "n": 1,
+    "want": "pull",
+    "prompt": "pull the scene where he says \"a better time to relax\" to the start",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "a better time to relax",
+    "reason": "exactly one pullPhrase, phrase=\"a better time to relax\"",
+    "natural": "Pulling \"…a better time to relax\" to the start."
+  },
+  {
+    "n": 2,
+    "want": "pull",
+    "prompt": "copy the part where he says \"I didn't know what to do\" and put it at the playhead",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "I didn't know what to do",
+    "reason": "exactly one pullPhrase, phrase=\"I didn't know what to do\"",
+    "natural": "Pulling \"I didn't know what to do\" to 0:00."
+  },
+  {
+    "n": 3,
+    "want": "pull",
+    "prompt": "take the clip of \"he was really running after me\" and drop a copy at 2 seconds",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "he was really running after me",
+    "reason": "exactly one pullPhrase, phrase=\"he was really running after me\"",
+    "natural": "Pulling \"he was really running after me\" to 0:02."
+  },
+  {
+    "n": 4,
+    "want": "pull",
+    "prompt": "duplicate the moment he says \"it was very scary\" to the front",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "it was very scary",
+    "reason": "exactly one pullPhrase, phrase=\"it was very scary\"",
+    "natural": "Pulling \"it was very scary\" to the front."
+  },
+  {
+    "n": 5,
+    "want": "pull",
+    "prompt": "I want the \"now is a better time to relax\" bit to also appear at the beginning",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "now is a better time to relax",
+    "reason": "exactly one pullPhrase, phrase=\"now is a better time to relax\"",
+    "natural": "Pulling \"now is a better time to relax\" to 0:00."
+  },
+  {
+    "n": 6,
+    "want": "pull",
+    "prompt": "grab where he says \"he was going after me\" and paste it at 10 seconds",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "he was going after me",
+    "reason": "exactly one pullPhrase, phrase=\"he was going after me\"",
+    "natural": "Pulling \"he was going after me\" to 0:10."
+  },
+  {
+    "n": 7,
+    "want": "pull",
+    "prompt": "put a second copy of the \"I think now is a better time\" line at the end",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "but i think now is a better time to relax",
+    "reason": "exactly one pullPhrase, phrase=\"but i think now is a better time to relax\"",
+    "natural": "Pulling \"…but I think now is a better time to relax\" to the end at 0:12.8."
+  },
+  {
+    "n": 8,
+    "want": "pull",
+    "prompt": "clone the scene of him saying \"what to do\" to the start",
+    "verdict": "PASS",
+    "ops": [
+      "pullPhrase"
+    ],
+    "phrase": "didn't know what to do",
+    "reason": "exactly one pullPhrase, phrase=\"didn't know what to do\"",
+    "natural": "Cloning \"…didn't know what to do\" to the start."
+  },
+  {
+    "n": 9,
+    "want": "reorder",
+    "prompt": "move the \"a better time to relax\" scene to the very beginning",
+    "verdict": "PASS",
+    "ops": [
+      "reorderPhrase"
+    ],
+    "phrase": "a better time to relax",
+    "reason": "exactly one reorderPhrase, phrase=\"a better time to relax\"",
+    "natural": "Moving \"…a better time to relax\" to the very beginning."
+  },
+  {
+    "n": 10,
+    "want": "reorder",
+    "prompt": "reorder so that \"he was going after me\" comes first",
+    "verdict": "PASS",
+    "ops": [
+      "reorderPhrase"
+    ],
+    "phrase": "he was going after me",
+    "reason": "exactly one reorderPhrase, phrase=\"he was going after me\"",
+    "natural": "Moving \"he was going after me\" to the start."
+  },
+  {
+    "n": 11,
+    "want": "reorder",
+    "prompt": "take \"it was very scary\" and move it to the front, don't leave the original behind",
+    "verdict": "PASS",
+    "ops": [
+      "reorderPhrase"
+    ],
+    "phrase": "it was very scary",
+    "reason": "exactly one reorderPhrase, phrase=\"it was very scary\"",
+    "natural": "Moving \"it was very scary\" to the front."
+  },
+  {
+    "n": 12,
+    "want": "reorder",
+    "prompt": "bring the \"now is a better time to relax\" part to the start of the video",
+    "verdict": "PASS",
+    "ops": [
+      "reorderPhrase"
+    ],
+    "phrase": "but i think now is a better time to relax",
+    "reason": "exactly one reorderPhrase, phrase=\"but i think now is a better time to relax\"",
+    "natural": "Moving \"…but I think now is a better time to relax\" to the start."
+  },
+  {
+    "n": 13,
+    "want": "reorder",
+    "prompt": "rearrange so \"I didn't know what to do\" plays at 1 second instead",
+    "verdict": "PASS",
+    "ops": [
+      "reorderPhrase"
+    ],
+    "phrase": "I didn't know what to do",
+    "reason": "exactly one reorderPhrase, phrase=\"I didn't know what to do\"",
+    "natural": "Moving \"I didn't know what to do\" to 0:01."
+  },
+  {
+    "n": 14,
+    "want": "reorder",
+    "prompt": "shift the \"he was really running after me\" scene to the end",
+    "verdict": "PASS",
+    "ops": [
+      "reorderPhrase"
+    ],
+    "phrase": "he was really running after me",
+    "reason": "exactly one reorderPhrase, phrase=\"he was really running after me\"",
+    "natural": "Moving \"he was really running after me\" to the end."
+  },
+  {
+    "n": 15,
+    "want": "control",
+    "prompt": "make the video brighter",
+    "verdict": "PASS",
+    "ops": [
+      "grade"
+    ],
+    "phrase": null,
+    "reason": "no surgery op (correct)",
+    "natural": "Brightening the video."
+  },
+  {
+    "n": 16,
+    "want": "control",
+    "prompt": "cut the first 3 seconds",
+    "verdict": "PASS",
+    "ops": [
+      "deleteSegment"
+    ],
+    "phrase": null,
+    "reason": "no surgery op (correct)",
+    "natural": "Cut the first 3 seconds."
+  },
+  {
+    "n": 17,
+    "want": "control",
+    "prompt": "add a caption that says Hello",
+    "verdict": "PASS",
+    "ops": [
+      "caption"
+    ],
+    "phrase": null,
+    "reason": "no surgery op (correct)",
+    "natural": "Added a \"Hello\" caption from 0:00 to 0:02."
+  },
+  {
+    "n": 18,
+    "want": "control",
+    "prompt": "zoom into his face at 5 seconds",
+    "verdict": "PASS",
+    "ops": [
+      "zoomToFace"
+    ],
+    "phrase": null,
+    "reason": "no surgery op (correct)",
+    "natural": "Zooming in on his face from 0:05 to 0:09."
+  },
+  {
+    "n": 19,
+    "want": "control",
+    "prompt": "isolate his voice",
+    "verdict": "PASS",
+    "ops": [
+      "isolateVoice"
+    ],
+    "phrase": null,
+    "reason": "no surgery op (correct)",
+    "natural": "Isolating his voice from the background."
+  },
+  {
+    "n": 20,
+    "want": "control",
+    "prompt": "delete the part where he says \"it was very scary\"",
+    "verdict": "PASS",
+    "ops": [
+      "deleteSegment"
+    ],
+    "phrase": null,
+    "reason": "no surgery op (correct)",
+    "natural": "Cutting \"it was very scary\" (~7.4s–9.2s). The transcript here is one aggregated line for the whole clip, so that range is my best estimate from where the phrase"
+  }
+]
