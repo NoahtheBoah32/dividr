@@ -5,7 +5,8 @@ import { Slider } from '@/frontend/components/ui/slider';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor/index';
 import { operationEngine } from '@/frontend/features/mycelium/operationEngine';
 import { cn } from '@/frontend/utils/utils';
-import { Gauge, Loader2, Snowflake } from 'lucide-react';
+import { Gauge, Loader2, Snowflake, Sun } from 'lucide-react';
+import { newLightId } from '@/frontend/features/editor/preview/utils/paintedLightUtils';
 import React, { useEffect, useMemo, useState } from 'react';
 
 /**
@@ -21,6 +22,14 @@ const REGION_PRESETS: { label: string; value: string }[] = [
   { label: 'Top', value: '0,0,1,0.5' },
   { label: 'Bottom', value: '0,0.5,1,0.5' },
   { label: 'Center', value: 'ellipse:0.5,0.5,0.28,0.4' },
+];
+
+const LIGHT_SWATCHES: { label: string; rgb: [number, number, number] }[] = [
+  { label: 'Warm', rgb: [255, 214, 170] },
+  { label: 'Golden', rgb: [255, 205, 120] },
+  { label: 'Neutral', rgb: [255, 244, 224] },
+  { label: 'Cool', rgb: [190, 215, 255] },
+  { label: 'Blue', rgb: [150, 190, 255] },
 ];
 
 const SectionHeading: React.FC<{ icon: React.ReactNode; title: string; hint: string }> = ({ icon, title, hint }) => (
@@ -59,6 +68,9 @@ interface Props {
 export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
   const tracks = useVideoEditorStore((s) => s.tracks);
   const fps = useVideoEditorStore((s) => s.timeline?.fps ?? 30);
+  const updateTrack = useVideoEditorStore((s) => s.updateTrack);
+  const beginGroup = useVideoEditorStore((s) => (s as any).beginGroup);
+  const endGroup = useVideoEditorStore((s) => (s as any).endGroup);
 
   const clip = useMemo(
     () => tracks.find((t: any) => t.type === 'video' && selectedTrackIds.includes(t.id)),
@@ -82,6 +94,11 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
   const [rsLasso, setRsLasso] = useState<Array<[number, number]> | null>(null); // normalized polygon from LassoOverlay
   const [rsShape, setRsShape] = useState<'box' | 'ellipse' | 'poly' | null>(null); // which draw tool is active (for highlight)
 
+  // Light Brush (Skill 4)
+  const [lbColor, setLbColor] = useState<[number, number, number]>([255, 214, 170]);
+  const [lbIntensity, setLbIntensity] = useState(0.85);
+  const [lbBlend, setLbBlend] = useState<'soft-light' | 'screen' | 'overlay' | 'lighten'>('soft-light');
+
   // Reset region defaults when the selected clip changes.
   useEffect(() => {
     if (!clip) return;
@@ -103,6 +120,31 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
     window.addEventListener('dividr:lassoComplete', onLasso);
     return () => window.removeEventListener('dividr:lassoComplete', onLasso);
   }, []);
+
+  // A completed light-brush stroke (from LightBrushOverlay) becomes a painted light on
+  // the selected clip, using the panel's current colour/intensity/blend.
+  useEffect(() => {
+    const onLight = (e: any) => {
+      const d = e.detail;
+      if (!clip || !d?.pos) return;
+      const light = {
+        id: newLightId(),
+        pos: d.pos as [number, number],
+        radius: Math.max(0.05, Math.min(1.2, d.radius ?? 0.5)),
+        intensity: lbIntensity,
+        color: lbColor,
+        blend: lbBlend,
+        maskMode: 'free' as const,
+      };
+      const existing = [...(((clip as any).paintedLights as any[]) ?? [])];
+      beginGroup?.('Paint light');
+      updateTrack(clip.id, { paintedLights: [...existing, light] } as any);
+      endGroup?.();
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+    };
+    window.addEventListener('dividr:lightBrushComplete', onLight);
+    return () => window.removeEventListener('dividr:lightBrushComplete', onLight);
+  }, [clip, lbColor, lbIntensity, lbBlend, updateTrack, beginGroup, endGroup]);
 
   // When a region-speed effect is applied (by EDITH or manually), sync the slider/region to it
   // so the manual controls pick up exactly where EDITH left off.
@@ -158,6 +200,26 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
     setRsShape(shape); // remember the chosen tool so its button highlights (not always Lasso)
     window.dispatchEvent(new CustomEvent('dividr:lassoArm', { detail: { shape } }));
   };
+
+  // Light Brush handlers — detect enqueues the SAME op EDITH emits; paint arms the brush.
+  const detectLight = () => { if (clip) operationEngine.enqueue({ type: 'detectLight' } as any); };
+  const armBrush = () => window.dispatchEvent(new CustomEvent('dividr:lightBrushArm'));
+  const clearLights = () => {
+    if (!clip) return;
+    beginGroup?.('Clear lights');
+    updateTrack(clip.id, { paintedLights: [], lightSource: undefined } as any);
+    endGroup?.();
+    window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+  };
+  const removeLight = (id: string) => {
+    if (!clip) return;
+    const remaining = (((clip as any).paintedLights as any[]) ?? []).filter((l: any) => l.id !== id);
+    beginGroup?.('Remove light');
+    updateTrack(clip.id, { paintedLights: remaining } as any);
+    endGroup?.();
+    window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+  };
+  const paintedLights = (((clip as any)?.paintedLights as any[]) ?? []);
 
   const num = (v: string) => { const n = parseFloat(v); return isNaN(n) ? 0 : Math.max(0, n); };
 
@@ -251,6 +313,55 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
           className="w-full h-8 bg-[hsl(var(--secondary))] text-white hover:bg-[hsl(var(--secondary))]/90">
           {running === 'speed' ? <><Loader2 className="size-3.5 mr-1.5 animate-spin" />Retiming…</> : (rsLasso ? 'Apply to drawn region' : 'Apply region speed')}
         </Button>
+      </div>
+
+      <Separator />
+
+      {/* ── Light Brush ─────────────────────────────── */}
+      <div className="space-y-3">
+        <SectionHeading icon={<Sun className="size-4" />} title="Light Brush"
+          hint="Detect where the light falls, then paint soft light onto the shot. Non-destructive; tracks with the clip." />
+        <div className="flex gap-2">
+          <Button onClick={detectLight} disabled={!!running}
+            className="flex-1 h-8 bg-[hsl(var(--secondary))] text-white hover:bg-[hsl(var(--secondary))]/90">
+            Detect light
+          </Button>
+          <Button variant="outline" onClick={armBrush} className="flex-1 h-8">Paint light</Button>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {LIGHT_SWATCHES.map((s) => (
+            <button key={s.label} type="button" title={s.label} onClick={() => setLbColor(s.rgb)}
+              className={cn('size-6 rounded-full border transition-all',
+                lbColor.join(',') === s.rgb.join(',') ? 'ring-2 ring-[hsl(var(--secondary))]' : 'border-border')}
+              style={{ background: `rgb(${s.rgb[0]},${s.rgb[1]},${s.rgb[2]})` }} />
+          ))}
+        </div>
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>Intensity</span><span>{Math.round(lbIntensity * 100)}%</span>
+          </div>
+          <Slider min={0} max={2} step={0.05} value={[lbIntensity]}
+            onValueChange={(v) => setLbIntensity(v[0] ?? lbIntensity)} />
+        </div>
+        <div className="flex gap-1.5">
+          {(['soft-light', 'screen', 'overlay', 'lighten'] as const).map((b) => (
+            <Seg key={b} active={lbBlend === b} onClick={() => setLbBlend(b)}>{b.replace('-light', '')}</Seg>
+          ))}
+        </div>
+        {paintedLights.length > 0 && (
+          <div className="space-y-1.5 pt-1">
+            {paintedLights.map((l, i) => (
+              <div key={l.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="size-3 rounded-full border border-border"
+                  style={{ background: `rgb(${l.color[0]},${l.color[1]},${l.color[2]})` }} />
+                <span className="flex-1">Light {i + 1} · {Math.round((l.intensity ?? 0) * 100)}%</span>
+                <button type="button" onClick={() => removeLight(l.id)} className="hover:text-foreground">Remove</button>
+              </div>
+            ))}
+            <button type="button" onClick={clearLights}
+              className="text-xs text-muted-foreground hover:text-foreground underline">Clear all lights</button>
+          </div>
+        )}
       </div>
 
     </div>

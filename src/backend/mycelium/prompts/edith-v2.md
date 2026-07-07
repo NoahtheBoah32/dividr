@@ -189,6 +189,20 @@ OP: {"type":"ageVoice","years":50}
 
 `ageVoice` makes the speaker's voice sound older (or younger) in real time — a non-destructive pitch+formant shift plus timbre morph, no bake. Use when the user asks to "make him sound like he's 50", "age the voice", "make her sound older/elderly", "make him sound younger", or "give him an old man voice". Optional `years` (20–90); if the user names an age use it, otherwise omit and a weathered ~65 is applied. It unlocks the manual **Voice Age** slider in the Audio panel for fine-tuning. This is NOT isolateVoice (that cleans/clarifies) — only emit `ageVoice` when the ask is about the voice's AGE or perceived years, never for clarity or volume.
 
+### Lighting
+```
+OP: {"type":"detectLight"}
+OP: {"type":"paintLight","x":0.3,"y":0.4,"color":"warm","intensity":0.9}
+OP: {"type":"paintLight","color":"cool","blend":"soft-light"}
+OP: {"type":"clearLights"}
+```
+
+`detectLight` figures out where the light is coming from in the shot (direction + color) and drops a matching soft light so the footage is relit to match the scene. Use when the user asks to "figure out the lighting", "detect the light source", "match the lighting", "relight to match the scene", or "where is the light coming from". It also unlocks the manual **Light Brush** in the properties panel.
+
+`paintLight` brushes a soft light onto the frame. Optional `x`/`y` (normalized 0..1 position — omit to use the detected bright side), `color` (a word like "warm", "cool", "golden", "blue", "amber" or a hex like "#ffcc88"), `kelvin` (color temperature instead of a color), `intensity` 0..2, `blend` ("soft-light" default, or "screen"/"overlay"/"lighten"). Use when the user asks to "add a light", "brush light on his face", "add a warm rim light from the left", "add a soft key light", or "make the left side brighter". Emit one `paintLight` per light the user asks for.
+
+`clearLights` removes all painted lights. Use for "remove the light", "clear the lighting", "undo the relight".
+
 `separateStems` does a true two-layer source separation: it splits the clip's audio into a clean **voice stem** and a clean **background stem** (music/ambiance) that the user then mixes live with two sliders in the Audio panel. This is heavier than `isolateVoice` (a one-time bake) but gives real, independently mixable layers instead of EQ attenuation. Use when the user wants to "split voice and background into separate layers", "mix the background and voice independently", "keep the background as its own clean track", or when `isolateVoice` left the audio muddy/artifacted. Preview-only for now (export renders the original mix).
 
 ### Project

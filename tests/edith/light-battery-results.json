@@ -1,0 +1,202 @@
+[
+  {
+    "n": 1,
+    "want": "detect",
+    "prompt": "figure out where the light is coming from",
+    "verdict": "PASS",
+    "ops": [
+      "detectLight"
+    ],
+    "reason": "exactly one detectLight"
+  },
+  {
+    "n": 2,
+    "want": "detect",
+    "prompt": "detect the light source in this shot",
+    "verdict": "PASS",
+    "ops": [
+      "detectLight"
+    ],
+    "reason": "exactly one detectLight"
+  },
+  {
+    "n": 3,
+    "want": "detect",
+    "prompt": "match the lighting in this scene",
+    "verdict": "PASS",
+    "ops": [
+      "detectLight"
+    ],
+    "reason": "exactly one detectLight"
+  },
+  {
+    "n": 4,
+    "want": "detect",
+    "prompt": "relight this to match the scene",
+    "verdict": "PASS",
+    "ops": [
+      "detectLight"
+    ],
+    "reason": "exactly one detectLight"
+  },
+  {
+    "n": 5,
+    "want": "detect",
+    "prompt": "which direction is the light coming from",
+    "verdict": "PASS",
+    "ops": [
+      "detectLight"
+    ],
+    "reason": "exactly one detectLight"
+  },
+  {
+    "n": 6,
+    "want": "paint",
+    "prompt": "add a warm light from the left",
+    "verdict": "PASS",
+    "ops": [
+      "paintLight"
+    ],
+    "reason": "exactly one paintLight color=warm"
+  },
+  {
+    "n": 7,
+    "want": "paint",
+    "prompt": "brush a soft light on his face",
+    "verdict": "PASS",
+    "ops": [
+      "paintLight"
+    ],
+    "reason": "exactly one paintLight color=warm"
+  },
+  {
+    "n": 8,
+    "want": "paint",
+    "prompt": "add a blue rim light",
+    "verdict": "PASS",
+    "ops": [
+      "paintLight"
+    ],
+    "reason": "exactly one paintLight color=blue"
+  },
+  {
+    "n": 9,
+    "want": "paint",
+    "prompt": "add a soft fill light on the left side",
+    "verdict": "PASS",
+    "ops": [
+      "paintLight"
+    ],
+    "reason": "exactly one paintLight color=warm"
+  },
+  {
+    "n": 10,
+    "want": "paint",
+    "prompt": "add a golden key light",
+    "verdict": "PASS",
+    "ops": [
+      "paintLight"
+    ],
+    "reason": "exactly one paintLight color=golden"
+  },
+  {
+    "n": 11,
+    "want": "paint",
+    "prompt": "put a soft light in the top right",
+    "verdict": "PASS",
+    "ops": [
+      "paintLight"
+    ],
+    "reason": "exactly one paintLight color=warm"
+  },
+  {
+    "n": 12,
+    "want": "paint",
+    "prompt": "add a cool light behind him",
+    "verdict": "PASS",
+    "ops": [
+      "paintLight"
+    ],
+    "reason": "exactly one paintLight color=cool"
+  },
+  {
+    "n": 13,
+    "want": "clear",
+    "prompt": "remove the light",
+    "verdict": "PASS",
+    "ops": [
+      "clearLights"
+    ],
+    "reason": "exactly one clearLights"
+  },
+  {
+    "n": 14,
+    "want": "clear",
+    "prompt": "clear the lighting",
+    "verdict": "PASS",
+    "ops": [
+      "clearLights"
+    ],
+    "reason": "exactly one clearLights"
+  },
+  {
+    "n": 15,
+    "want": "clear",
+    "prompt": "undo the relight",
+    "verdict": "PASS",
+    "ops": [
+      "clearLights"
+    ],
+    "reason": "exactly one clearLights"
+  },
+  {
+    "n": 16,
+    "want": "control",
+    "prompt": "increase the contrast",
+    "verdict": "PASS",
+    "ops": [
+      "grade"
+    ],
+    "reason": "no light op (correct)"
+  },
+  {
+    "n": 17,
+    "want": "control",
+    "prompt": "isolate his voice",
+    "verdict": "PASS",
+    "ops": [
+      "isolateVoice"
+    ],
+    "reason": "no light op (correct)"
+  },
+  {
+    "n": 18,
+    "want": "control",
+    "prompt": "add a caption that says hi",
+    "verdict": "PASS",
+    "ops": [
+      "caption"
+    ],
+    "reason": "no light op (correct)"
+  },
+  {
+    "n": 19,
+    "want": "control",
+    "prompt": "cut the first 3 seconds",
+    "verdict": "PASS",
+    "ops": [
+      "trim"
+    ],
+    "reason": "no light op (correct)"
+  },
+  {
+    "n": 20,
+    "want": "control",
+    "prompt": "zoom into his face",
+    "verdict": "PASS",
+    "ops": [
+      "zoomToFace"
+    ],
+    "reason": "no light op (correct)"
+  }
+]

@@ -138,6 +138,19 @@ export type Op =
   | { type: 'isolateVoice'; preset?: 'studio' | 'podcast' | 'ambiance' | 'light' }
   | { type: 'separateStems' }
   | { type: 'ageVoice'; years?: number }
+  | { type: 'detectLight' }
+  | {
+      type: 'paintLight';
+      x?: number; // normalized 0..1; omit → bright side from detected lightSource, else center
+      y?: number;
+      radius?: number; // 0..1 of the frame's smaller dimension
+      intensity?: number; // 0..2
+      color?: string; // hex "#ffcc88" or a simple name
+      kelvin?: number; // color temperature alternative to color
+      blend?: 'screen' | 'soft-light' | 'overlay' | 'lighten';
+      maskMode?: 'subject' | 'free';
+    }
+  | { type: 'clearLights' }
   | {
       type: 'setSpeed';
       clipId: string;

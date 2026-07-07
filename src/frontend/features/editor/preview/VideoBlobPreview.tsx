@@ -30,6 +30,8 @@ import { CanvasOverlay, UnifiedOverlayRenderer } from './overlays';
 import { GradeSplitOverlay } from './overlays/GradeSplitOverlay';
 import { MatchCutGhostOverlay } from './overlays/MatchCutGhostOverlay';
 import { LassoOverlay } from './overlays/LassoOverlay';
+import { LightCompositeOverlay } from './overlays/LightCompositeOverlay';
+import { LightBrushOverlay } from './overlays/LightBrushOverlay';
 import { SkeletonOverlay } from './overlays/SkeletonOverlay';
 import { TransformBoundaryLayer } from './overlays/TransformBoundaryLayer';
 import {
@@ -1054,6 +1056,20 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
 
           {/* Lasso region selector for the nuanced skills (armed from the properties panel). */}
           <LassoOverlay
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={preview.panX}
+            panY={preview.panY}
+          />
+
+          {/* Light Brush (Skill 4): painted-light compositing + the manual brush harness. */}
+          <LightCompositeOverlay
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={preview.panX}
+            panY={preview.panY}
+          />
+          <LightBrushOverlay
             actualWidth={actualWidth}
             actualHeight={actualHeight}
             panX={preview.panX}

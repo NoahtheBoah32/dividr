@@ -21,6 +21,14 @@ import {
 import { SeparationCache } from '@/frontend/features/editor/preview/services/SeparationCache';
 import { DEFAULT_AGE_YEARS } from '@/frontend/features/editor/preview/utils/voiceAgeParams';
 import {
+  estimateLight,
+  defaultLight,
+  lightFromSource,
+  kelvinToRgb,
+  newLightId,
+  type LightSource,
+} from '@/frontend/features/editor/preview/utils/paintedLightUtils';
+import {
   pullPhrase,
   movePhrase,
   coverageClipsForSource,
@@ -32,6 +40,78 @@ import {
 } from '@/frontend/features/editor/components/properties-panel/audio/transcriptEditUtils';
 
 export { pickSubtitleRow };
+
+// ── Light Brush (Skill 4) helpers ─────────────────────────────────────────────
+
+/**
+ * Sample the live preview canvas (downscaled) and estimate the dominant light.
+ * Best-effort: a tainted canvas or missing frame falls back to a neutral top-left
+ * key light so `detectLight` never fails.
+ */
+function sampleAndEstimateLight(): LightSource {
+  try {
+    const canvas =
+      (document.querySelector('canvas[data-testid="preview-canvas"]') as HTMLCanvasElement | null) ??
+      (Array.from(document.querySelectorAll('canvas')).find(
+        (c) => (c as HTMLCanvasElement).width > 100,
+      ) as HTMLCanvasElement | undefined) ??
+      null;
+    if (!canvas) return defaultLight();
+    const w = 96;
+    const h = Math.max(1, Math.round(96 * (canvas.height / Math.max(1, canvas.width))));
+    const off = document.createElement('canvas');
+    off.width = w;
+    off.height = h;
+    const octx = off.getContext('2d', { willReadFrequently: true });
+    if (!octx) return defaultLight();
+    octx.drawImage(canvas, 0, 0, w, h);
+    const img = octx.getImageData(0, 0, w, h);
+    return estimateLight(img.data, w, h);
+  } catch {
+    return defaultLight(); // tainted canvas / no frame — sensible default
+  }
+}
+
+/** Resolve an EDITH color word or hex string to 0..255 RGB, or null if unknown. */
+function lightColorToRgb(s: string): [number, number, number] | null {
+  const named: Record<string, [number, number, number]> = {
+    warm: [255, 214, 170], cool: [190, 215, 255], white: [255, 255, 255],
+    gold: [255, 205, 120], golden: [255, 205, 120], amber: [255, 190, 110],
+    blue: [150, 190, 255], red: [255, 120, 110], orange: [255, 170, 90],
+    sunset: [255, 150, 90], sunlight: [255, 240, 214], candle: [255, 180, 110],
+    neutral: [255, 244, 224], daylight: [235, 240, 255], moonlight: [180, 205, 255],
+  };
+  const key = s.trim().toLowerCase();
+  if (named[key]) return named[key];
+  const m6 = key.match(/^#?([0-9a-f]{6})$/);
+  if (m6) {
+    const n = parseInt(m6[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const m3 = key.match(/^#?([0-9a-f]{3})$/);
+  if (m3) {
+    const t = m3[1];
+    return [
+      parseInt(t[0] + t[0], 16),
+      parseInt(t[1] + t[1], 16),
+      parseInt(t[2] + t[2], 16),
+    ];
+  }
+  return null;
+}
+
+/** Rough human description of a light azimuth for the status line. */
+function describeLightDir(az: number): string {
+  const a = ((az % 360) + 360) % 360;
+  if (a < 22.5 || a >= 337.5) return 'the right';
+  if (a < 67.5) return 'the lower right';
+  if (a < 112.5) return 'below';
+  if (a < 157.5) return 'the lower left';
+  if (a < 202.5) return 'the left';
+  if (a < 247.5) return 'the upper left';
+  if (a < 292.5) return 'above';
+  return 'the upper right';
+}
 
 /**
  * Kick the one-time voice/background separation bake for an audio track and
@@ -2080,6 +2160,79 @@ async function applyOp(op: Op): Promise<void> {
           detail: { text: `Aging the voice to ~${years}…` },
         }),
       );
+      break;
+    }
+
+    case 'detectLight': {
+      // V2: {"type":"detectLight"} — find the dominant light (direction + color) in
+      // the current shot and, if none exists yet, auto-add ONE matching painted light
+      // so the relight already matches the scene. Non-destructive; shares the path
+      // with the manual "Detect light" button.
+      const main = findMainVideoTrack(store);
+      if (!main) throw new Error('detectLight: no video on the timeline');
+      const src = sampleAndEstimateLight();
+      const existing = [...(((main as any).paintedLights as any[]) ?? [])];
+      const seeded = existing.length ? existing : [lightFromSource(src, newLightId(), 0.8)];
+      store.updateTrack(main.id, { lightSource: src, paintedLights: seeded });
+      window.dispatchEvent(
+        new CustomEvent('edith:status', {
+          detail: {
+            text: `Light reads from ${describeLightDir(src.azimuth)}${
+              src.confidence > 0.5 ? '' : ' (approx)'
+            }`,
+          },
+        }),
+      );
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      break;
+    }
+
+    case 'paintLight': {
+      // V2: {"type":"paintLight","x":0.3,"y":0.4,"color":"warm","intensity":0.9}
+      // Add a soft painted light. Non-destructive: appended to track.paintedLights,
+      // rendered live and baked at export. Shares the manual brush's data model.
+      const main = findMainVideoTrack(store);
+      if (!main) throw new Error('paintLight: no video on the timeline');
+      const o = op as any;
+      const ls = (main as any).lightSource as LightSource | undefined;
+      let color: [number, number, number];
+      if (typeof o.color === 'string' && lightColorToRgb(o.color)) color = lightColorToRgb(o.color)!;
+      else if (typeof o.kelvin === 'number') color = kelvinToRgb(o.kelvin);
+      else color = ls?.color ?? [255, 244, 224];
+      const cl01 = (v: number) => Math.max(0, Math.min(1, v));
+      const pos: [number, number] =
+        o.x != null && o.y != null
+          ? [cl01(o.x), cl01(o.y)]
+          : ls
+            ? [cl01(0.5 + ls.dir[0] * 0.42), cl01(0.5 + ls.dir[1] * 0.42)]
+            : [0.5, 0.4];
+      const light = {
+        id: newLightId(),
+        pos,
+        radius: cl01(o.radius ?? 0.5),
+        intensity: Math.max(0, Math.min(2, o.intensity ?? 0.85)),
+        color,
+        blend: (o.blend ?? 'soft-light') as 'screen' | 'soft-light' | 'overlay' | 'lighten',
+        maskMode: (o.maskMode ?? 'free') as 'subject' | 'free',
+      };
+      const existing = [...(((main as any).paintedLights as any[]) ?? [])];
+      store.updateTrack(main.id, { paintedLights: [...existing, light] });
+      window.dispatchEvent(
+        new CustomEvent('edith:status', { detail: { text: 'Painting light…' } }),
+      );
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      break;
+    }
+
+    case 'clearLights': {
+      // V2: {"type":"clearLights"} — remove all painted lights + the detected source.
+      const main = findMainVideoTrack(store);
+      if (!main) throw new Error('clearLights: no video on the timeline');
+      store.updateTrack(main.id, { paintedLights: [], lightSource: undefined });
+      window.dispatchEvent(
+        new CustomEvent('edith:status', { detail: { text: 'Cleared painted lights' } }),
+      );
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
       break;
     }
 

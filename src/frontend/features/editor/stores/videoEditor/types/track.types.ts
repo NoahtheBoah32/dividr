@@ -350,6 +350,41 @@ export interface VideoTrack {
     appliedByEdith?: boolean;
   };
   /**
+   * Light Brush (Skill 4) — the dominant light EDITH detected in this shot (direction
+   * + color), used to make painted lights match the scene. Non-destructive metadata.
+   */
+  lightSource?: {
+    /** Dominant light direction as a unit vector in frame space (x right, y down). */
+    dir: [number, number];
+    azimuth: number;
+    elevation: number;
+    /** Estimated light color, 0..255 RGB. */
+    color: [number, number, number];
+    /** 0..1 confidence in the direction estimate. */
+    confidence: number;
+  };
+  /**
+   * Light Brush (Skill 4) — painted soft lights added to this clip. Rendered live by
+   * the LightCompositeOverlay (radial gradient + blend mode) and baked at export.
+   * Non-destructive: strokes are stored as params, never burned into the source.
+   */
+  paintedLights?: {
+    id: string;
+    /** Position in normalized frame space, 0..1. */
+    pos: [number, number];
+    /** Radius as a fraction of the frame's smaller dimension, 0..1. */
+    radius: number;
+    /** 0..2 brightness of the added light. */
+    intensity: number;
+    /** Light color, 0..255 RGB. */
+    color: [number, number, number];
+    blend: 'screen' | 'soft-light' | 'overlay' | 'lighten';
+    /** Optional BlazePose landmark index to anchor+track the light across the shot. */
+    anchor?: number;
+    /** Confine to the subject (RVM alpha) or fall on the whole frame. */
+    maskMode: 'subject' | 'free';
+  }[];
+  /**
    * Source separation (stems) bake state. Powers the voiceIsolation curve.
    *
    * A one-time offline bake (MDX-Net ONNX, CPU) splits the clip into a clean
