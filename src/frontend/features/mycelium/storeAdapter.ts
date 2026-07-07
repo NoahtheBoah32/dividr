@@ -19,6 +19,16 @@ import {
   VOICE_ISOLATION_PRESETS,
 } from '@/frontend/features/editor/preview/utils/voiceIsolationCurve';
 import { SeparationCache } from '@/frontend/features/editor/preview/services/SeparationCache';
+import {
+  pullPhrase,
+  movePhrase,
+  coverageClipsForSource,
+} from '@/frontend/features/editor/components/properties-panel/audio/transcriptSurgery';
+import {
+  flattenWords,
+  matchPhraseInWords,
+  wordToTimelineRange,
+} from '@/frontend/features/editor/components/properties-panel/audio/transcriptEditUtils';
 
 export { pickSubtitleRow };
 
@@ -1332,6 +1342,58 @@ async function applyOp(op: Op): Promise<void> {
       await sleep(500);
       store.setRestoreAnimation(null);
       store.setRestoreTransitions(false);
+      break;
+    }
+
+    case 'pullPhrase':
+    case 'reorderPhrase': {
+      // Transcript Surgery. pullPhrase = COPY a spoken phrase's scene to a new
+      // point (duplication allowed, no warning). reorderPhrase = MOVE the phrase's
+      // whole voice+video block there. Phrase is matched in THIS video's transcript
+      // ONLY — never a foreign clip. Shares the exact logic the manual Surgery-mode
+      // panel uses (transcriptSurgery.ts).
+      const fps: number = store.timeline?.fps ?? 30;
+      const kind = (op as any).type as string;
+      const phrase = ((op as any).phrase ?? '').toString();
+      if (!phrase.trim()) throw new Error(`${kind}: no phrase given`);
+
+      const mainVid = (store.tracks as any[]).find(
+        (t: any) => (t.trackRowIndex ?? 0) === 0 && t.type === 'video' && t.source,
+      );
+      if (!mainVid) throw new Error(`${kind}: no main video on the timeline`);
+      const src: string = mainVid.source;
+      const media = (store.mediaLibrary as any[] | undefined)?.find(
+        (m: any) => m?.source === src || m?.tempFilePath === src,
+      );
+      const transcription = media?.cachedKaraokeSubtitles?.transcriptionResult;
+      const words = flattenWords(transcription);
+      if (!words.length)
+        throw new Error(`${kind}: this video has no transcript yet — transcribe it first`);
+
+      const match = matchPhraseInWords(words, phrase);
+      if (!match) throw new Error(`${kind}: "${phrase}" was not spoken in this video`);
+
+      let targetFrame: number;
+      if ((op as any).atSeconds != null) {
+        targetFrame = Math.round((op as any).atSeconds * fps);
+      } else if ((op as any).afterPhrase) {
+        const cov = coverageClipsForSource(src, 'video');
+        const anchor = matchPhraseInWords(words, ((op as any).afterPhrase).toString());
+        const range = anchor
+          ? wordToTimelineRange({ start: anchor.startSec, end: anchor.endSec }, cov, fps)
+          : null;
+        if (!range)
+          throw new Error(`${kind}: anchor phrase "${(op as any).afterPhrase}" not found`);
+        targetFrame = range.toFrame;
+      } else {
+        targetFrame = store.timeline?.currentFrame ?? (store as any).currentFrame ?? 0;
+      }
+
+      const result =
+        kind === 'pullPhrase'
+          ? await pullPhrase(src, match.startSec, match.endSec, targetFrame, fps)
+          : await movePhrase(src, match.startSec, match.endSec, targetFrame, fps);
+      if (!result.ok) throw new Error(`${kind}: ${result.error}`);
       break;
     }
 

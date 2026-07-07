@@ -198,6 +198,20 @@ export type Op =
   | {
       // "Organize my media" — sort the media library into folders (name pass + frame reference).
       type: 'organizeMedia';
+    }
+  | {
+      // Transcript Surgery — PULL (copy) a spoken phrase's scene to a new point.
+      type: 'pullPhrase';
+      phrase: string;
+      atSeconds?: number;
+      afterPhrase?: string;
+    }
+  | {
+      // Transcript Surgery — REORDER (move) a spoken phrase's whole block to a new point.
+      type: 'reorderPhrase';
+      phrase: string;
+      atSeconds?: number;
+      afterPhrase?: string;
     };
 
 export type OpStatus = 'pending' | 'running' | 'applied' | 'failed' | 'undone';

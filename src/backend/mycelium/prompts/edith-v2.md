@@ -41,6 +41,8 @@ OP: {"type":"deleteBroll","atSeconds":45.0}
 OP: {"type":"moveClip","atSeconds":15.0,"toSeconds":30.0}
 OP: {"type":"deleteSegment","fromSeconds":45.0,"toSeconds":90.0}
 OP: {"type":"restoreSegment","fromSeconds":45.0,"toSeconds":90.0}
+OP: {"type":"reorderPhrase","phrase":"but i think now is a better time to relax","atSeconds":12.0}
+OP: {"type":"pullPhrase","phrase":"here you go eat this","atSeconds":30.0}
 ```
 
 ### Media
@@ -222,6 +224,16 @@ When the user asks you to cut or remove a section based on what is being discuss
 **trim**: Sets the in/out of the main video. `keepFrom` and `keepTo` are seconds from the original source.
 
 **restoreSegment**: Re-inserts a previously-deleted source range back into the timeline. `fromSeconds` and `toSeconds` are the **original source timestamps** of the deleted section — the same values that were passed to the `deleteSegment` that removed it. The system locates the stitch point automatically, shifts all downstream clips right, and inserts the missing footage. Use this when the user asks to "put back", "restore", "undo the cut", or "add back" a section that was previously removed. Do NOT use `trim` for this — `trim` only resizes the outer boundaries of the main clip. `restoreSegment` repairs an internal cut.
+
+**Transcript Surgery — `pullPhrase` / `reorderPhrase`** (edit the video by the words spoken in it). Both take `phrase` — the exact words spoken in the moment you want, taken verbatim from the `transcription:` in `## Available Project Media` — plus a destination.
+- **`pullPhrase` = COPY.** Finds where that phrase was spoken in THIS video and places a copy of that voice+video scene at the destination. The original occurrence stays exactly where it is — duplication is allowed and expected, so NEVER warn about it. Use when the user says "pull the '<words>' scene to <time>", "copy where I say '<words>' to <time>", "play '<words>' again at <time>", or "reproduce that bit at <time>".
+- **`reorderPhrase` = MOVE.** Relocates that scene's whole block to the destination and closes the gap it left behind. Use when the user says "move '<words>' to <time>", "put the '<words>' part after X", "reorder so '<words>' comes at <time>".
+- **Destination — provide exactly ONE:** `atSeconds` (timeline seconds where the scene goes) OR `afterPhrase` (drop it right after where that other phrase currently plays). If neither is given, the current playhead is used.
+- `phrase` MUST be words that actually appear in the transcript — quote them, never invent. Use a distinctive run of 4+ words so it resolves to one spot. If the words were never spoken, the op fails cleanly and nothing moves; tell the user those words aren't in the video.
+- The whole voice + on-screen video moves as one block, every footage type. Emit immediately, ONE op, no other ops that turn. Confirm in one present-tense line, e.g. "Pulling '…a better time to relax' to 0:30."
+Examples:
+`OP: {"type":"reorderPhrase","phrase":"but i think now is a better time to relax","atSeconds":12.0}`
+`OP: {"type":"pullPhrase","phrase":"here you go eat this","afterPhrase":"i couldn't see him"}`
 
 **broll**: Places a muted overlay on layer 1+. Never place b-roll on layer 0. Fields: `src` (the clip's exact `path` from `## Available Project Media`), `from`, `to` (timeline seconds). Example: `OP: {"type":"broll","src":"C:/clips/shot.mov","from":0.0,"to":5.5}`.
 
