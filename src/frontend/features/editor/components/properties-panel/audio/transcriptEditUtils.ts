@@ -202,3 +202,103 @@ export function wordToTimelineRange(
   }
   return null;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transcript Surgery — pure helpers for reordering / pulling scenes by text.
+// ADDED, non-destructive: the delete-only editor logic above is untouched. These
+// power the opt-in "Surgery" mode (drag a phrase to reorder its scene) and the
+// quotation "pull scene" trigger (type the spoken words in quotes to copy that
+// scene to a new point). All DOM/store-free so they stay unit-testable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Normalize text for phrase matching: lowercase, drop punctuation (keep apostrophes), collapse whitespace. */
+export function normalizeForMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const toTokens = (s: string): string[] => {
+  const n = normalizeForMatch(s);
+  return n ? n.split(' ') : [];
+};
+
+/** A contiguous run of transcript words plus its source-time span. */
+export interface PhraseMatch {
+  words: FlatWord[];
+  startSec: number;
+  endSec: number;
+  wordIds: string[];
+}
+
+const makeMatch = (run: FlatWord[]): PhraseMatch | null =>
+  run.length
+    ? {
+        words: run,
+        startSec: run[0].start,
+        endSec: run[run.length - 1].end,
+        wordIds: run.map((w) => w.id),
+      }
+    : null;
+
+/**
+ * Find the FIRST contiguous run of transcript words whose spoken text matches
+ * `phrase` (word-for-word after normalization). Handles words that normalize to
+ * multiple tokens. Returns null when the phrase was never spoken in this video —
+ * that no-match is what makes the quotation "pull" a clean no-op on unknown text.
+ */
+export function matchPhraseInWords(words: FlatWord[], phrase: string): PhraseMatch | null {
+  const target = toTokens(phrase);
+  if (!target.length) return null;
+  // Flatten to a token stream that remembers which FlatWord each token came from.
+  const flat: { tok: string; wi: number }[] = [];
+  words.forEach((w, wi) => toTokens(w.text).forEach((tok) => flat.push({ tok, wi })));
+  if (flat.length < target.length) return null;
+  for (let i = 0; i + target.length <= flat.length; i++) {
+    let ok = true;
+    for (let k = 0; k < target.length; k++) {
+      if (flat[i + k].tok !== target[k]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      const firstWi = flat[i].wi;
+      const lastWi = flat[i + target.length - 1].wi;
+      return makeMatch(words.slice(firstWi, lastWi + 1));
+    }
+  }
+  return null;
+}
+
+/** Resolve a selected run of words (by first/last id, in either order) to its source span. */
+export function resolvePhraseSpan(
+  words: FlatWord[],
+  startId: string,
+  endId: string,
+): PhraseMatch | null {
+  const i = words.findIndex((w) => w.id === startId);
+  const j = words.findIndex((w) => w.id === endId);
+  if (i < 0 || j < 0) return null;
+  const [a, b] = i <= j ? [i, j] : [j, i];
+  return makeMatch(words.slice(a, b + 1));
+}
+
+/**
+ * Extract fully double-quoted phrases from text — straight ("...") or curly
+ * (“...”). Only fully-quoted runs are returned; unquoted text yields
+ * nothing, so the caller can enforce "a scene is pulled ONLY when the words are
+ * put in quotation marks."
+ */
+export function extractQuotedPhrases(s: string): string[] {
+  const out: string[] = [];
+  const re = /[“]([^“”]+)[”]|"([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    const inner = (m[1] ?? m[2] ?? '').trim();
+    if (inner) out.push(inner);
+  }
+  return out;
+}
