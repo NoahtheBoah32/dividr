@@ -68,8 +68,14 @@ function rippleOpen(atFrame: number, gapFrames: number): void {
 
 /**
  * Insert [sourceStartSec .. sourceStartSec + durFrames] of `source` as a fresh
- * layer-0 video (+ its linked audio, if the source normally carries it) at
- * `atFrame`. Room must already be opened. Mirrors restoreSegment's insert.
+ * layer-0 video block at `atFrame`. Room must already be opened by rippleOpen.
+ *
+ * IMPORTANT: the store's addTrack({type:'video'}) automatically creates the linked
+ * video+audio PAIR and forces the audio to share the video's start frame, so the
+ * voice and picture stay welded as one block (the spec's "voice + video move
+ * together"). We must NOT add a second audio track ourselves — that would double it.
+ * `explicitStart: true` also stops an atFrame of 0 from being treated as
+ * "append to the end" by addTrack's default consecutive-placement rule.
  */
 async function insertSourceBlock(
   source: string,
@@ -81,8 +87,9 @@ async function insertSourceBlock(
   const previewUrl = await makePreviewUrl(source);
   await state().addTrack({
     type: 'video' as const,
-    name: source.split(/[/\\]/).pop() ?? source,
+    name: ref?.name ?? source.split(/[/\\]/).pop() ?? source,
     source,
+    mediaId: ref?.mediaId,
     startFrame: atFrame,
     endFrame: atFrame + durFrames,
     trackRowIndex: 0,
@@ -92,30 +99,8 @@ async function insertSourceBlock(
     visible: true,
     locked: false,
     previewUrl,
-    isLinked: false,
-  });
-  const linkedAudio = ref?.linkedTrackId
-    ? (state().tracks as any[]).find((t) => t.id === ref.linkedTrackId)
-    : (state().tracks as any[]).find(
-        (t) =>
-          (t.trackRowIndex ?? 0) === 0 && t.type === 'audio' && t.source === source && t.isLinked,
-      );
-  if (linkedAudio) {
-    await state().addTrack({
-      type: 'audio' as const,
-      name: linkedAudio.name,
-      source,
-      startFrame: atFrame,
-      endFrame: atFrame + durFrames,
-      trackRowIndex: 0,
-      sourceStartTime: sourceStartSec,
-      sourceDuration: linkedAudio.sourceDuration,
-      muted: false,
-      visible: true,
-      locked: false,
-      isLinked: true,
-    });
-  }
+    explicitStart: true,
+  } as any);
 }
 
 /** Close the gap left by removing [fromFrame,toFrame] on the base row (deleteSegment-style, no animation). */
