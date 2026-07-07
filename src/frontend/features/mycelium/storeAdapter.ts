@@ -3220,14 +3220,17 @@ async function applyOp(op: Op): Promise<void> {
         sourceStartTime: audioStart,
         ...(sfxColor ? { color: sfxColor } : {}),
       } as any);
-      // addTrack treats startFrame === 0 as "append after the last clip" — pin to the
-      // requested time so an SFX meant for 0 lands at 0. Also re-assert the color, since
-      // addTrack auto-assigns one from the palette that would override our request.
+      // Force the EXACT requested frame. addTrack's audio placement nudges a clip to
+      // avoid overlapping a neighbor on the row (and treats startFrame 0 as "append"),
+      // which drifts it off the intended moment. The transcript asterisk-SFX (and EDITH)
+      // need it pinned precisely where asked, so we always re-pin here. Also re-assert
+      // the color, since addTrack auto-assigns one from the palette otherwise.
       if (placedSfxId) {
-        const patch: any = {};
-        if (atFrame === 0) { patch.startFrame = 0; patch.endFrame = durationFrames; }
-        if (sfxColor) patch.color = sfxColor;
-        if (Object.keys(patch).length) store.updateTrack(placedSfxId, patch);
+        store.updateTrack(placedSfxId, {
+          startFrame: atFrame,
+          endFrame: atFrame + durationFrames,
+          ...(sfxColor ? { color: sfxColor } : {}),
+        } as any);
       }
       break;
     }
