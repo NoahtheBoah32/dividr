@@ -384,6 +384,10 @@ export interface VideoTrack {
     /** Confine to the subject (RVM alpha) or fall on the whole frame. */
     maskMode: 'subject' | 'free';
   }[];
+  /** Mirror this clip horizontally (standard editor flip). Non-destructive. */
+  flipH?: boolean;
+  /** Mirror this clip vertically. Non-destructive. */
+  flipV?: boolean;
   /**
    * Source separation (stems) bake state. Powers the voiceIsolation curve.
    *

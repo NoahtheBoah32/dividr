@@ -389,6 +389,18 @@ export const FrameDrivenCompositor = forwardRef<
           ctx.translate(-rotationCenterX, -rotationCenterY);
         }
 
+        // Flip / mirror (standard editor transform) — reflect around the draw centre.
+        // Identity when unset, so untouched clips render exactly as before.
+        const flipH = (request.track as any).flipH ? -1 : 1;
+        const flipV = (request.track as any).flipV ? -1 : 1;
+        if (flipH !== 1 || flipV !== 1) {
+          const fcx = drawX + drawWidth / 2;
+          const fcy = drawY + drawHeight / 2;
+          ctx.translate(fcx, fcy);
+          ctx.scale(flipH, flipV);
+          ctx.translate(-fcx, -fcy);
+        }
+
         // Try drawing from video
         if (video.readyState >= 2) {
           try {
@@ -849,7 +861,7 @@ export const FrameDrivenCompositor = forwardRef<
           const gradeKey = cg
             ? `${cg.temperature ?? 0},${cg.tint ?? 0},${cg.hue ?? 0},${cg.shadows ?? 0},${cg.midtones ?? 0},${cg.highlights ?? 0},${cg.curves ? '1' : '0'}`
             : '';
-          return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''},${t.proxyBlockedMessage ?? ''},${gradeKey},${(t as any).motionBlur ?? 0}`;
+          return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''},${t.proxyBlockedMessage ?? ''},${gradeKey},${(t as any).motionBlur ?? 0},${(t as any).flipH ? 1 : 0}${(t as any).flipV ? 1 : 0}`;
         })
         .join('|');
 

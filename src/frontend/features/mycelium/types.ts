@@ -151,6 +151,8 @@ export type Op =
       maskMode?: 'subject' | 'free';
     }
   | { type: 'clearLights' }
+  | { type: 'flipClip'; axis?: 'horizontal' | 'vertical' | 'both'; clipName?: string }
+  | { type: 'rotateClip'; degrees?: number; clipName?: string; absolute?: boolean }
   | {
       type: 'setSpeed';
       clipId: string;

@@ -189,6 +189,16 @@ OP: {"type":"ageVoice","years":50}
 
 `ageVoice` makes the speaker's voice sound older (or younger) in real time — a non-destructive pitch+formant shift plus timbre morph, no bake. Use when the user asks to "make him sound like he's 50", "age the voice", "make her sound older/elderly", "make him sound younger", or "give him an old man voice". Optional `years` (20–90); if the user names an age use it, otherwise omit and a weathered ~65 is applied. It unlocks the manual **Voice Age** slider in the Audio panel for fine-tuning. This is NOT isolateVoice (that cleans/clarifies) — only emit `ageVoice` when the ask is about the voice's AGE or perceived years, never for clarity or volume.
 
+### Transform
+```
+OP: {"type":"flipClip","axis":"horizontal"}
+OP: {"type":"rotateClip","degrees":90}
+```
+
+`flipClip` mirrors the clip. `axis` is "horizontal" (default — left/right mirror), "vertical" (upside-down mirror), or "both". Use for "flip the video", "mirror it", "flip horizontally", "make it face the other way". It toggles, so flipping the same axis twice returns to normal.
+
+`rotateClip` rotates the clip. `degrees` defaults to 90 and is relative (adds to the current angle); pass `{"absolute":true}` to set the angle directly. Use for "rotate 90 degrees", "turn it clockwise", "the video is sideways, rotate it", "straighten this".
+
 ### Lighting
 ```
 OP: {"type":"detectLight"}

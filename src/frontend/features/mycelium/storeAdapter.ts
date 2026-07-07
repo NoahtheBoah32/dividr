@@ -2236,6 +2236,53 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'flipClip': {
+      // V2: {"type":"flipClip","axis":"horizontal"} — mirror the clip. Standard editor
+      // transform DiviDr lacked. Toggles, so "flip it" twice returns to normal.
+      const o = op as any;
+      const target = o.clipName ? findClipByName(store, o.clipName) : findMainVideoTrack(store);
+      if (!target) throw new Error('flipClip: no video clip to flip');
+      const axis = (o.axis ?? 'horizontal') as string;
+      const patch: any = {};
+      if (axis === 'horizontal' || axis === 'both') patch.flipH = !(target as any).flipH;
+      if (axis === 'vertical' || axis === 'both') patch.flipV = !(target as any).flipV;
+      store.updateTrack(target.id, patch);
+      window.dispatchEvent(
+        new CustomEvent('edith:status', { detail: { text: `Flipped ${axis}` } }),
+      );
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      break;
+    }
+
+    case 'rotateClip': {
+      // V2: {"type":"rotateClip","degrees":90} — rotate the clip. Relative by default
+      // (adds to current), or absolute when {"absolute":true}. Reuses the compositor's
+      // existing rotation render; EDITH simply couldn't drive it before.
+      const o = op as any;
+      const target = o.clipName ? findClipByName(store, o.clipName) : findMainVideoTrack(store);
+      if (!target) throw new Error('rotateClip: no video clip to rotate');
+      const deg = typeof o.degrees === 'number' ? o.degrees : 90;
+      const tf = ((target as any).textTransform ?? {}) as any;
+      const current = Number.isFinite(tf.rotation) ? tf.rotation : 0;
+      const next = ((o.absolute ? deg : current + deg) % 360 + 360) % 360;
+      store.updateTrack(target.id, {
+        textTransform: {
+          x: tf.x ?? 0,
+          y: tf.y ?? 0,
+          scale: tf.scale ?? 1,
+          width: tf.width,
+          height: tf.height,
+          ...tf,
+          rotation: next,
+        },
+      } as any);
+      window.dispatchEvent(
+        new CustomEvent('edith:status', { detail: { text: `Rotated to ${Math.round(next)}°` } }),
+      );
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      break;
+    }
+
     case 'separateStems': {
       // V2: {"type":"separateStems"}
       // Same mechanism as isolateVoice (unlock the curve + bake real stems),

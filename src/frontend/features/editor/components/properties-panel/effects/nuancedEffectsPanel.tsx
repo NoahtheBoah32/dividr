@@ -5,7 +5,7 @@ import { Slider } from '@/frontend/components/ui/slider';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor/index';
 import { operationEngine } from '@/frontend/features/mycelium/operationEngine';
 import { cn } from '@/frontend/utils/utils';
-import { Gauge, Loader2, Snowflake, Sun } from 'lucide-react';
+import { FlipHorizontal, FlipVertical, Gauge, Loader2, RotateCw, Snowflake, Sun } from 'lucide-react';
 import { newLightId } from '@/frontend/features/editor/preview/utils/paintedLightUtils';
 import React, { useEffect, useMemo, useState } from 'react';
 
@@ -221,6 +221,39 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
   };
   const paintedLights = (((clip as any)?.paintedLights as any[]) ?? []);
 
+  // Transform (flip / rotate) — standard editor features DiviDr was missing. Manual
+  // buttons here enqueue nothing heavy: they toggle/set the same fields EDITH's
+  // flipClip / rotateClip ops write, so the compositor mirrors/rotates the clip live.
+  const flipClip = (axis: 'horizontal' | 'vertical') => {
+    if (!clip) return;
+    beginGroup?.('Flip');
+    updateTrack(
+      clip.id,
+      (axis === 'horizontal'
+        ? { flipH: !(clip as any).flipH }
+        : { flipV: !(clip as any).flipV }) as any,
+    );
+    endGroup?.();
+    window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+  };
+  const rotate90 = () => {
+    if (!clip) return;
+    const tf = (((clip as any).textTransform ?? {}) as any);
+    const next = ((((tf.rotation ?? 0) + 90) % 360) + 360) % 360;
+    beginGroup?.('Rotate');
+    updateTrack(
+      clip.id,
+      {
+        textTransform: {
+          x: tf.x ?? 0, y: tf.y ?? 0, scale: tf.scale ?? 1,
+          width: tf.width, height: tf.height, ...tf, rotation: next,
+        },
+      } as any,
+    );
+    endGroup?.();
+    window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+  };
+
   const num = (v: string) => { const n = parseFloat(v); return isNaN(n) ? 0 : Math.max(0, n); };
 
   return (
@@ -313,6 +346,27 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
           className="w-full h-8 bg-[hsl(var(--secondary))] text-white hover:bg-[hsl(var(--secondary))]/90">
           {running === 'speed' ? <><Loader2 className="size-3.5 mr-1.5 animate-spin" />Retiming…</> : (rsLasso ? 'Apply to drawn region' : 'Apply region speed')}
         </Button>
+      </div>
+
+      <Separator />
+
+      {/* ── Transform (flip / rotate) ───────────────── */}
+      <div className="space-y-3">
+        <SectionHeading icon={<FlipHorizontal className="size-4" />} title="Transform"
+          hint="Mirror or rotate the clip — the standard flip/rotate DiviDr was missing." />
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => flipClip('horizontal')}
+            className={cn('flex-1 h-8', (clip as any).flipH && 'bg-[hsl(var(--secondary))] text-white border-transparent')}>
+            <FlipHorizontal className="size-3.5 mr-1.5" />Flip H
+          </Button>
+          <Button variant="outline" onClick={() => flipClip('vertical')}
+            className={cn('flex-1 h-8', (clip as any).flipV && 'bg-[hsl(var(--secondary))] text-white border-transparent')}>
+            <FlipVertical className="size-3.5 mr-1.5" />Flip V
+          </Button>
+          <Button variant="outline" onClick={rotate90} className="flex-1 h-8">
+            <RotateCw className="size-3.5 mr-1.5" />90°
+          </Button>
+        </div>
       </div>
 
       <Separator />

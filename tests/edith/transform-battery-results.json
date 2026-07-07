@@ -1,0 +1,122 @@
+[
+  {
+    "n": 1,
+    "want": "flip",
+    "prompt": "flip the video horizontally",
+    "verdict": "PASS",
+    "ops": [
+      "flipClip"
+    ],
+    "reason": "exactly one flipClip axis=horizontal"
+  },
+  {
+    "n": 2,
+    "want": "flip",
+    "prompt": "mirror the clip",
+    "verdict": "PASS",
+    "ops": [
+      "flipClip"
+    ],
+    "reason": "exactly one flipClip axis=horizontal"
+  },
+  {
+    "n": 3,
+    "want": "flip",
+    "prompt": "flip it",
+    "verdict": "PASS",
+    "ops": [
+      "flipClip"
+    ],
+    "reason": "exactly one flipClip axis=horizontal"
+  },
+  {
+    "n": 4,
+    "want": "flip",
+    "prompt": "flip it vertically",
+    "verdict": "PASS",
+    "ops": [
+      "flipClip"
+    ],
+    "reason": "exactly one flipClip axis=vertical"
+  },
+  {
+    "n": 5,
+    "want": "flip",
+    "prompt": "make him face the other way",
+    "verdict": "PASS",
+    "ops": [
+      "flipClip"
+    ],
+    "reason": "exactly one flipClip axis=horizontal"
+  },
+  {
+    "n": 6,
+    "want": "rotate",
+    "prompt": "rotate 90 degrees",
+    "verdict": "PASS",
+    "ops": [
+      "rotateClip"
+    ],
+    "reason": "exactly one rotateClip deg=90"
+  },
+  {
+    "n": 7,
+    "want": "rotate",
+    "prompt": "the video is sideways, rotate it",
+    "verdict": "PASS",
+    "ops": [
+      "rotateClip"
+    ],
+    "reason": "exactly one rotateClip deg=90"
+  },
+  {
+    "n": 8,
+    "want": "rotate",
+    "prompt": "turn it clockwise",
+    "verdict": "PASS",
+    "ops": [
+      "rotateClip"
+    ],
+    "reason": "exactly one rotateClip deg=90"
+  },
+  {
+    "n": 9,
+    "want": "control",
+    "prompt": "make it brighter",
+    "verdict": "PASS",
+    "ops": [
+      "grade"
+    ],
+    "reason": "no transform op (correct)"
+  },
+  {
+    "n": 10,
+    "want": "control",
+    "prompt": "cut the first 3 seconds",
+    "verdict": "PASS",
+    "ops": [
+      "trim"
+    ],
+    "reason": "no transform op (correct)"
+  },
+  {
+    "n": 11,
+    "want": "control",
+    "prompt": "zoom into his face",
+    "verdict": "PASS",
+    "ops": [
+      "zoomToFace"
+    ],
+    "reason": "no transform op (correct)"
+  },
+  {
+    "n": 12,
+    "want": "control",
+    "prompt": "add a caption that says hi",
+    "verdict": "PASS",
+    "ops": [
+      "caption"
+    ],
+    "reason": "no transform op (correct)"
+  }
+]
