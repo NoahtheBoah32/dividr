@@ -942,8 +942,11 @@ export function registerMyceliumIPC(
     try { const s = require('ffmpeg-static') as string; if (s) ffmpegBin = s; } catch {}
 
     const durationSec = await getAudioDurationSec(clipPath).catch(() => 60);
-    // Space `maxFrames` samples across the WHOLE clip (never denser than intervalSec).
-    const actualInterval = Math.max(intervalSec, durationSec / maxFrames);
+    // Space samples across the WHOLE clip (never denser than intervalSec). Cap the total
+    // so an over-eager dense request (e.g. 225 frames) can't blow the vision API's
+    // token/size limit — the frames are sent in batches below, so 100 is plenty coverage.
+    const effMaxFrames = Math.min(Math.max(1, maxFrames), 100);
+    const actualInterval = Math.max(intervalSec, durationSec / effMaxFrames);
 
     const tmpDir = path.join(os.tmpdir(), `edith-scan-${Date.now()}`);
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -980,61 +983,68 @@ export function registerMyceliumIPC(
     console.log('[scanVideoFrames] extracted', frames.length, 'frames');
     if (!frames.length) return { success: false, error: 'No frames extracted' };
 
-    // Send all frames to Haiku in one call
-    const content: any[] = [];
-    for (const f of frames) {
-      const mm = String(Math.floor(f.timeSec / 60)).padStart(2, '0');
-      const ss = String(Math.floor(f.timeSec % 60)).padStart(2, '0');
-      content.push({ type: 'text', text: `Frame at ${mm}:${ss} (${f.timeSec.toFixed(1)}s):` });
-      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.base64 } });
-    }
-
-    if (findAll) {
-      // findAll mode: label every frame, return all matching timestamps
+    // Send frames to the vision model in BATCHES. A single request cannot hold dozens of
+    // full images without exceeding the token/size limit, so a dense "scan the whole
+    // video" pass in one call would fail outright and look like "not found".
+    const BATCH = 20;
+    const label = (t: number) => {
+      const mm = String(Math.floor(t / 60)).padStart(2, '0');
+      const ss = String(Math.floor(t % 60)).padStart(2, '0');
+      return `Frame at ${mm}:${ss} (${t.toFixed(1)}s):`;
+    };
+    const askBatch = async (batch: typeof frames): Promise<string> => {
+      const content: any[] = [];
+      for (const f of batch) {
+        content.push({ type: 'text', text: label(f.timeSec) });
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.base64 } });
+      }
       content.push({
         type: 'text',
-        text: `For each frame above, say YES or NO: does it show "${description}"?\nRespond with ONLY the timestamps (in seconds) of frames where the answer is YES, one per line.\nIf none match, respond with "none".`,
+        text: findAll
+          ? `For each frame above, does it show "${description}"?\nRespond with ONLY the timestamps (in seconds) of frames where the answer is YES, one per line. If none match, respond "none".`
+          : `Which frame above best shows "${description}"?\nRespond with ONLY the timestamp in seconds as a number (e.g. 7.4), or "not found" if none match.`,
       });
-    } else {
-      content.push({
-        type: 'text',
-        text: `Which frame best shows: "${description}"?\nRespond with ONLY the timestamp in seconds as a number (e.g. 7.4), or "not found" if none match.`,
-      });
-    }
-
-    try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: findAll ? 200 : 20,
+          max_tokens: findAll ? 300 : 20,
           messages: [{ role: 'user', content }],
         }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(40000),
       });
-      if (!res.ok) return { success: false, error: await res.text() };
+      if (!res.ok) throw new Error(await res.text());
       const data = await res.json() as any;
-      const raw: string = data.content?.[0]?.text?.trim() ?? '';
-      console.log('[scanVideoFrames] Haiku response:', raw);
+      return (data.content?.[0]?.text?.trim() ?? '');
+    };
 
-      if (findAll) {
-        if (raw.toLowerCase() === 'none' || !raw) {
-          return { success: true, allMatchesSec: [], foundAtSec: null };
+    try {
+      const allMatchesSec: number[] = [];
+      let firstFound: number | null = null;
+      for (let start = 0; start < frames.length; start += BATCH) {
+        const batch = frames.slice(start, start + BATCH);
+        const raw = await askBatch(batch);
+        console.log(`[scanVideoFrames] batch ${Math.floor(start / BATCH)} (${batch.length} frames):`, raw);
+        if (findAll) {
+          if (raw && raw.toLowerCase() !== 'none') {
+            for (const line of raw.split('\n')) {
+              const n = parseFloat(line.trim());
+              if (!isNaN(n)) allMatchesSec.push(n);
+            }
+          }
+        } else if (!raw.toLowerCase().includes('not found')) {
+          const n = parseFloat(raw);
+          if (!isNaN(n)) { firstFound = n; break; } // earliest batch with a hit wins
         }
-        const allMatchesSec = raw
-          .split('\n')
-          .map((line: string) => parseFloat(line.trim()))
-          .filter((n: number) => !isNaN(n));
-        console.log('[scanVideoFrames] findAll matches:', allMatchesSec);
-        return { success: true, allMatchesSec, foundAtSec: allMatchesSec[0] ?? null };
       }
 
-      if (raw.toLowerCase().includes('not found')) return { success: true, foundAtSec: null };
-      const foundAtSec = parseFloat(raw);
-      if (isNaN(foundAtSec)) return { success: true, foundAtSec: null };
+      if (findAll) {
+        return { success: true, allMatchesSec, foundAtSec: allMatchesSec[0] ?? null };
+      }
+      if (firstFound === null) return { success: true, foundAtSec: null };
       const bestFrame = frames.reduce((best, f) =>
-        Math.abs(f.timeSec - foundAtSec) < Math.abs(best.timeSec - foundAtSec) ? f : best
+        Math.abs(f.timeSec - firstFound!) < Math.abs(best.timeSec - firstFound!) ? f : best,
       );
       return { success: true, foundAtSec: bestFrame.timeSec, frameBase64: bestFrame.base64 };
     } catch (e) {
