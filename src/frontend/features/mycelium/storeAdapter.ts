@@ -3204,29 +3204,38 @@ async function applyOp(op: Op): Promise<void> {
       }
 
       const sfxColor = (op as any).color as string | undefined;
-      // Keep every SFX on ONE overlay row (row 1). Land it at the exact frame when that
-      // spot is free; if it would overlap an SFX already on row 1, butt it right after
-      // that clip so they stay separate, individually-visible segments on the single row
-      // instead of piling into one merged block.
-      let sfxStart = atFrame;
-      const row1Sfx = (store.tracks as any[])
-        .filter((t: any) => (t.trackRowIndex ?? 0) === 1 && t.type === 'audio')
-        .sort((a: any, b: any) => a.startFrame - b.startFrame);
-      for (let guard = 0; guard < 256; guard++) {
-        const hit = row1Sfx.find(
-          (t: any) => !(sfxStart + durationFrames <= t.startFrame || sfxStart >= t.endFrame),
-        );
-        if (!hit) break;
-        sfxStart = hit.endFrame; // slide past the colliding clip and re-check
+      const sfxEndFrame = atFrame + durationFrames;
+      // Priority by recency. The NEW SFX always takes row 1 at its EXACT frame. Any SFX
+      // already on row 1 that overlaps it is pushed UP to the lowest free overlay row
+      // above, so the newest sits under the older ones and every clip keeps its exact
+      // moment (nothing merges into a block; the user can trim/rearrange later).
+      const clashRow1 = (store.tracks as any[]).filter(
+        (t: any) =>
+          (t.trackRowIndex ?? 0) === 1 &&
+          t.type === 'audio' &&
+          !(sfxEndFrame <= t.startFrame || atFrame >= t.endFrame),
+      );
+      for (const clip of clashRow1) {
+        let row = 2;
+        for (; row < 128; row++) {
+          const occupied = (store.tracks as any[]).some(
+            (t: any) =>
+              t.id !== clip.id &&
+              (t.trackRowIndex ?? 0) === row &&
+              t.type === 'audio' &&
+              !(clip.endFrame <= t.startFrame || clip.startFrame >= t.endFrame),
+          );
+          if (!occupied) break;
+        }
+        store.updateTrack(clip.id, { trackRowIndex: row, layer: row });
       }
-      const sfxEndFrame = sfxStart + durationFrames;
       const placedSfxId = await store.addTrack({
         type: 'audio' as const,
         name: trackName,
         source: entry.path,
         previewUrl,
         mediaId,
-        startFrame: sfxStart,
+        startFrame: atFrame,
         endFrame: sfxEndFrame,
         trackRowIndex: 1,
         layer: 1,
@@ -3236,12 +3245,12 @@ async function applyOp(op: Op): Promise<void> {
         sourceStartTime: audioStart,
         ...(sfxColor ? { color: sfxColor } : {}),
       } as any);
-      // Force the resolved frame + row. addTrack's audio placement otherwise nudges a
-      // clip off its slot (and treats startFrame 0 as "append"); re-assert here. Also
+      // Force the EXACT frame + row 1. addTrack's audio placement otherwise nudges a clip
+      // off its moment (and treats startFrame 0 as "append"); re-assert here. Also
       // re-assert the colour, since addTrack auto-assigns one from the palette.
       if (placedSfxId) {
         store.updateTrack(placedSfxId, {
-          startFrame: sfxStart,
+          startFrame: atFrame,
           endFrame: sfxEndFrame,
           trackRowIndex: 1,
           layer: 1,

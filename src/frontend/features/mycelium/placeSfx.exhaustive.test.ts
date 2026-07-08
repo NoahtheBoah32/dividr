@@ -115,21 +115,25 @@ describe('placeSFX — every SFX lands on the timeline at the exact frame, green
     expect(h.store._addTrackCalls.length).toBe(0);
   });
 
-  it('keeps SFX on ONE row and butts overlapping ones after each other (no merged block)', async () => {
+  it('newest SFX takes row 1 at the exact frame; overlapping older ones are pushed up a layer', async () => {
     h.store = h.make();
-    // Three SFX dropped at the SAME moment — must not pile into one block.
-    for (let i = 0; i < 3; i++) {
-      await applyOpForTest({ type: 'placeSFX', file: 'boom_impact.mp3', atTime: 100 / FPS, volume: -3, color: SFX_TIMELINE_GREEN } as any);
+    // Three overlapping SFX dropped at the SAME moment, in order.
+    const order = ['applause_clap.mp3', 'boom_impact.mp3', 'whoosh_transition.mp3'];
+    for (const file of order) {
+      await applyOpForTest({ type: 'placeSFX', file, atTime: 100 / FPS, volume: -3, color: SFX_TIMELINE_GREEN } as any);
     }
-    const audio = h.store._addTrackCalls.filter((t: any) => t.type === 'audio');
+    const audio = h.store.tracks.filter((t: any) => t.type === 'audio');
     expect(audio.length).toBe(3);
-    // all stay on the single overlay row (row 1)
-    expect(audio.every((t: any) => t.trackRowIndex === 1)).toBe(true);
-    // sequential, non-overlapping; the first lands at the exact frame
-    const sorted = audio.slice().sort((a: any, b: any) => a.startFrame - b.startFrame);
-    expect(sorted[0].startFrame).toBe(100);
-    for (let i = 1; i < sorted.length; i++) {
-      expect(sorted[i].startFrame).toBeGreaterThanOrEqual(sorted[i - 1].endFrame);
-    }
+    // every clip keeps its EXACT frame — only the row changes
+    expect(audio.every((t: any) => t.startFrame === 100)).toBe(true);
+    // on distinct rows → no two overlap
+    expect(new Set(audio.map((t: any) => t.trackRowIndex)).size).toBe(3);
+    // the NEWEST (last placed) sits on row 1, older overlapping ones pushed above
+    const onRow1 = audio.filter((t: any) => t.trackRowIndex === 1);
+    expect(onRow1.length).toBe(1);
+    expect(onRow1[0].source).toContain('whoosh_transition');
+    // the applause (oldest) got bumped up off row 1
+    const applause = audio.find((t: any) => t.source.includes('applause_clap'));
+    expect(applause.trackRowIndex).toBeGreaterThanOrEqual(2);
   });
 });
