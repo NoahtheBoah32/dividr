@@ -1,0 +1,26 @@
+transcript mounted: 133 word spans
+[QUOTE PASS] "the Earth and Moon"
+[QUOTE PASS] "one and a half inches"
+[QUOTE PASS] "a quarter of a million miles"
+[QUOTE PASS] "the scale we used"
+[QUOTE PASS] "the 10 billion miles"
+[QUOTE PASS] "Voyager 2 has traveled"
+[QUOTE PASS] "This month marks 40 years"
+[QUOTE PASS] "the spacecraft has been traveling"
+[QUOTE PASS] "on its mission to reach"
+[QUOTE PASS] "the giant planets of our solar system"
+[QUOTE PASS] "deliver this golden record"
+[QUOTE PASS] "containing sounds and images"
+[QUOTE PASS] "of human life"
+[QUOTE PASS] "to any extraterrestrials it might encounter"
+[QUOTE PASS] "it's been traveling through space"
+[QUOTE PASS] "at the rate of nearly"
+[QUOTE PASS] "a live tracker on their website"
+[QUOTE PASS] "how far it's gone"
+[QUOTE PASS] "hard to wrap your head around"
+[QUOTE PASS] "the giant planets"
+[NEG open-quote PASS] unfinished quote placed nothing
+[NEG no-match PASS] unknown quote placed nothing
+
+=== SFX 0/41 · QUOTES 20/20 · negatives 2/2 ===
+EXIT=0
