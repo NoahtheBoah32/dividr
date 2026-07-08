@@ -43,7 +43,7 @@ import {
 import { pullPhrase, movePhrase } from './transcriptSurgery';
 import { operationEngine } from '../../../../mycelium/operationEngine';
 import { getSfxNames } from '../../../../mycelium/sfxLibraryCache';
-import { sfxOpForWord, SFX_MARKER_YELLOW } from './sfxTriggerUtils';
+import { sfxOpForWord, resolveSfxName, SFX_MARKER_YELLOW } from './sfxTriggerUtils';
 import {
   applyDeletion,
   type EditWord,
@@ -292,6 +292,9 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
 
   const editorRef = useRef<HTMLDivElement>(null);
   const pendingCaretRef = useRef<EditCaret | null>(null);
+  // Set right after a typing keystroke so the caret snaps to the end of the annotation
+  // buffer on the next render (but never yanks it there on unrelated re-renders).
+  const typingCaretPendingRef = useRef(false);
 
   // ---- DOM <-> model mapping -------------------------------------------------
   const caretFromDom = useCallback(
@@ -365,11 +368,35 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     sel?.addRange(range);
   }, []);
 
+  // Put the caret at the end of the annotation buffer span so typing feels natural.
+  const placeCaretInTyping = useCallback(() => {
+    const root = editorRef.current;
+    if (!root) return;
+    if (document.activeElement !== root && !root.contains(document.activeElement)) return;
+    const span = root.querySelector('[data-typing]') as HTMLElement | null;
+    if (!span) return;
+    const range = document.createRange();
+    const tn = span.firstChild;
+    if (tn && tn.nodeType === 3) {
+      const len = tn.textContent?.length ?? 0;
+      range.setStart(tn, len);
+    } else {
+      range.selectNodeContents(span);
+    }
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, []);
+
   // Restore the caret after each model-driven re-render.
   useLayoutEffect(() => {
     if (pendingCaretRef.current) {
       placeCaret(pendingCaretRef.current);
       pendingCaretRef.current = null;
+    } else if (typingCaretPendingRef.current) {
+      placeCaretInTyping();
+      typingCaretPendingRef.current = false;
     }
   });
 
@@ -516,19 +543,32 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     ],
   );
 
-  // ---- Asterisk SFX markers --------------------------------------------------
-  // Typing a COMPLETE *word* that names a real library SFX drops that sound onto the
-  // timeline (overlay, green clip) at exactly this word's frame and turns the marker
-  // bright yellow. *whoosh (unclosed) or *divebomb* (not a real SFX) do nothing. Only
-  // asterisk markers are accepted — word typing stays blocked, so delete-only is intact.
-  const [sfxMarker, setSfxMarker] = useState<{ anchorWordId: string; text: string } | null>(null);
-  const sfxMarkerRef = useRef(sfxMarker);
-  sfxMarkerRef.current = sfxMarker;
+  // ---- Typing in the transcript: inline *sfx* and "quote" triggers -----------
+  // The box stays delete-only for the spoken WORDS, but you can also TYPE annotations
+  // at the caret. A completed *whoosh* drops that sound (yellow marker); a completed
+  // "quoted phrase" that matches an existing scene DUPLICATES that clip here (green
+  // marker) and ripples everything after it forward. An unfinished *whoosh or open
+  // "..." does nothing. Nothing that already worked was removed.
+  const SCENE_GREEN = '#22c55e';
+  const [typing, setTyping] = useState<{ anchorWordId: string; text: string } | null>(null);
+  const typingRef = useRef(typing);
+  typingRef.current = typing;
   const [sfxMsg, setSfxMsg] = useState<string | null>(null);
   const sfxSeqRef = useRef(0);
+  const quoteSeqRef = useRef(0);
   const flashSfx = useCallback((m: string) => {
     setSfxMsg(m);
-    window.setTimeout(() => setSfxMsg((c) => (c === m ? null : c)), 2400);
+    window.setTimeout(() => setSfxMsg((c) => (c === m ? null : c)), 2600);
+  }, []);
+
+  // Timeline frame of the point the annotation sits at (end of the word it follows).
+  const anchorFrame = useCallback((anchorWordId: string): number => {
+    const f = modelRef.current.fps;
+    const anchor = modelRef.current.words.find((w) => w.id === anchorWordId);
+    const range = anchor ? wordToTimelineRange(anchor, coverageClipsRef.current, f) : null;
+    if (range) return range.toFrame;
+    const st = useVideoEditorStore.getState() as any;
+    return st.currentFrame ?? st.timeline?.currentFrame ?? 0;
   }, []);
 
   const commitSfxMarker = useCallback(
@@ -538,13 +578,7 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         flashSfx('SFX library is still loading — try again in a moment.');
         return;
       }
-      const f = modelRef.current.fps;
-      const anchor = modelRef.current.words.find((w) => w.id === anchorWordId);
-      const range = anchor ? wordToTimelineRange(anchor, coverageClipsRef.current, f) : null;
-      const st = useVideoEditorStore.getState() as any;
-      const playhead = st.currentFrame ?? st.timeline?.currentFrame ?? 0;
-      const atFrame = range ? range.toFrame : playhead; // end of the word the marker follows
-      const op = sfxOpForWord(word, atFrame, f, names);
+      const op = sfxOpForWord(word, anchorFrame(anchorWordId), modelRef.current.fps, names);
       if (!op) {
         flashSfx(`“${word}” isn't a sound effect in the library.`);
         return;
@@ -560,96 +594,146 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       } as any);
       flashSfx(`Placed ${op.trackName} on the timeline.`);
     },
-    [track, updateTrack, flashSfx],
+    [track, updateTrack, flashSfx, anchorFrame],
   );
 
-  // Feed typed characters into the marker state machine. Returns nothing; only
-  // asterisk-delimited markers are captured, everything else is ignored (no free typing).
-  const handleSfxInsert = useCallback(
-    (data: string) => {
-      if (!data) return;
-      let cur = sfxMarkerRef.current;
-      for (const c of data) {
-        if (!cur) {
-          if (c === '*') {
-            const sel = readSelection();
-            const anchorId =
-              sel?.focus.wordId ??
-              sel?.anchor.wordId ??
-              modelRef.current.words.find((w) =>
-                isWordPresent(w, coverageClipsRef.current, modelRef.current.fps),
-              )?.id ??
-              modelRef.current.words[0]?.id;
-            if (!anchorId) return;
-            cur = { anchorWordId: anchorId, text: '*' };
+  const commitQuoteInsert = useCallback(
+    async (anchorWordId: string, phrase: string) => {
+      const src = subject.source;
+      if (!src) return;
+      const match = matchPhraseInWords(modelRef.current.words, phrase);
+      if (!match) {
+        flashSfx(`“${phrase.slice(0, 34)}…” isn't a line in this transcript.`);
+        return;
+      }
+      const res = await pullPhrase(
+        src, match.startSec, match.endSec, anchorFrame(anchorWordId), modelRef.current.fps, SCENE_GREEN,
+      );
+      if (!res.ok) {
+        flashSfx(`Couldn't insert: ${res.error}`);
+        return;
+      }
+      const markers = [...(((track as any).sceneQuoteMarkers as any[]) ?? [])];
+      quoteSeqRef.current += 1;
+      updateTrack(track.id, {
+        sceneQuoteMarkers: [
+          ...markers,
+          { id: `q_${anchorWordId}_${quoteSeqRef.current}`, afterWordId: anchorWordId, phrase },
+        ],
+      } as any);
+      flashSfx('Duplicated that scene onto the timeline.');
+    },
+    [subject.source, track, updateTrack, flashSfx, anchorFrame],
+  );
+
+  // After appending `lastChar`, fire whichever marker just completed. Returns the
+  // buffer with the fired portion stripped (or unchanged when nothing fired). Only a
+  // COMPLETE, valid marker fires — an open *whoosh / "..." leaves the text alone.
+  const tryFireTriggers = useCallback(
+    (buf: { anchorWordId: string; text: string }, lastChar: string) => {
+      if (lastChar === '*') {
+        const m = buf.text.match(/\*([^*\n]+)\*$/);
+        if (m) {
+          const word = m[1].trim();
+          if (resolveSfxName(word, getSfxNames())) {
+            commitSfxMarker(buf.anchorWordId, word);
+            return { anchorWordId: buf.anchorWordId, text: buf.text.slice(0, m.index) };
           }
-          // else: a plain character with no marker open → ignore (delete-only for words)
-        } else if (c === '*') {
-          const word = cur.text.slice(1).trim(); // strip the opening asterisk
-          const anchorId = cur.anchorWordId;
-          cur = null;
-          if (word) commitSfxMarker(anchorId, word);
-        } else if (c === '\n') {
-          cur = null;
-        } else {
-          cur = { anchorWordId: cur.anchorWordId, text: cur.text + c };
+        }
+      } else if (lastChar === '"' || lastChar === '”') {
+        const m = buf.text.match(/["“]([^"“”\n]+)["”]$/);
+        if (m) {
+          const phrase = m[1].trim();
+          if (phrase && matchPhraseInWords(modelRef.current.words, phrase)) {
+            void commitQuoteInsert(buf.anchorWordId, phrase);
+            return { anchorWordId: buf.anchorWordId, text: buf.text.slice(0, m.index) };
+          }
         }
       }
-      sfxMarkerRef.current = cur;
-      setSfxMarker(cur);
+      return buf;
     },
-    [readSelection, commitSfxMarker],
+    [commitSfxMarker, commitQuoteInsert],
   );
 
-  const backspaceMarker = useCallback(() => {
-    const cur = sfxMarkerRef.current;
+  const startAnchor = useCallback((): string | null => {
+    const sel = readSelection();
+    return (
+      sel?.focus.wordId ??
+      sel?.anchor.wordId ??
+      modelRef.current.words.find((w) =>
+        isWordPresent(w, coverageClipsRef.current, modelRef.current.fps),
+      )?.id ??
+      modelRef.current.words[0]?.id ??
+      null
+    );
+  }, [readSelection]);
+
+  // Free typing at the caret → the annotation buffer. Triggers fire on completion.
+  const handleTyping = useCallback(
+    (data: string) => {
+      if (!data) return;
+      let cur = typingRef.current;
+      for (const ch of data) {
+        if (ch === '\n' || ch === '\r') { cur = null; continue; }
+        if (!cur) {
+          const anchorId = startAnchor();
+          if (!anchorId) return;
+          cur = { anchorWordId: anchorId, text: ch };
+        } else {
+          cur = { anchorWordId: cur.anchorWordId, text: cur.text + ch };
+        }
+        cur = tryFireTriggers(cur, ch);
+        if (cur && cur.text === '') cur = null;
+      }
+      typingRef.current = cur;
+      typingCaretPendingRef.current = true;
+      setTyping(cur);
+    },
+    [startAnchor, tryFireTriggers],
+  );
+
+  const backspaceTyping = useCallback(() => {
+    const cur = typingRef.current;
     if (!cur) return;
     const nt = cur.text.slice(0, -1);
     const next = nt.length > 0 ? { anchorWordId: cur.anchorWordId, text: nt } : null;
-    sfxMarkerRef.current = next;
-    setSfxMarker(next);
+    typingRef.current = next;
+    typingCaretPendingRef.current = !!next;
+    setTyping(next);
   }, []);
 
-  const cancelMarker = useCallback(() => {
-    if (!sfxMarkerRef.current) return;
-    sfxMarkerRef.current = null;
-    setSfxMarker(null);
+  const cancelTyping = useCallback(() => {
+    if (!typingRef.current) return;
+    typingRef.current = null;
+    setTyping(null);
   }, []);
 
-  // Native beforeinput: only asterisk-SFX markers are accepted as input; deletions are
-  // intercepted (marker backspace while composing, else the word ripple-delete).
+  // Native beforeinput: free typing goes to the annotation buffer; deletions hit the
+  // buffer first (while typing), else the word ripple-delete. Nothing applies natively.
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
     const onBeforeInput = (e: Event) => {
       const ie = e as InputEvent;
       const t = ie.inputType || '';
-      e.preventDefault(); // we own all edits; nothing is applied natively
-      if (t.startsWith('insert')) {
-        handleSfxInsert((ie.data ?? '') as string);
-        return;
-      }
+      e.preventDefault();
+      if (t.startsWith('insert')) { handleTyping((ie.data ?? '') as string); return; }
       if (t.startsWith('delete')) {
-        if (sfxMarkerRef.current) backspaceMarker();
+        if (typingRef.current) backspaceTyping();
         else handleDelete(t);
         return;
       }
-      // every other formatting type is simply swallowed
     };
     el.addEventListener('beforeinput', onBeforeInput);
     return () => el.removeEventListener('beforeinput', onBeforeInput);
-  }, [handleDelete, handleSfxInsert, backspaceMarker]);
+  }, [handleDelete, handleTyping, backspaceTyping]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // Enter would insert a paragraph; block it outright.
       if (e.key === 'Enter') e.preventDefault();
-      if (e.key === 'Escape' && sfxMarkerRef.current) {
-        e.preventDefault();
-        cancelMarker();
-      }
+      if (e.key === 'Escape' && typingRef.current) { e.preventDefault(); cancelTyping(); }
     },
-    [cancelMarker],
+    [cancelTyping],
   );
 
   const restoreAllWords = useCallback(() => {
@@ -762,12 +846,18 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
   const totalWords = allWords.length;
   const deletedCount = allWords.filter((w) => isDeleted(w)).length;
 
-  // Committed asterisk-SFX markers grouped by the word they follow (bright-yellow chips).
+  // Committed markers grouped by the word they follow: SFX (yellow), quote-inserts (green).
   const sfxByWord = new Map<string, { id: string; word: string; file: string }[]>();
   for (const mk of (((track as any).sfxMarkers as any[]) ?? [])) {
     const arr = sfxByWord.get(mk.afterWordId) ?? [];
     arr.push(mk);
     sfxByWord.set(mk.afterWordId, arr);
+  }
+  const quoteByWord = new Map<string, { id: string; phrase: string }[]>();
+  for (const mk of (((track as any).sceneQuoteMarkers as any[]) ?? [])) {
+    const arr = quoteByWord.get(mk.afterWordId) ?? [];
+    arr.push(mk);
+    quoteByWord.set(mk.afterWordId, arr);
   }
 
   return (
@@ -859,10 +949,11 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       )}
 
       <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-        Click into the text and backspace through a whole word to cut it from the
-        video. Partial edits stay until the word is fully removed. Type a sound effect
-        in <span className="font-mono" style={{ color: SFX_MARKER_YELLOW }}>*asterisks*</span>{' '}
-        (e.g. <span className="font-mono">*whoosh*</span>) to drop it on the timeline at that word.
+        Backspace through a whole word to cut it from the video. You can also TYPE here:
+        a sound effect in <span className="font-mono" style={{ color: SFX_MARKER_YELLOW }}>*asterisks*</span>{' '}
+        (e.g. <span className="font-mono">*whoosh*</span>) drops it on the timeline, and a full{' '}
+        <span className="font-mono" style={{ color: SCENE_GREEN }}>"quoted line"</span> from the
+        transcript duplicates that scene here. Leave either one unfinished and nothing happens.
       </p>
       {sfxMsg && (
         <p className="text-[11px]" style={{ color: SFX_MARKER_YELLOW }}>{sfxMsg}</p>
@@ -874,7 +965,7 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         suppressContentEditableWarning
         spellCheck={false}
         onKeyDown={onKeyDown}
-        onBlur={() => { closeGroup(); cancelMarker(); }}
+        onBlur={() => { closeGroup(); cancelTyping(); }}
         onPaste={(e) => e.preventDefault()}
         onDrop={(e) => e.preventDefault()}
         role="textbox"
@@ -935,14 +1026,31 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
                         *{mk.word}*{' '}
                       </span>
                     ))}
-                    {sfxMarker?.anchorWordId === w.id && (
+                    {(quoteByWord.get(w.id) ?? []).map((mk) => (
                       <span
+                        key={mk.id}
                         contentEditable={false}
-                        className="mx-0.5 inline select-none font-mono text-[13px]"
-                        style={{ color: 'rgba(255,230,0,0.65)' }}
-                        title="Finish with a closing asterisk to place the SFX"
+                        className="mx-0.5 inline select-none font-mono text-[13px] font-bold"
+                        style={{ color: SCENE_GREEN, textShadow: '0 0 6px rgba(34,197,94,0.4)' }}
+                        title="Scene duplicated onto the timeline"
                       >
-                        {sfxMarker.text}
+                        “{mk.phrase.length > 28 ? mk.phrase.slice(0, 28) + '…' : mk.phrase}”{' '}
+                      </span>
+                    ))}
+                    {typing?.anchorWordId === w.id && (
+                      <span
+                        data-typing
+                        className="mx-0.5 inline font-mono text-[13px]"
+                        style={{
+                          color: 'var(--foreground, #e8ebf0)',
+                          background: 'rgba(255,255,255,0.08)',
+                          borderRadius: 3,
+                          padding: '0 2px',
+                          whiteSpace: 'pre',
+                        }}
+                        title='Finish a *sfx* or a "quote" to trigger it'
+                      >
+                        {typing.text}
                       </span>
                     )}
                   </React.Fragment>

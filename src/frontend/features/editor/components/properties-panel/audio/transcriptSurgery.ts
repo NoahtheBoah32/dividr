@@ -52,9 +52,31 @@ export function coverageClipsForSource(source: string, subjectType: SubjectType 
   }));
 }
 
-/** Shift every clip at/after `atFrame` right by `gapFrames` — opens a gap to insert into. */
+/**
+ * Open a gap of `gapFrames` at `atFrame` so a block can be inserted there and
+ * everything after it is pushed forward.
+ *
+ * A single continuous clip that STRADDLES the insert point is first split at
+ * atFrame (splitTrack cascades to its linked audio), so its right half becomes a
+ * clip starting at atFrame that can shift. Without this, inserting into the middle
+ * of one long clip (the common case for a whole-video transcript) would overlap the
+ * clip instead of rippling it forward.
+ */
 function rippleOpen(atFrame: number, gapFrames: number): void {
   if (gapFrames <= 0) return;
+  // 1) Split any clip that straddles the insert point (video/audio only; linked
+  //    audio splits with its video via splitTrack's cascade).
+  const s0 = state();
+  for (const clip of [...(s0.tracks as any[])]) {
+    if (
+      (clip.type === 'video' || clip.type === 'audio') &&
+      clip.startFrame < atFrame &&
+      clip.endFrame > atFrame
+    ) {
+      s0.splitTrack(clip.id, atFrame);
+    }
+  }
+  // 2) Shift every clip now starting at/after atFrame forward by the gap.
   const s = state();
   for (const clip of [...(s.tracks as any[])]) {
     if (clip.startFrame >= atFrame) {
@@ -82,10 +104,11 @@ async function insertSourceBlock(
   sourceStartSec: number,
   durFrames: number,
   atFrame: number,
+  color?: string,
 ): Promise<void> {
   const ref = layer0OfSource(source, 'video')[0];
   const previewUrl = await makePreviewUrl(source);
-  await state().addTrack({
+  const vidId = await state().addTrack({
     type: 'video' as const,
     name: ref?.name ?? source.split(/[/\\]/).pop() ?? source,
     source,
@@ -100,7 +123,16 @@ async function insertSourceBlock(
     locked: false,
     previewUrl,
     explicitStart: true,
+    ...(color ? { color } : {}),
   } as any);
+  // addTrack auto-assigns a palette colour, so re-assert the requested one on the
+  // inserted video + its linked audio (marks a quote-duplicated scene green).
+  if (color && vidId) {
+    const s = state();
+    s.updateTrack(vidId, { color });
+    const v = (s.tracks as any[]).find((t) => t.id === vidId);
+    if (v?.linkedTrackId) s.updateTrack(v.linkedTrackId, { color });
+  }
 }
 
 /** Close the gap left by removing [fromFrame,toFrame] on the base row (deleteSegment-style, no animation). */
@@ -168,13 +200,14 @@ export async function pullSceneToFrame(
   endSec: number,
   atFrame: number,
   fps: number,
+  color?: string,
 ): Promise<SurgeryResult> {
   if (endSec <= startSec) return { ok: false, error: 'empty span' };
   const durFrames = Math.max(1, Math.round((endSec - startSec) * fps));
   state().beginGroup?.('Pull scene');
   try {
     rippleOpen(atFrame, durFrames);
-    await insertSourceBlock(source, startSec, durFrames, atFrame);
+    await insertSourceBlock(source, startSec, durFrames, atFrame, color);
   } finally {
     state().endGroup?.();
   }
@@ -220,8 +253,9 @@ export async function pullPhrase(
   endSec: number,
   targetFrame: number,
   fps: number,
+  color?: string,
 ): Promise<SurgeryResult> {
-  return pullSceneToFrame(source, startSec, endSec, targetFrame, fps);
+  return pullSceneToFrame(source, startSec, endSec, targetFrame, fps, color);
 }
 
 /** High-level: MOVE the block currently covering a spoken span to a target frame. */

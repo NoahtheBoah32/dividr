@@ -395,6 +395,12 @@ export interface VideoTrack {
    */
   sfxMarkers?: { id: string; afterWordId: string; word: string; file: string }[];
   /**
+   * Transcript quotation scene-inserts on this clip. Typing a COMPLETE "quoted phrase"
+   * that matches an existing scene duplicates that clip at that point and records a
+   * bright-green marker here so it persists in the transcript.
+   */
+  sceneQuoteMarkers?: { id: string; afterWordId: string; phrase: string }[];
+  /**
    * Source separation (stems) bake state. Powers the voiceIsolation curve.
    *
    * A one-time offline bake (MDX-Net ONNX, CPU) splits the clip into a clean
