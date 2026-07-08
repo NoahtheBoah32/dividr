@@ -586,7 +586,8 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         flashSfx('No SFX library found. Set SFX_LIBRARY_PATH and reopen.');
         return;
       }
-      const op = sfxOpForWord(word, anchorFrame(anchorWordId), modelRef.current.fps, names);
+      const atFrame = anchorFrame(anchorWordId);
+      const op = sfxOpForWord(word, atFrame, modelRef.current.fps, names);
       if (!op) {
         flashSfx(`“${word}” isn't a sound effect in the library.`);
         return;
@@ -597,13 +598,14 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       const liveTrack = (st.tracks as any[]).find((x) => x.id === track.id);
       const markers = [...(((liveTrack ?? (track as any)).sfxMarkers as any[]) ?? [])];
       sfxSeqRef.current += 1;
+      // Record atFrame so removal can find and delete exactly this placed clip later.
       updateTrack(track.id, {
         sfxMarkers: [
           ...markers,
-          { id: `sfx_${anchorWordId}_${sfxSeqRef.current}`, afterWordId: anchorWordId, word, file: op.file },
+          { id: `sfx_${anchorWordId}_${sfxSeqRef.current}`, afterWordId: anchorWordId, word, file: op.file, atFrame },
         ],
       } as any);
-      flashSfx(`Placed ${op.trackName} on the timeline.`);
+      flashSfx(`Placed ${op.trackName} — backspace or the × to undo.`);
     },
     [track, updateTrack, flashSfx, anchorFrame],
   );
@@ -720,6 +722,68 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     setTyping(null);
   }, []);
 
+  // ---- Removing a committed SFX marker (backspace / ×) -----------------------
+  // A committed *whoosh* is a locked, non-editable island, so plain backspace skips
+  // it. This removes the marker AND deletes the exact clip it placed (matched by file
+  // + the frame recorded at commit), in one undo step — so a wrong SFX can be taken
+  // back or swapped. Older markers with no atFrame fall back to the newest overlay
+  // clip of that file.
+  const baseName = (s: string | undefined) => (s || '').split(/[\\/]/).pop() ?? '';
+  const removeSfxMarker = useCallback(
+    (markerId: string) => {
+      const store = useVideoEditorStore.getState() as any;
+      const liveTrack = (store.tracks as any[]).find((x) => x.id === track.id) ?? (track as any);
+      const markers: any[] = (liveTrack.sfxMarkers as any[]) ?? [];
+      const mk = markers.find((m) => m.id === markerId);
+      if (!mk) return;
+      store.beginGroup?.('Remove SFX');
+      try {
+        // Find the placed clip: audio overlay of this file at the recorded frame.
+        const audio = (store.tracks as any[]).filter(
+          (t) => t.type === 'audio' && baseName(t.source) === mk.file,
+        );
+        const clip =
+          (typeof mk.atFrame === 'number' &&
+            audio.find((t) => t.startFrame === mk.atFrame)) ||
+          audio
+            .filter((t) => (t.trackRowIndex ?? 0) >= 1)
+            .sort((a, b) => (b.startFrame ?? 0) - (a.startFrame ?? 0))[0];
+        if (clip) (useVideoEditorStore.getState() as any).removeTrack(clip.id);
+        updateTrack(track.id, {
+          sfxMarkers: markers.filter((m) => m.id !== markerId),
+        } as any);
+      } finally {
+        (useVideoEditorStore.getState() as any).endGroup?.();
+      }
+      flashSfx(`Removed *${mk.word}* and its clip.`);
+    },
+    [track, updateTrack, flashSfx],
+  );
+
+  // If the collapsed caret sits at the very start of a word whose immediately
+  // preceding island (in document order, across line breaks) is a committed SFX
+  // marker, return that marker's id so backspace removes it instead of a character.
+  const sfxMarkerLeftOfCaret = useCallback((): string | null => {
+    const root = editorRef.current;
+    if (!root) return null;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    if (range.startOffset !== 0) return null; // a character is to the left → normal delete
+    const host = (range.startContainer.nodeType === 3
+      ? range.startContainer.parentElement
+      : (range.startContainer as Element)) as Element | null;
+    const wordSpan = host?.closest?.('[data-wid]') as HTMLElement | null;
+    if (!wordSpan) return null;
+    const flat = Array.from(
+      root.querySelectorAll('[data-wid],[data-mk-sfx],[data-mk-quote]'),
+    ) as HTMLElement[];
+    const idx = flat.indexOf(wordSpan);
+    if (idx <= 0) return null;
+    const prev = flat[idx - 1];
+    return prev.hasAttribute('data-mk-sfx') ? prev.getAttribute('data-mk-sfx') : null;
+  }, []);
+
   // Native beforeinput: free typing goes to the annotation buffer; deletions hit the
   // buffer first (while typing), else the word ripple-delete. Nothing applies natively.
   useEffect(() => {
@@ -731,14 +795,17 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       e.preventDefault();
       if (t.startsWith('insert')) { handleTyping((ie.data ?? '') as string); return; }
       if (t.startsWith('delete')) {
-        if (typingRef.current) backspaceTyping();
-        else handleDelete(t);
+        if (typingRef.current) { backspaceTyping(); return; }
+        // Backspace right after a committed *sfx* removes that marker + its clip.
+        const mkId = sfxMarkerLeftOfCaret();
+        if (mkId) { removeSfxMarker(mkId); return; }
+        handleDelete(t);
         return;
       }
     };
     el.addEventListener('beforeinput', onBeforeInput);
     return () => el.removeEventListener('beforeinput', onBeforeInput);
-  }, [handleDelete, handleTyping, backspaceTyping]);
+  }, [handleDelete, handleTyping, backspaceTyping, sfxMarkerLeftOfCaret, removeSfxMarker]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -835,6 +902,8 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         (e.g. <span className="font-mono">*whoosh*</span>) drops it on the timeline, and a full{' '}
         <span className="font-mono" style={{ color: SCENE_GREEN }}>"quoted line"</span> from the
         transcript duplicates that scene here. Leave either one unfinished and nothing happens.
+        Changed your mind? Backspace right after a <span className="font-mono" style={{ color: SFX_MARKER_YELLOW }}>*sound*</span>{' '}
+        or click its × to remove it and its clip.
       </p>
       {sfxMsg && (
         <p className="text-[11px]" style={{ color: SFX_MARKER_YELLOW }}>{sfxMsg}</p>
@@ -899,17 +968,30 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
                     {(sfxByWord.get(w.id) ?? []).map((mk) => (
                       <span
                         key={mk.id}
+                        data-mk-sfx={mk.id}
                         contentEditable={false}
-                        className="mx-0.5 inline select-none font-mono text-[13px] font-bold"
+                        className="group/sfx mx-0.5 inline select-none font-mono text-[13px] font-bold"
                         style={{ color: SFX_MARKER_YELLOW, textShadow: '0 0 6px rgba(255,230,0,0.45)' }}
-                        title={`SFX placed on the timeline: ${mk.file}`}
+                        title={`SFX on the timeline: ${mk.file} · backspace after it or click × to remove`}
                       >
-                        *{mk.word}*{' '}
+                        *{mk.word}*
+                        <button
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); removeSfxMarker(mk.id); }}
+                          className="ml-0.5 cursor-pointer align-middle text-[11px] opacity-50 hover:opacity-100 transition-opacity"
+                          style={{ color: SFX_MARKER_YELLOW }}
+                          title="Remove this sound"
+                          aria-label={`Remove ${mk.word} sound`}
+                        >
+                          ×
+                        </button>
+                        {' '}
                       </span>
                     ))}
                     {(quoteByWord.get(w.id) ?? []).map((mk) => (
                       <span
                         key={mk.id}
+                        data-mk-quote={mk.id}
                         contentEditable={false}
                         className="mx-0.5 inline select-none font-mono text-[13px] font-bold"
                         style={{ color: SCENE_GREEN, textShadow: '0 0 6px rgba(34,197,94,0.4)' }}

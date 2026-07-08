@@ -393,7 +393,7 @@ export interface VideoTrack {
    * a real library SFX places that sound on the timeline and records a bright-yellow
    * marker here so it persists in the transcript.
    */
-  sfxMarkers?: { id: string; afterWordId: string; word: string; file: string }[];
+  sfxMarkers?: { id: string; afterWordId: string; word: string; file: string; atFrame?: number }[];
   /**
    * Transcript quotation scene-inserts on this clip. Typing a COMPLETE "quoted phrase"
    * that matches an existing scene duplicates that clip at that point and records a
