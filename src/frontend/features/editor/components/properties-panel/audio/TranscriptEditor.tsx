@@ -40,8 +40,8 @@ import {
 } from './transcriptEditUtils';
 import { pullPhrase } from './transcriptSurgery';
 import { operationEngine } from '../../../../mycelium/operationEngine';
-import { getSfxNames } from '../../../../mycelium/sfxLibraryCache';
-import { sfxOpForWord, resolveSfxName, SFX_MARKER_YELLOW } from './sfxTriggerUtils';
+import { getSfxNames, ensureSfxLibrary } from '../../../../mycelium/sfxLibraryCache';
+import { sfxOpForWord, SFX_MARKER_YELLOW } from './sfxTriggerUtils';
 import {
   applyDeletion,
   type EditWord,
@@ -559,6 +559,10 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     window.setTimeout(() => setSfxMsg((c) => (c === m ? null : c)), 2600);
   }, []);
 
+  // Scan the SFX library up front so typing *whoosh* resolves even when the EDITH panel
+  // (which used to be the only scanner) never mounted, or an HMR reload cleared the cache.
+  useEffect(() => { void ensureSfxLibrary(); }, []);
+
   // Timeline frame of the point the annotation sits at (end of the word it follows).
   const anchorFrame = useCallback((anchorWordId: string): number => {
     const f = modelRef.current.fps;
@@ -570,10 +574,16 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
   }, []);
 
   const commitSfxMarker = useCallback(
-    (anchorWordId: string, word: string) => {
-      const names = getSfxNames();
+    async (anchorWordId: string, word: string) => {
+      // Make sure the library is actually loaded before judging the word — otherwise a
+      // valid *applause* looks "invalid" simply because the scan hadn't populated yet.
+      let names = getSfxNames();
       if (!names.length) {
-        flashSfx('SFX library is still loading — try again in a moment.');
+        flashSfx('Loading sound library…');
+        names = await ensureSfxLibrary();
+      }
+      if (!names.length) {
+        flashSfx('No SFX library found. Set SFX_LIBRARY_PATH and reopen.');
         return;
       }
       const op = sfxOpForWord(word, anchorFrame(anchorWordId), modelRef.current.fps, names);
@@ -582,7 +592,10 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         return;
       }
       operationEngine.enqueue(op as any);
-      const markers = [...(((track as any).sfxMarkers as any[]) ?? [])];
+      // Read the freshest markers from the store (this may run after an await).
+      const st = useVideoEditorStore.getState() as any;
+      const liveTrack = (st.tracks as any[]).find((x) => x.id === track.id);
+      const markers = [...(((liveTrack ?? (track as any)).sfxMarkers as any[]) ?? [])];
       sfxSeqRef.current += 1;
       updateTrack(track.id, {
         sfxMarkers: [
@@ -633,10 +646,11 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         const m = buf.text.match(/\*([^*\n]+)\*$/);
         if (m) {
           const word = m[1].trim();
-          if (resolveSfxName(word, getSfxNames())) {
-            commitSfxMarker(buf.anchorWordId, word);
-            return { anchorWordId: buf.anchorWordId, text: buf.text.slice(0, m.index) };
-          }
+          // Always hand a COMPLETED *word* to the committer, which loads the library if
+          // needed and either places it or flashes that it isn't a real SFX — so the
+          // marker never gets stuck as grey unresolved text.
+          void commitSfxMarker(buf.anchorWordId, word);
+          return { anchorWordId: buf.anchorWordId, text: buf.text.slice(0, m.index) };
         }
       } else if (lastChar === '"' || lastChar === '”') {
         const m = buf.text.match(/["“]([^"“”\n]+)["”]$/);

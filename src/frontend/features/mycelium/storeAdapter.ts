@@ -19,7 +19,7 @@ import {
   VOICE_ISOLATION_PRESETS,
 } from '@/frontend/features/editor/preview/utils/voiceIsolationCurve';
 import { SeparationCache } from '@/frontend/features/editor/preview/services/SeparationCache';
-import { setSfxNames } from './sfxLibraryCache';
+import { setSfxLibrary, getSfxEntries, type SfxEntry } from './sfxLibraryCache';
 import { DEFAULT_AGE_YEARS } from '@/frontend/features/editor/preview/utils/voiceAgeParams';
 import {
   estimateLight,
@@ -155,13 +155,11 @@ function kickStemSeparationBake(store: any, target: any): void {
     });
 }
 
-// SFX library cache — populated by FridayPanel on mount via scan-sfx-library IPC
-let _sfxLibrary: Array<{ name: string; path: string; durationSec: number; categories: string[] }> = [];
-export function setSfxLibraryCache(entries: typeof _sfxLibrary) {
-  _sfxLibrary = entries;
-  // Mirror the filenames into the lightweight cache the transcript asterisk-SFX
-  // trigger reads (so it can resolve *word* markers without importing storeAdapter).
-  setSfxNames(entries.map((e) => e.name));
+// SFX library cache lives in the shared sfxLibraryCache module (single source of truth
+// for both placeSFX and the transcript asterisk-SFX trigger). This setter is kept for
+// callers (FridayPanel) that scan on mount.
+export function setSfxLibraryCache(entries: SfxEntry[]) {
+  setSfxLibrary(entries);
 }
 
 // â”€â”€ GEMINI KILL SWITCH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -3160,12 +3158,13 @@ async function applyOp(op: Op): Promise<void> {
       const atTimeSec: number = (op as any).atTime ?? 0;
       const volumeDb: number = (op as any).volume ?? -3;
 
-      // Look up file in cached library. Prefer an EXACT name/path match so a precise
+      // Look up file in the shared cache. Prefer an EXACT name/path match so a precise
       // filename ("pop.mp3") never resolves to a substring sibling ("bubble_pop.mp3");
       // fall back to substring for EDITH's looser partial names.
+      const sfxLib = getSfxEntries();
       const entry =
-        _sfxLibrary.find((e) => e.name === sfxFileName || e.path === sfxFileName) ??
-        _sfxLibrary.find((e) => e.name.includes(sfxFileName));
+        sfxLib.find((e) => e.name === sfxFileName || e.path === sfxFileName) ??
+        sfxLib.find((e) => e.name.includes(sfxFileName));
       if (!entry) throw new Error(`placeSFX: “${sfxFileName}” not found in SFX library`);
 
       const fps: number = (store as any).fps ?? (store as any).timeline?.fps ?? 30;
