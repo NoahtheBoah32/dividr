@@ -3204,14 +3204,30 @@ async function applyOp(op: Op): Promise<void> {
       }
 
       const sfxColor = (op as any).color as string | undefined;
+      // Keep every SFX on ONE overlay row (row 1). Land it at the exact frame when that
+      // spot is free; if it would overlap an SFX already on row 1, butt it right after
+      // that clip so they stay separate, individually-visible segments on the single row
+      // instead of piling into one merged block.
+      let sfxStart = atFrame;
+      const row1Sfx = (store.tracks as any[])
+        .filter((t: any) => (t.trackRowIndex ?? 0) === 1 && t.type === 'audio')
+        .sort((a: any, b: any) => a.startFrame - b.startFrame);
+      for (let guard = 0; guard < 256; guard++) {
+        const hit = row1Sfx.find(
+          (t: any) => !(sfxStart + durationFrames <= t.startFrame || sfxStart >= t.endFrame),
+        );
+        if (!hit) break;
+        sfxStart = hit.endFrame; // slide past the colliding clip and re-check
+      }
+      const sfxEndFrame = sfxStart + durationFrames;
       const placedSfxId = await store.addTrack({
         type: 'audio' as const,
         name: trackName,
         source: entry.path,
         previewUrl,
         mediaId,
-        startFrame: atFrame,
-        endFrame: atFrame + durationFrames,
+        startFrame: sfxStart,
+        endFrame: sfxEndFrame,
         trackRowIndex: 1,
         layer: 1,
         volumeDb,
@@ -3220,15 +3236,15 @@ async function applyOp(op: Op): Promise<void> {
         sourceStartTime: audioStart,
         ...(sfxColor ? { color: sfxColor } : {}),
       } as any);
-      // Force the EXACT requested frame. addTrack's audio placement nudges a clip to
-      // avoid overlapping a neighbor on the row (and treats startFrame 0 as "append"),
-      // which drifts it off the intended moment. The transcript asterisk-SFX (and EDITH)
-      // need it pinned precisely where asked, so we always re-pin here. Also re-assert
-      // the color, since addTrack auto-assigns one from the palette otherwise.
+      // Force the resolved frame + row. addTrack's audio placement otherwise nudges a
+      // clip off its slot (and treats startFrame 0 as "append"); re-assert here. Also
+      // re-assert the colour, since addTrack auto-assigns one from the palette.
       if (placedSfxId) {
         store.updateTrack(placedSfxId, {
-          startFrame: atFrame,
-          endFrame: atFrame + durationFrames,
+          startFrame: sfxStart,
+          endFrame: sfxEndFrame,
+          trackRowIndex: 1,
+          layer: 1,
           ...(sfxColor ? { color: sfxColor } : {}),
         } as any);
       }

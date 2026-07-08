@@ -16,21 +16,24 @@ const h = vi.hoisted(() => {
   const make = () => {
     const addTrackCalls: any[] = [];
     const updateTrackCalls: any[] = [];
+    const tracks: any[] = []; // shared: placement logic reads this, addTrack/updateTrack maintain it
     let idc = 1;
     return {
       timeline: { fps: 30 },
       mediaLibrary: [] as any[],
-      tracks: [] as any[],
+      tracks,
       addToMediaLibrary: (_m: any) => `m${idc++}`,
       generateWaveformForMedia: () => Promise.resolve(),
       addTrack: async (t: any) => {
         const id = `t${idc++}`;
-        addTrackCalls.push({ id, ...t });
+        const obj = { id, ...t };
+        addTrackCalls.push(obj);
+        tracks.push(obj); // so subsequent placeSFX see this clip (butt-after collision check)
         return id;
       },
       updateTrack: (id: string, patch: any) => {
         updateTrackCalls.push({ id, patch });
-        const c = addTrackCalls.find((x) => x.id === id);
+        const c = addTrackCalls.find((x) => x.id === id); // same object is in `tracks`
         if (c) Object.assign(c, patch);
       },
       _addTrackCalls: addTrackCalls,
@@ -110,5 +113,23 @@ describe('placeSFX — every SFX lands on the timeline at the exact frame, green
       applyOpForTest({ type: 'placeSFX', file: 'divebomb.mp3', atTime: 3, volume: -3 } as any),
     ).rejects.toThrow(/not found in SFX library/i);
     expect(h.store._addTrackCalls.length).toBe(0);
+  });
+
+  it('keeps SFX on ONE row and butts overlapping ones after each other (no merged block)', async () => {
+    h.store = h.make();
+    // Three SFX dropped at the SAME moment — must not pile into one block.
+    for (let i = 0; i < 3; i++) {
+      await applyOpForTest({ type: 'placeSFX', file: 'boom_impact.mp3', atTime: 100 / FPS, volume: -3, color: SFX_TIMELINE_GREEN } as any);
+    }
+    const audio = h.store._addTrackCalls.filter((t: any) => t.type === 'audio');
+    expect(audio.length).toBe(3);
+    // all stay on the single overlay row (row 1)
+    expect(audio.every((t: any) => t.trackRowIndex === 1)).toBe(true);
+    // sequential, non-overlapping; the first lands at the exact frame
+    const sorted = audio.slice().sort((a: any, b: any) => a.startFrame - b.startFrame);
+    expect(sorted[0].startFrame).toBe(100);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i].startFrame).toBeGreaterThanOrEqual(sorted[i - 1].endFrame);
+    }
   });
 });
