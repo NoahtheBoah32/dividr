@@ -942,23 +942,27 @@ export function registerMyceliumIPC(
     try { const s = require('ffmpeg-static') as string; if (s) ffmpegBin = s; } catch {}
 
     const durationSec = await getAudioDurationSec(clipPath).catch(() => 60);
+    // Space `maxFrames` samples across the WHOLE clip (never denser than intervalSec).
     const actualInterval = Math.max(intervalSec, durationSec / maxFrames);
-    const frameCount = Math.min(maxFrames, Math.ceil(durationSec / actualInterval));
 
     const tmpDir = path.join(os.tmpdir(), `edith-scan-${Date.now()}`);
     fs.mkdirSync(tmpDir, { recursive: true });
-
-    // Single ffmpeg pass — extract all frames at once using select filter
-    // Much faster than N separate seek calls
-    const selectExpr = Array.from({ length: frameCount }, (_, i) =>
-      `eq(t\\,${(i * actualInterval).toFixed(2)})`
-    ).join('+');
     const outPattern = path.join(tmpDir, 'frame_%04d.jpg');
 
+    // Extract ~frameCount frames evenly across the WHOLE clip with the fps filter.
+    //
+    // The previous approach built select='eq(t,15.03)+eq(t,30.07)+…', but eq(t,X)
+    // only passes a frame whose timestamp is EXACTLY X. At real frame rates (e.g.
+    // 23.976 fps) no frame ever lands on those decimals, so it silently extracted just
+    // the t=0 frame — every scan was blind to the entire video past frame one, which is
+    // why obvious things (the golden record, Neptune) always came back "not found".
+    // fps=1/interval reliably samples the nearest real frame at each interval, so the
+    // i-th output frame really is at ~i*actualInterval (the label mapping below).
+    const scanFps = (1 / actualInterval).toFixed(6);
     try {
       await execAsync(
-        `"${ffmpegBin}" -i "${clipPath}" -vf "select='${selectExpr}',scale=640:-1" -vsync vfr -q:v 4 "${outPattern}"`,
-        { timeout: 20000 },
+        `"${ffmpegBin}" -i "${clipPath}" -vf "fps=${scanFps},scale=640:-1" -q:v 4 "${outPattern}"`,
+        { timeout: 40000 },
       );
     } catch (e) {
       console.warn('[scanVideoFrames] ffmpeg pass failed:', e);
