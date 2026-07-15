@@ -106,10 +106,35 @@ function indexLibrary(libraryNames: string[]): Indexed[] {
 }
 
 /**
- * Resolve a trigger word to a library filename, or null if nothing matches
- * (i.e. the marker should NOT trigger). Deterministic.
+ * Parse a user `aliases.txt` dropped in the SFX library folder. One mapping per
+ * line, `word = filename-or-stem` (`:` works too); `#` / `//` lines are comments.
+ * Keys are normalized so "Dog Bark", "dog-bark" and "dogbark" all key the same.
  */
-export function resolveSfxName(word: string, libraryNames: string[]): string | null {
+export function parseSfxAliasFile(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of (text ?? '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#') || t.startsWith('//')) continue;
+    const m = t.match(/^(.+?)\s*[=:]\s*(.+)$/);
+    if (!m) continue;
+    const key = normalizeSfxKey(m[1]);
+    const target = m[2].trim();
+    if (key && target) out[key] = target;
+  }
+  return out;
+}
+
+/**
+ * Resolve a trigger word to a library filename, or null if nothing matches
+ * (i.e. the marker should NOT trigger). Deterministic. `userAliases` come from
+ * aliases.txt in the library folder: an explicit user mapping outranks fuzzy
+ * token matching, but an exact filename always wins.
+ */
+export function resolveSfxName(
+  word: string,
+  libraryNames: string[],
+  userAliases?: Record<string, string>,
+): string | null {
   const w = normalizeSfxKey(word);
   if (!w) return null;
   const lib = indexLibrary(libraryNames);
@@ -118,7 +143,15 @@ export function resolveSfxName(word: string, libraryNames: string[]): string | n
   const exact = lib.find((e) => e.key === w);
   if (exact) return exact.filename;
 
-  // 2) Single-token match. Prefer the file where the token appears earliest, then the
+  // 2) User alias — resolve its target through the same pipeline (no aliases, so
+  //    a self-referential mapping can't loop).
+  const userTarget = userAliases?.[w];
+  if (userTarget) {
+    const hit = resolveSfxName(sfxStem(userTarget), libraryNames);
+    if (hit) return hit;
+  }
+
+  // 3) Single-token match. Prefer the file where the token appears earliest, then the
   //    shortest stem, then alphabetical — so *ding* → ding_notification, *boom* → boom_impact.
   const tokenHits = lib
     .map((e) => ({ e, idx: e.tokens.findIndex((t) => normalizeSfxKey(t) === w) }))
@@ -131,7 +164,7 @@ export function resolveSfxName(word: string, libraryNames: string[]): string | n
     );
   if (tokenHits.length) return tokenHits[0].e.filename;
 
-  // 3) Alias table → stem, if that stem is actually present in the library.
+  // 4) Built-in alias table → stem, if that stem is actually present in the library.
   const aliasStem = SFX_ALIASES[w];
   if (aliasStem) {
     const hit = lib.find((e) => e.key === normalizeSfxKey(aliasStem));
@@ -142,8 +175,12 @@ export function resolveSfxName(word: string, libraryNames: string[]): string | n
 }
 
 /** True when the word maps to a real library SFX. */
-export function isValidSfxWord(word: string, libraryNames: string[]): boolean {
-  return resolveSfxName(word, libraryNames) !== null;
+export function isValidSfxWord(
+  word: string,
+  libraryNames: string[],
+  userAliases?: Record<string, string>,
+): boolean {
+  return resolveSfxName(word, libraryNames, userAliases) !== null;
 }
 
 /** Bright yellow for the completed transcript marker (matches the highlighter look). */
@@ -171,8 +208,9 @@ export function sfxOpForWord(
   atFrame: number,
   fps: number,
   libraryNames: string[],
+  userAliases?: Record<string, string>,
 ): PlaceSfxOp | null {
-  const file = resolveSfxName(word, libraryNames);
+  const file = resolveSfxName(word, libraryNames, userAliases);
   if (!file) return null;
   const f = Math.max(1, fps);
   return {

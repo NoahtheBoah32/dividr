@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { StateCreator } from 'zustand';
+import { resolveOverwrite } from '../../../timeline/utils/collisionDetection';
 import { PlaybackState } from '../types';
 import { DEFAULT_PLAYBACK_CONFIG } from '../utils/constants';
 
@@ -133,13 +134,36 @@ export const createPlaybackSlice: StateCreator<
   endDraggingTrack: (recordUndo = true) => {
     set((state: any) => {
       const shouldResume = state.playback.wasPlayingBeforeDrag;
+      const wasDragging = state.playback.isDraggingTrack;
+
+      // Commit the drop (timeline contract): the dragged clips keep the exact
+      // positions the user released them at, and OVERWRITE whatever they now
+      // overlap on their lanes. The drag ghost still knows which clips moved.
+      let tracks = state.tracks;
+      const ghost = state.playback.dragGhost;
+      if (wasDragging && ghost?.trackId) {
+        const ids = new Set<string>([
+          ghost.trackId,
+          ...((ghost.selectedTrackIds as string[] | undefined) ?? []),
+        ]);
+        for (const id of [...ids]) {
+          const t = state.tracks.find((tr: any) => tr.id === id);
+          if (t?.isLinked && t.linkedTrackId) ids.add(t.linkedTrackId);
+        }
+        tracks = resolveOverwrite(
+          state.tracks,
+          [...ids],
+          state.timeline?.fps ?? 30,
+        );
+      }
 
       // Record undo action if requested and drag actually occurred
-      if (recordUndo && state.playback.isDraggingTrack && state.recordAction) {
+      if (recordUndo && wasDragging && state.recordAction) {
         state.recordAction('Move Clip');
       }
 
       return {
+        tracks,
         playback: {
           ...state.playback,
           isDraggingTrack: false,

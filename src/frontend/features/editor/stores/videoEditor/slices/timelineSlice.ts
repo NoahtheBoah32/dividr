@@ -35,6 +35,22 @@ export interface TimelineSlice {
   setMatchCut: (
     matchCut: import('../types/timeline.types').TimelineState['matchCut'],
   ) => void;
+
+  /** Add a labeled timeline marker (ruler flag). Returns the marker id. */
+  addTimelineMarker: (
+    frame: number,
+    label: string,
+    color?: string,
+  ) => string;
+  /** Remove a timeline marker by id. */
+  removeTimelineMarker: (id: string) => void;
+  /** Update a timeline marker's fields. */
+  updateTimelineMarker: (
+    id: string,
+    patch: Partial<Omit<import('../types/timeline.types').TimelineMarker, 'id'>>,
+  ) => void;
+  /** Remove all timeline markers. */
+  clearTimelineMarkers: () => void;
   toggleSplitMode: () => void;
   setSplitMode: (active: boolean) => void;
 
@@ -96,6 +112,7 @@ export const createTimelineSlice: StateCreator<
     showSceneMarkers: true,
     isSplitModeActive: false,
     visibleTrackRows: ['video', 'audio', 'subtitle', 'text', 'image'],
+    timelineMarkers: [],
   },
   duplicationFeedbackTrackIds: new Set(),
   cutAnimation: null,
@@ -230,6 +247,56 @@ export const createTimelineSlice: StateCreator<
     set((state) => ({
       timeline: { ...state.timeline, matchCut: matchCut ?? null },
     })),
+
+  addTimelineMarker: (frame, label, color) => {
+    const id = `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    (get() as any).recordAction?.('Add Marker');
+    set((state) => ({
+      timeline: {
+        ...state.timeline,
+        timelineMarkers: [
+          ...(state.timeline.timelineMarkers ?? []),
+          { id, frame: Math.max(0, Math.round(frame)), label, color },
+        ],
+      },
+    }));
+    (get() as any).markUnsavedChanges?.();
+    return id;
+  },
+
+  removeTimelineMarker: (id) => {
+    (get() as any).recordAction?.('Remove Marker');
+    set((state) => ({
+      timeline: {
+        ...state.timeline,
+        timelineMarkers: (state.timeline.timelineMarkers ?? []).filter(
+          (m) => m.id !== id,
+        ),
+      },
+    }));
+    (get() as any).markUnsavedChanges?.();
+  },
+
+  updateTimelineMarker: (id, patch) => {
+    (get() as any).recordAction?.('Update Marker');
+    set((state) => ({
+      timeline: {
+        ...state.timeline,
+        timelineMarkers: (state.timeline.timelineMarkers ?? []).map((m) =>
+          m.id === id ? { ...m, ...patch } : m,
+        ),
+      },
+    }));
+    (get() as any).markUnsavedChanges?.();
+  },
+
+  clearTimelineMarkers: () => {
+    (get() as any).recordAction?.('Clear Markers');
+    set((state) => ({
+      timeline: { ...state.timeline, timelineMarkers: [] },
+    }));
+    (get() as any).markUnsavedChanges?.();
+  },
 
   createTransitionBetween: (fromId, toId, type = 'dissolve', durationSeconds = 1.5) => {
     const state = get() as any;

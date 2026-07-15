@@ -82,7 +82,11 @@ function TabsContent({
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn('flex-1 outline-none', className)}
+      // data-[state=inactive]:hidden guards against display classes (flex, grid) on a
+      // consumer's className overriding the low-specificity `hidden` attribute Radix
+      // puts on inactive panels — without it an inactive flex-1 panel stays in layout
+      // as an invisible block and pushes the active panel's content down.
+      className={cn('flex-1 outline-none data-[state=inactive]:hidden', className)}
       {...props}
     />
   );

@@ -6,7 +6,11 @@ import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEdit
 import { operationEngine } from '@/frontend/features/mycelium/operationEngine';
 import { cn } from '@/frontend/utils/utils';
 import { FlipHorizontal, FlipVertical, Gauge, Loader2, RotateCw, Snowflake, Sun } from 'lucide-react';
-import { newLightId } from '@/frontend/features/editor/preview/utils/paintedLightUtils';
+import {
+  RelightConfig,
+  defaultRelight,
+  relightFromLegacy,
+} from '@/frontend/features/editor/preview/utils/paintedLightUtils';
 import React, { useEffect, useMemo, useState } from 'react';
 
 /**
@@ -24,12 +28,29 @@ const REGION_PRESETS: { label: string; value: string }[] = [
   { label: 'Center', value: 'ellipse:0.5,0.5,0.28,0.4' },
 ];
 
-const LIGHT_SWATCHES: { label: string; rgb: [number, number, number] }[] = [
-  { label: 'Warm', rgb: [255, 214, 170] },
-  { label: 'Golden', rgb: [255, 205, 120] },
-  { label: 'Neutral', rgb: [255, 244, 224] },
-  { label: 'Cool', rgb: [190, 215, 255] },
-  { label: 'Blue', rgb: [150, 190, 255] },
+// The relight sliders. Each binds live to one field of `track.relight`; drag = live
+// preview, release = one undo step. The engine is additive-only: every slider at zero
+// = the original video exactly; raising them only ADDS light. (Form was removed — at
+// high values it embossed the whole frame into a glaze; the engine now fixes it at a
+// sane internal value.)
+const RELIGHT_SLIDERS: {
+  label: string;
+  field: keyof RelightConfig;
+  min: number;
+  max: number;
+  step: number;
+  fmt: (v: number) => string;
+}[] = [
+  { label: 'Intensity', field: 'intensity', min: 0, max: 2.5, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
+  { label: 'Ambient (scene)', field: 'ambient', min: 0, max: 1, step: 0.02, fmt: (v) => `${Math.round(v * 100)}%` },
+  { label: 'Softness', field: 'wrap', min: 0, max: 1, step: 0.02, fmt: (v) => v.toFixed(2) },
+  { label: 'Detail', field: 'detail', min: 0, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) },
+  { label: 'Sheen', field: 'sheen', min: 0, max: 1.5, step: 0.05, fmt: (v) => v.toFixed(2) },
+  { label: 'Rim', field: 'rim', min: 0, max: 1.5, step: 0.05, fmt: (v) => v.toFixed(2) },
+  { label: 'Spill', field: 'spill', min: 0, max: 1.5, step: 0.05, fmt: (v) => v.toFixed(2) },
+  { label: 'Negative fill', field: 'neg', min: 0, max: 1, step: 0.02, fmt: (v) => v.toFixed(2) },
+  { label: 'Reach', field: 'radius', min: 0.2, max: 2, step: 0.05, fmt: (v) => v.toFixed(2) },
+  { label: 'Light height', field: 'height', min: 0.15, max: 1.5, step: 0.05, fmt: (v) => v.toFixed(2) },
 ];
 
 const SectionHeading: React.FC<{ icon: React.ReactNode; title: string; hint: string }> = ({ icon, title, hint }) => (
@@ -69,6 +90,7 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
   const tracks = useVideoEditorStore((s) => s.tracks);
   const fps = useVideoEditorStore((s) => s.timeline?.fps ?? 30);
   const updateTrack = useVideoEditorStore((s) => s.updateTrack);
+  const updateTrackProperty = useVideoEditorStore((s) => (s as any).updateTrackProperty);
   const beginGroup = useVideoEditorStore((s) => (s as any).beginGroup);
   const endGroup = useVideoEditorStore((s) => (s as any).endGroup);
 
@@ -94,11 +116,6 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
   const [rsLasso, setRsLasso] = useState<Array<[number, number]> | null>(null); // normalized polygon from LassoOverlay
   const [rsShape, setRsShape] = useState<'box' | 'ellipse' | 'poly' | null>(null); // which draw tool is active (for highlight)
 
-  // Light Brush (Skill 4)
-  const [lbColor, setLbColor] = useState<[number, number, number]>([255, 214, 170]);
-  const [lbIntensity, setLbIntensity] = useState(0.85);
-  const [lbBlend, setLbBlend] = useState<'soft-light' | 'screen' | 'overlay' | 'lighten'>('soft-light');
-
   // Reset region defaults when the selected clip changes.
   useEffect(() => {
     if (!clip) return;
@@ -121,30 +138,23 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
     return () => window.removeEventListener('dividr:lassoComplete', onLasso);
   }, []);
 
-  // A completed light-brush stroke (from LightBrushOverlay) becomes a painted light on
-  // the selected clip, using the panel's current colour/intensity/blend.
+  // A click in the preview (LightBrushOverlay) repositions the relight and enables it —
+  // an alternative to dragging the ring handle. Keeps the whole-scene relight model.
   useEffect(() => {
     const onLight = (e: any) => {
       const d = e.detail;
       if (!clip || !d?.pos) return;
-      const light = {
-        id: newLightId(),
-        pos: d.pos as [number, number],
-        radius: Math.max(0.05, Math.min(1.2, d.radius ?? 0.5)),
-        intensity: lbIntensity,
-        color: lbColor,
-        blend: lbBlend,
-        maskMode: 'free' as const,
-      };
-      const existing = [...(((clip as any).paintedLights as any[]) ?? [])];
-      beginGroup?.('Paint light');
-      updateTrack(clip.id, { paintedLights: [...existing, light] } as any);
+      const cur = ((clip as any).relight as RelightConfig | undefined)
+        ?? relightFromLegacy((clip as any).paintedLights, (clip as any).lightSource)
+        ?? defaultRelight();
+      beginGroup?.('Place light');
+      updateTrack(clip.id, { relight: { ...cur, enabled: true, pos: d.pos as [number, number] } } as any);
       endGroup?.();
       window.dispatchEvent(new CustomEvent('dividr:forceRender'));
     };
     window.addEventListener('dividr:lightBrushComplete', onLight);
     return () => window.removeEventListener('dividr:lightBrushComplete', onLight);
-  }, [clip, lbColor, lbIntensity, lbBlend, updateTrack, beginGroup, endGroup]);
+  }, [clip, updateTrack, beginGroup, endGroup]);
 
   // When a region-speed effect is applied (by EDITH or manually), sync the slider/region to it
   // so the manual controls pick up exactly where EDITH left off.
@@ -201,25 +211,43 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
     window.dispatchEvent(new CustomEvent('dividr:lassoArm', { detail: { shape } }));
   };
 
-  // Light Brush handlers — detect enqueues the SAME op EDITH emits; paint arms the brush.
+  // ── Relight (Light Brush v2) — the screen-space relighter, driven by track.relight ──
+  // The active config: an explicit relight, else legacy paintedLights adapted to the
+  // new engine, else null (nothing lit yet). `rc` is that config or a sensible default.
+  const activeRelight: RelightConfig | null =
+    ((clip as any)?.relight?.enabled ? ((clip as any).relight as RelightConfig) : null)
+    ?? relightFromLegacy((clip as any)?.paintedLights, (clip as any)?.lightSource);
+  const isRelightActive = !!activeRelight;
+  const rc: RelightConfig = activeRelight ?? defaultRelight();
+
+  // Detect enqueues the SAME op EDITH emits (now seeds a relight from the scene).
   const detectLight = () => { if (clip) operationEngine.enqueue({ type: 'detectLight' } as any); };
-  const armBrush = () => window.dispatchEvent(new CustomEvent('dividr:lightBrushArm'));
-  const clearLights = () => {
+  const addRelight = () => {
     if (!clip) return;
-    beginGroup?.('Clear lights');
-    updateTrack(clip.id, { paintedLights: [], lightSource: undefined } as any);
+    const seed = (clip as any).lightSource?.color as [number, number, number] | undefined;
+    beginGroup?.('Add light');
+    updateTrack(clip.id, { relight: { ...defaultRelight(), ...(seed ? { color: seed } : {}) } } as any);
     endGroup?.();
     window.dispatchEvent(new CustomEvent('dividr:forceRender'));
   };
-  const removeLight = (id: string) => {
+  const resetRelight = () => {
     if (!clip) return;
-    const remaining = (((clip as any).paintedLights as any[]) ?? []).filter((l: any) => l.id !== id);
-    beginGroup?.('Remove light');
-    updateTrack(clip.id, { paintedLights: remaining } as any);
+    beginGroup?.('Reset light');
+    updateTrack(clip.id, { relight: undefined, paintedLights: [], lightSource: undefined } as any);
     endGroup?.();
     window.dispatchEvent(new CustomEvent('dividr:forceRender'));
   };
-  const paintedLights = (((clip as any)?.paintedLights as any[]) ?? []);
+  // Live drag (no undo entry) vs committed change (one undo entry) — same target field.
+  const liveRelight = (patch: Partial<RelightConfig>) => {
+    if (!clip) return;
+    updateTrackProperty(clip.id, { relight: { ...rc, enabled: true, ...patch } } as any);
+  };
+  const commitRelight = (patch: Partial<RelightConfig>) => {
+    if (!clip) return;
+    beginGroup?.('Adjust light');
+    updateTrack(clip.id, { relight: { ...rc, enabled: true, ...patch } } as any);
+    endGroup?.();
+  };
 
   // Transform (flip / rotate) — standard editor features DiviDr was missing. Manual
   // buttons here enqueue nothing heavy: they toggle/set the same fields EDITH's
@@ -371,50 +399,41 @@ export const NuancedEffectsPanel: React.FC<Props> = ({ selectedTrackIds }) => {
 
       <Separator />
 
-      {/* ── Light Brush ─────────────────────────────── */}
+      {/* ── Light (screen-space relight) ────────────── */}
       <div className="space-y-3">
-        <SectionHeading icon={<Sun className="size-4" />} title="Light Brush"
-          hint="Detect where the light falls, then paint soft light onto the shot. Non-destructive; tracks with the clip." />
+        <SectionHeading icon={<Sun className="size-4" />} title="Light"
+          hint="Add light to the shot from a lamp you drag inside the frame. It reads the scene's own shapes and only ever ADDS — the original footage is never darkened." />
         <div className="flex gap-2">
           <Button onClick={detectLight} disabled={!!running}
             className="flex-1 h-8 bg-[hsl(var(--secondary))] text-white hover:bg-[hsl(var(--secondary))]/90">
-            Detect light
+            Detect from scene
           </Button>
-          <Button variant="outline" onClick={armBrush} className="flex-1 h-8">Paint light</Button>
+          {isRelightActive ? (
+            <Button variant="outline" onClick={resetRelight} className="flex-1 h-8">Reset light</Button>
+          ) : (
+            <Button variant="outline" onClick={addRelight} className="flex-1 h-8">Add light</Button>
+          )}
         </div>
-        <div className="flex items-center gap-1.5">
-          {LIGHT_SWATCHES.map((s) => (
-            <button key={s.label} type="button" title={s.label} onClick={() => setLbColor(s.rgb)}
-              className={cn('size-6 rounded-full border transition-all',
-                lbColor.join(',') === s.rgb.join(',') ? 'ring-2 ring-[hsl(var(--secondary))]' : 'border-border')}
-              style={{ background: `rgb(${s.rgb[0]},${s.rgb[1]},${s.rgb[2]})` }} />
-          ))}
-        </div>
-        <div className="space-y-1">
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>Intensity</span><span>{Math.round(lbIntensity * 100)}%</span>
-          </div>
-          <Slider min={0} max={2} step={0.05} value={[lbIntensity]}
-            onValueChange={(v) => setLbIntensity(v[0] ?? lbIntensity)} />
-        </div>
-        <div className="flex gap-1.5">
-          {(['soft-light', 'screen', 'overlay', 'lighten'] as const).map((b) => (
-            <Seg key={b} active={lbBlend === b} onClick={() => setLbBlend(b)}>{b.replace('-light', '')}</Seg>
-          ))}
-        </div>
-        {paintedLights.length > 0 && (
-          <div className="space-y-1.5 pt-1">
-            {paintedLights.map((l, i) => (
-              <div key={l.id} className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="size-3 rounded-full border border-border"
-                  style={{ background: `rgb(${l.color[0]},${l.color[1]},${l.color[2]})` }} />
-                <span className="flex-1">Light {i + 1} · {Math.round((l.intensity ?? 0) * 100)}%</span>
-                <button type="button" onClick={() => removeLight(l.id)} className="hover:text-foreground">Remove</button>
+
+        {isRelightActive && (
+          <>
+            <p className="text-[11px] leading-snug text-[hsl(var(--secondary))]">
+              ● Drag the ring in the preview to move the light. Raise Intensity or
+              Ambient to add light — at zero the video stays exactly as shot.
+            </p>
+
+            {RELIGHT_SLIDERS.map((sl) => (
+              <div key={sl.field} className="space-y-1">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>{sl.label}</span>
+                  <span className="tabular-nums">{sl.fmt(rc[sl.field] as number)}</span>
+                </div>
+                <Slider min={sl.min} max={sl.max} step={sl.step} value={[rc[sl.field] as number]}
+                  onValueChange={(v) => liveRelight({ [sl.field]: v[0] } as Partial<RelightConfig>)}
+                  onValueCommit={(v) => commitRelight({ [sl.field]: v[0] } as Partial<RelightConfig>)} />
               </div>
             ))}
-            <button type="button" onClick={clearLights}
-              className="text-xs text-muted-foreground hover:text-foreground underline">Clear all lights</button>
-          </div>
+          </>
         )}
       </div>
 

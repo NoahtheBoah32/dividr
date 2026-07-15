@@ -1,5 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { VideoTrack } from '@/frontend/features/editor/stores/videoEditor/index';
+import {
+  useVideoEditorStore,
+  VideoTrack,
+} from '@/frontend/features/editor/stores/videoEditor/index';
 import { getDisplayFps } from '@/frontend/features/editor/stores/videoEditor/types/timeline.types';
 import { cn } from '@/frontend/utils/utils';
 import React, { useCallback, useMemo } from 'react';
@@ -34,6 +37,12 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
   }) => {
     // Get display FPS from source video tracks (dynamic but static once determined)
     const displayFps = useMemo(() => getDisplayFps(tracks), [tracks]);
+
+    // User timeline markers — subscribed directly so marker changes re-render
+    // this memoized component without threading through the prop comparator
+    const timelineMarkers = useVideoEditorStore(
+      (state) => state.timeline.timelineMarkers,
+    );
 
     // Memoize effective timeline duration calculation
     const effectiveEndFrame = useMemo(() => {
@@ -386,6 +395,33 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = React.memo(
             }}
           />
         )}
+
+        {/* User timeline markers — labeled ruler flags (EDITH addMarker / removeMarker) */}
+        {(timelineMarkers ?? []).map((m) => {
+          const x =
+            m.frame * frameWidth -
+            (timelineScrollElement?.scrollLeft ?? scrollX);
+          const color = m.color ?? '#E6A412';
+          return (
+            <div
+              key={m.id}
+              data-timeline-marker={m.id}
+              className="absolute top-0 h-full z-10 pointer-events-none"
+              style={{ left: x }}
+            >
+              <div
+                className="w-[2px] h-full"
+                style={{ background: color, boxShadow: `0 0 4px ${color}80` }}
+              />
+              <div
+                className="absolute top-0 left-[2px] max-w-[120px] truncate rounded-sm px-1 text-[9px] leading-[14px] font-medium text-black/90"
+                style={{ background: color }}
+              >
+                {m.label}
+              </div>
+            </div>
+          );
+        })}
 
         {/* Note: Playhead is handled by TimelinePlayhead component */}
       </div>

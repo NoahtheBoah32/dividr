@@ -7,6 +7,7 @@ import { ChevronDown, ChevronUp, Columns2, RotateCcw } from 'lucide-react';
 import React, { useCallback, useEffect, useState } from 'react';
 import { gradeCompare, setGradeCompare } from '../../../preview/utils/gradeCompareState';
 import { useVideoEditorStore } from '../../../stores/videoEditor/index';
+import { ClipLabelSwatches } from '../ClipLabelSwatches';
 import { ColorWheelPicker } from './ColorWheelPicker';
 
 interface ColorGradePanelProps {
@@ -305,6 +306,11 @@ const ColorGradePanelComponent: React.FC<ColorGradePanelProps> = ({ selectedTrac
           />
         ))}
       </div>
+
+      <Separator />
+
+      {/* Clip label color-coding (Labels/Colors) — organizational, not a grade */}
+      <ClipLabelSwatches selectedTrackIds={selectedTrackIds} />
 
       {grade.lastMethod && (
         <>

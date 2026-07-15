@@ -11,6 +11,16 @@ import { VideoTrack } from '../../stores/videoEditor/types';
 export const SPRITE_SHEET_SKIP_DURATION_SECONDS = 30 * 60;
 
 /**
+ * Maximum number of placeholder (ghost) rows rendered around the real lanes.
+ * CRITICAL: the RENDERED layout (timelineTracks.tsx) and the INTERACTION row
+ * bounds (timeline.tsx drag/drop math) must both use THIS constant. When they
+ * disagreed (3 vs 1), every pointer Y was misregistered by a whole row — a
+ * clip dragged within its own lane read as "insert above the top row" and
+ * leapt onto a brand-new top lane on release.
+ */
+export const MAX_PLACEHOLDER_ROWS = 1;
+
+/**
  * Timeline header height (ruler + add track button area)
  * This must match across TimelineRuler, TimelineTrackControllers, and AddTrackButton
  */

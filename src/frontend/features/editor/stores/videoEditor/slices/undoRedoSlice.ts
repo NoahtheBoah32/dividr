@@ -16,6 +16,7 @@ export interface UndoableState {
     inPoint?: number;
     outPoint?: number;
     selectedTrackIds: string[];
+    timelineMarkers?: import('../types/timeline.types').TimelineMarker[];
   };
   preview: {
     canvasWidth: number;
@@ -133,6 +134,9 @@ export const createUndoRedoSlice: StateCreator<
         inPoint: state.timeline.inPoint,
         outPoint: state.timeline.outPoint,
         selectedTrackIds: [...(state.timeline.selectedTrackIds || [])],
+        timelineMarkers: JSON.parse(
+          JSON.stringify(state.timeline.timelineMarkers || []),
+        ),
       },
       preview: {
         canvasWidth: state.preview.canvasWidth,
@@ -169,6 +173,10 @@ export const createUndoRedoSlice: StateCreator<
         inPoint: undoableState.timeline.inPoint,
         outPoint: undoableState.timeline.outPoint,
         selectedTrackIds: [...undoableState.timeline.selectedTrackIds],
+        // Older snapshots (pre-markers) won't have the field — keep current then
+        timelineMarkers: undoableState.timeline.timelineMarkers
+          ? JSON.parse(JSON.stringify(undoableState.timeline.timelineMarkers))
+          : state.timeline.timelineMarkers,
       },
       preview: {
         ...state.preview,

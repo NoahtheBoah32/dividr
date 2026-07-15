@@ -384,6 +384,43 @@ export interface VideoTrack {
     /** Confine to the subject (RVM alpha) or fall on the whole frame. */
     maskMode: 'subject' | 'free';
   }[];
+  /**
+   * Light Brush v2 — the screen-space relight config for this clip. The relighter
+   * (relightGL.ts, via LightCompositeOverlay) reconstructs surface normals from the
+   * frame's own luminance and shades the whole scene with a movable light — no subject
+   * matte. Replaces the flat `paintedLights` glow. Non-destructive, per-clip metadata.
+   */
+  relight?: {
+    enabled: boolean;
+    /** Light position in normalized frame space, 0..1 (y down). */
+    pos: [number, number];
+    /** Light height above the plane, ~0.15 (grazing) .. 1.5 (head-on). */
+    height: number;
+    /** Light color, 0..255 RGB. */
+    color: [number, number, number];
+    /** Brightness of the added light, 0..2.5. */
+    intensity: number;
+    /** How much of the original scene stays visible, 0..1. */
+    ambient: number;
+    /** Half-Lambert softness, 0..1. */
+    wrap: number;
+    /** Large-scale shape sculpting, 0..3. */
+    form: number;
+    /** Fine surface micro-relief, 0..3. */
+    detail: number;
+    /** Specular sheen, 0..1.5. */
+    sheen: number;
+    /** Rim / edge backlight, 0..1.5. */
+    rim: number;
+    /** Soft room spill around the light, 0..1.5. */
+    spill: number;
+    /** Negative fill on the far side, 0..1. */
+    neg: number;
+    /** How far the light reaches, 0.2..2. */
+    radius: number;
+    /** 'shape' preserves + shapes the scene; 'faux' re-keys harder. */
+    mode: 'shape' | 'faux';
+  };
   /** Mirror this clip horizontally (standard editor flip). Non-destructive. */
   flipH?: boolean;
   /** Mirror this clip vertically. Non-destructive. */
@@ -434,6 +471,10 @@ export interface VideoTrack {
   visible: boolean;
   locked: boolean;
   color: string;
+  // User/EDITH-chosen label color (Labels/Colors skill). Unlike `color` (an
+  // auto-assigned palette value most surfaces ignore), this renders as an
+  // explicit color-code on the timeline clip — stripe + tint. Cleared = unset.
+  labelColor?: string;
   subtitleText?: string;
   subtitleType?: 'karaoke' | 'regular'; // Distinguish between karaoke (generated) and regular (imported) subtitles
   subtitleTracked?: boolean; // When true, rendered by TrackedCaptionOverlay anchored to pose landmarks
@@ -461,6 +502,12 @@ export interface VideoTrack {
     shadows?: number;        // -100 to 100
     highlights?: number;     // -100 to 100
     midtones?: number;       // -100 to 100
+    vignette?: number;       // 0 to 100 — darkened corners, baked as `vignette` at export
+    sharpen?: number;        // 0 to 100 — edge sharpen, baked as `unsharp` at export
+    blur?: number;           // 0 to 100 — gaussian blur, baked as `gblur` at export
+    grain?: number;          // 0 to 100 — animated film grain, baked as `noise=allf=t+u` at export
+    saturation?: number;     // 0 to 2 (1 = neutral) — baked as `eq=saturation` at export
+    look?: string;           // name of the applied one-tap look (applyLook), informational
     palettes?: Array<{ palette: string[]; curves: { r: number[]; g: number[]; b: number[]; ffmpegFilter: string }; refTimeSec?: number }>;
     lastMethod?: string;
     lastRefPath?: string;

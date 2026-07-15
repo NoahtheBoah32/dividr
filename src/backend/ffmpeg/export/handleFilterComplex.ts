@@ -789,6 +789,14 @@ export function processLayerSegments(
           videoStreamRef = mbRef;
         }
 
+        // Color grade / adjustments — prebuilt chain (curves/hue/unsharp/gblur/vignette)
+        // generated renderer-side from the same math as the live canvas preview.
+        if (trackInfo.colorGradeFilter) {
+          const cgRef = `[${uniqueIndex}_cg]`;
+          videoFilters.push(`${videoStreamRef}${trackInfo.colorGradeFilter}${cgRef}`);
+          videoStreamRef = cgRef;
+        }
+
         concatInputs.push(videoStreamRef);
       } else {
         console.warn(

@@ -263,8 +263,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         | 'large-v3';
       language?: string;
       translate?: boolean;
-      device?: 'cpu' | 'cuda';
-      computeType?: 'int8' | 'int16' | 'float16' | 'float32';
+      device?: 'auto' | 'cpu' | 'cuda';
+      computeType?: 'auto' | 'int8' | 'int16' | 'float16' | 'float32';
       beamSize?: number;
       vad?: boolean;
     },

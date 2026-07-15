@@ -81,7 +81,8 @@ export const createTimelineShortcuts = (store: any): ShortcutConfig[] => [
   },
   {
     id: 'timeline-split-playhead-k',
-    keys: 'k',
+    // Bare 'k' now belongs to the J/K/L shuttle (K = stop).
+    keys: 'ctrl+k',
     description: 'Split at Playhead',
     category: 'Timeline Tools',
     scope: 'timeline',

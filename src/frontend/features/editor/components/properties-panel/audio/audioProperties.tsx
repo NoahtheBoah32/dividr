@@ -38,6 +38,7 @@ import {
   NoiseReductionEngineModal,
 } from './NoiseReductionEngineModal';
 import { TranscriptEditor } from './TranscriptEditor';
+import { TranscriptHelpIcon } from './TranscriptHelpIcon';
 import { VoiceIsolationCurve } from './VoiceIsolationCurve';
 import { VoiceAgeControl } from './VoiceAgeControl';
 
@@ -837,9 +838,12 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
           <Separator />
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-semibold text-foreground">
-                Transcript
-              </label>
+              <div className="flex items-center gap-1.5">
+                <label className="text-sm font-semibold text-foreground">
+                  Transcript
+                </label>
+                <TranscriptHelpIcon />
+              </div>
             </div>
             <TranscriptEditor
               track={selectedTrack}

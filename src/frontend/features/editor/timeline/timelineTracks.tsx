@@ -25,6 +25,7 @@ import {
   checkSnapPosition,
   findAllSnapPoints,
 } from './utils/collisionDetection';
+import { SNAP_THRESHOLD } from '../stores/videoEditor/utils/constants';
 import {
   calculateRowBoundsWithPlaceholders,
   detectInsertionPoint,
@@ -40,6 +41,7 @@ import {
   getRowHeightClasses,
   getTrackItemHeight,
   getTrackItemHeightClasses,
+  MAX_PLACEHOLDER_ROWS,
   SPRITE_SHEET_SKIP_DURATION_SECONDS,
 } from './utils/timelineConstants';
 import { VideoSpriteSheetStrip } from './videoSpriteSheetStrip';
@@ -332,6 +334,21 @@ const TrackItemWrapper: React.FC<{
         onContextMenu={onContextMenu}
       >
         {children}
+        {/* Clip label color (Labels/Colors skill): explicit color-coding chosen by
+            the user or EDITH — a solid underline stripe + a soft tint wash. Only
+            renders when labelColor is set, so unlabeled clips look unchanged. */}
+        {(track as any).labelColor && (
+          <>
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{ background: (track as any).labelColor, opacity: 0.22, zIndex: 5 }}
+            />
+            <div
+              className="absolute left-0 right-0 bottom-0 pointer-events-none"
+              style={{ height: 3, background: (track as any).labelColor, zIndex: 7 }}
+            />
+          </>
+        )}
         {/* Reverse-playback marker(s): light ochre band over the reversed region.
             Position is a fraction of the clip; the clip itself does not move. */}
         {((track as any).reverseSegments ?? []).map((seg: any, i: number) => (
@@ -823,7 +840,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
               const snapResult = checkSnapPosition(
                 newStartFrame,
                 allSnapPoints,
-                8,
+                SNAP_THRESHOLD,
               );
               if (
                 snapResult !== null &&
@@ -867,7 +884,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
               const snapResult = checkSnapPosition(
                 newEndFrame,
                 allSnapPoints,
-                8,
+                SNAP_THRESHOLD,
               );
               if (snapResult !== null && snapResult > dragStart.startFrame) {
                 newEndFrame = snapResult;
@@ -928,7 +945,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
               const startSnap = checkSnapPosition(
                 newStartFrame,
                 allSnapPoints,
-                8,
+                SNAP_THRESHOLD,
               );
               if (startSnap !== null && startSnap >= 0) {
                 newStartFrame = startSnap;
@@ -937,7 +954,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
                 const endSnap = checkSnapPosition(
                   newEndFrame,
                   allSnapPoints,
-                  8,
+                  SNAP_THRESHOLD,
                 );
                 if (endSnap !== null) {
                   newStartFrame = endSnap - duration;
@@ -1385,6 +1402,7 @@ export const TrackItem: React.FC<TrackItemProps> = React.memo(
       prevProps.track.locked === nextProps.track.locked &&
       prevProps.track.muted === nextProps.track.muted &&
       prevProps.track.volumeDb === nextProps.track.volumeDb &&
+      (prevProps.track as any).labelColor === (nextProps.track as any).labelColor &&
       (prevProps.track as any).reversed === (nextProps.track as any).reversed &&
       (prevProps.track as any).sceneMarkers === (nextProps.track as any).sceneMarkers &&
       prevProps.track.noiseReductionEnabled ===
@@ -1899,6 +1917,7 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
                   mediaId,
                   targetFrame,
                   targetRowIndex,
+                  true, // positioned drop — land exactly here (overwrite)
                 );
               } catch (error) {
                 console.error(
@@ -2078,7 +2097,8 @@ const TrackRow: React.FC<TrackRowProps> = React.memo(
           track.linkedTrackId === nextTrack.linkedTrackId &&
           track.previewUrl === nextTrack.previewUrl &&
           track.trackRowIndex === nextTrack.trackRowIndex &&
-          track.mediaId === nextTrack.mediaId
+          track.mediaId === nextTrack.mediaId &&
+          (track as any).labelColor === (nextTrack as any).labelColor
         );
       }) &&
       prevProps.frameWidth === nextProps.frameWidth &&
@@ -2192,8 +2212,6 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
         generatedSubtitleIds: [],
       });
 
-    // Calculate placeholder rows needed
-    const MAX_PLACEHOLDER_ROWS = 1;
 
     const { placeholderRowsAbove, placeholderRowsBelow, totalHeight } =
       useMemo(() => {
@@ -2643,6 +2661,7 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
                 mediaId,
                 targetFrame,
                 targetRowIndex ?? 0,
+                true, // positioned drop — land exactly here (overwrite)
               );
             } catch (error) {
               console.error(
@@ -2828,7 +2847,8 @@ export const TimelineTracks: React.FC<TimelineTracksProps> = React.memo(
           track.linkedTrackId === nextTrack.linkedTrackId &&
           track.previewUrl === nextTrack.previewUrl &&
           track.trackRowIndex === nextTrack.trackRowIndex &&
-          track.mediaId === nextTrack.mediaId
+          track.mediaId === nextTrack.mediaId &&
+          (track as any).labelColor === (nextTrack as any).labelColor
         );
       }) &&
       prevProps.frameWidth === nextProps.frameWidth &&

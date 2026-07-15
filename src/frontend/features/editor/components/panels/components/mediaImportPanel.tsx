@@ -257,9 +257,12 @@ const FileItem: React.FC<FileItemProps> = React.memo(
           <div className="flex flex-col space-y-2">
             <div
               data-edith-target={`media:${file.name}`}
-              draggable={!file.isOnTimeline && !isLocked}
+              // TIMELINE CONTRACT: media stays draggable no matter how many
+              // copies are already on the timeline — one source, many clips
+              // (like every NLE). "Added" is a badge, not a lock.
+              draggable={!isLocked}
               onDragStart={(e) => {
-                if (!file.isOnTimeline && !isLocked) {
+                if (!isLocked) {
                   onMediaDragStart(e, file.id);
                 } else {
                   e.preventDefault();
@@ -267,10 +270,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
               }}
               className={cn(
                 'group relative h-[98px] rounded-md transition-all duration-200 overflow-hidden',
-                !file.isOnTimeline &&
-                  !isLocked &&
-                  'cursor-grab active:cursor-grabbing',
-                file.isOnTimeline && 'cursor-default',
+                !isLocked && 'cursor-grab active:cursor-grabbing',
                 isLocked && 'cursor-not-allowed opacity-60',
               )}
               onClick={async () => {
@@ -292,7 +292,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(
                           : file.isGeneratingSubtitles
                             ? 'Generating subtitles...'
                             : file.isOnTimeline
-                              ? 'Already on timeline'
+                              ? 'On the timeline — drag to add another copy'
                               : 'Click or drag to add to timeline (starts at frame 0)'
               }
             >
@@ -874,8 +874,17 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
           ? getNextAvailableRowIndex(tracks as VideoTrack[], 'subtitle')
           : undefined;
 
-      await addTrackFromMediaLibrary(fileId, 0, subtitleRowIndex);
-      toast.success('Added to timeline');
+      const newTrackId = await addTrackFromMediaLibrary(fileId, 0, subtitleRowIndex);
+      if (newTrackId) {
+        toast.success('Added to timeline');
+      } else if (
+        mediaItem?.transcoding?.status !== 'pending' &&
+        mediaItem?.transcoding?.status !== 'processing'
+      ) {
+        // Deferred because the media is still loading (a modal already covers the
+        // transcoding case). Don't lie with a success toast, and leave it clickable.
+        toast.error('Still loading — give it a moment, then click again');
+      }
     },
     [addTrackFromMediaLibrary, mediaLibrary, tracks],
   );
@@ -1142,12 +1151,19 @@ export const MediaImportPanel: React.FC<CustomPanelProps> = ({ className }) => {
   const sourceToTrackMap = useMemo(() => {
     const map = new Map<string, string>();
     tracks.forEach((track) => {
-      map.set(track.source, track.id);
+      // Only count a track that actually occupies the timeline. A zero/NaN-length track
+      // (from adding media before it finished loading) must NOT mark its media as "Added",
+      // or the item sticks on that badge and can never be re-added.
+      const len = (track.endFrame ?? 0) - (track.startFrame ?? 0);
+      if (Number.isFinite(len) && len > 0) map.set(track.source, track.id);
     });
     return map;
   }, [
     tracks
-      .map((track) => `${track.source}:${track.id}`)
+      .map(
+        (track) =>
+          `${track.source}:${track.id}:${(track.endFrame ?? 0) - (track.startFrame ?? 0)}`,
+      )
       .sort()
       .join('|'),
   ]);

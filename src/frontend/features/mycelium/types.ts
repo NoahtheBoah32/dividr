@@ -86,6 +86,34 @@ export type Op =
       blur?: number;         // px, default 0
     }
   | {
+      type: 'adjust';
+      clipName?: string;     // resolve by name; omit = main video track
+      temperature?: number;  // -100..100 (warm/cool white balance)
+      tint?: number;         // -100..100 (green/magenta white balance)
+      hue?: number;          // -180..180
+      shadows?: number;      // -100..100
+      midtones?: number;     // -100..100
+      highlights?: number;   // -100..100
+      vignette?: number;     // 0..100
+      sharpen?: number;      // 0..100
+      blur?: number;         // 0..100
+      grain?: number;        // 0..100 — animated film grain
+      saturation?: number;   // 0..2, 1 = neutral
+      reset?: boolean;       // true = clear all adjustment params (keeps extracted curves)
+    }
+  | {
+      type: 'exportSettings';
+      preset?: string;       // 'tiktok' | 'reels' | 'shorts' | 'youtube' | 'youtube-4k' | 'square'
+      codec?: 'h264' | 'hevc';
+      crf?: number;          // 0–51, lower = better quality (default 28)
+      fps?: number;          // output frame rate override
+      reset?: boolean;
+    }
+  | { type: 'exportSrt'; filename?: string; outputPath?: string }
+  | { type: 'addMarker'; atSeconds: number; label: string; color?: string }
+  | { type: 'removeMarker'; label?: string; atSeconds?: number }
+  | { type: 'exportChapters'; filename?: string; outputPath?: string }
+  | {
       type: 'saveStyle';
       name: string;          // creator name, e.g. "Esteban", "Mycelium"
       style: CaptionStyle;
@@ -228,6 +256,59 @@ export type Op =
       phrase: string;
       atSeconds?: number;
       afterPhrase?: string;
+    }
+  | {
+      // Labels/Colors — color-code a timeline clip (stripe + tint on the clip).
+      type: 'setClipColor';
+      clipId?: string;
+      clipName?: string;   // omit both = main video track
+      color?: string;      // named (red/orange/yellow/green/teal/blue/purple/pink/gray) or #hex
+      clear?: boolean;     // true = remove the label
+    }
+  | {
+      // RGB Curves — per-channel tonal control from anchor points ([in,out] pairs, 0..1).
+      type: 'setCurves';
+      clipName?: string;
+      red?: [number, number][];
+      green?: [number, number][];
+      blue?: [number, number][];
+      master?: [number, number][]; // applied to all channels after the per-channel curves
+      reset?: boolean;             // true = clear the curves
+    }
+  | {
+      // Filters/LUTs — one-tap named color look (teal-orange, warm-film, bw, sepia, vintage…).
+      type: 'applyLook';
+      look: string;
+      clipName?: string;
+      intensity?: number;  // 0..100, default 100
+    }
+  | {
+      // Sound design — short sharp audio hit to punctuate a moment.
+      type: 'stinger';
+      atSeconds?: number;  // omit = at the playhead
+      sound?: string;      // override the auto-picked hit (resolved against the SFX library)
+      volume?: number;     // dB, default -2
+    }
+  | {
+      // Beat Sync — detect musical hits and drop a marker on every beat.
+      type: 'beatSync';
+      clipName?: string;   // omit = longest audio track (the music bed), else main video
+      sensitivity?: number; // 1 (loose) .. 10 (strict), default 3
+      minGapSec?: number;  // minimum spacing between beats, default 0.25
+      maxMarkers?: number; // cap, default 60
+    }
+  | {
+      // Rack focus — focus travels from one depth plane to another mid-shot.
+      type: 'rackFocus';
+      clipId?: string;
+      clipName?: string;      // omit both = main video track
+      startSeconds?: number;  // SOURCE seconds; omit BOTH to rack over the clip's own trimmed range
+      endSeconds?: number;
+      direction?: 'near-to-far' | 'far-to-near'; // default near-to-far (ignored when from/to given)
+      from?: string;          // subject initially IN focus ("the vase of flowers") — vision-located, depth-anchored
+      to?: string;            // subject focus travels TO ("the man in the doorway")
+      strength?: number;      // max defocus 10..100, default 70 (blatant)
+      holdSeconds?: number;   // hold at each end before/after the pull, default 0.35
     };
 
 export type OpStatus = 'pending' | 'running' | 'applied' | 'failed' | 'undone';
@@ -266,6 +347,12 @@ export interface AgentMessage {
   timestamp: number;
   plan?: AgentPlan;         // present when this message is an editing plan
   imagePreviews?: string[]; // base64 data URLs for images attached by the user
+  // Timeline clips the user attached by dragging into the chat — rendered as
+  // Gemini-style cards on the sent bubble. thumbnail is only present on the
+  // live echo; hydrated messages re-resolve it from the media library.
+  clipAttachments?: Array<{
+    trackId: string; name: string; startSec: number; endSec: number; thumbnail?: string;
+  }>;
 }
 
 export interface MycelliumState {

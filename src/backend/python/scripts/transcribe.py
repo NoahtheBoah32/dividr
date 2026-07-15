@@ -50,6 +50,100 @@ class ModelLoadError(TranscriptionError):
     pass
 
 
+_cuda_dlls_ready = False
+
+
+def _setup_cuda_dlls() -> bool:
+    """
+    Windows: make the pip-installed NVIDIA cuBLAS/cuDNN DLLs loadable by CTranslate2.
+
+    CTranslate2 resolves cublas64_12.dll / cudnn*_9.dll with a plain LoadLibrary, which
+    honors neither os.add_dll_directory nor the venv layout — so we prepend the nvidia
+    wheel bin dirs to PATH AND hard-preload the core DLLs with ctypes (verified working
+    on the RTX 5050; PATH or add_dll_directory alone is NOT enough).
+    Returns True when the CUDA runtime DLLs are ready (always True on non-Windows).
+    """
+    global _cuda_dlls_ready
+    if _cuda_dlls_ready:
+        return True
+    import os
+
+    if os.name != "nt":
+        _cuda_dlls_ready = True
+        return True
+    try:
+        import site
+        import glob
+        import ctypes
+
+        dirs = []
+        bases = list(site.getsitepackages())
+        try:
+            user_site = site.getusersitepackages()
+            if user_site:
+                bases.append(user_site)
+        except Exception:
+            pass
+        for base in bases:
+            dirs += glob.glob(os.path.join(base, "nvidia", "*", "bin"))
+        cuda_path = os.environ.get("CUDA_PATH")
+        if cuda_path and os.path.isdir(os.path.join(cuda_path, "bin")):
+            dirs.append(os.path.join(cuda_path, "bin"))
+        if not dirs:
+            return False
+
+        os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
+        for d in dirs:
+            try:
+                os.add_dll_directory(d)
+            except OSError:
+                pass
+        preloaded = 0
+        for name in [
+            "cublasLt64_12.dll",
+            "cublas64_12.dll",
+            "cudnn64_9.dll",
+            "cudnn_ops64_9.dll",
+            "cudnn_cnn64_9.dll",
+        ]:
+            for d in dirs:
+                p = os.path.join(d, name)
+                if os.path.exists(p):
+                    ctypes.WinDLL(p)
+                    preloaded += 1
+                    break
+        _cuda_dlls_ready = preloaded >= 2  # at least the two cuBLAS DLLs
+        return _cuda_dlls_ready
+    except Exception:
+        return False
+
+
+def resolve_device(requested: str) -> str:
+    """'auto' -> 'cuda' when a working CUDA device is visible, else 'cpu'."""
+    if requested == "cuda":
+        _setup_cuda_dlls()
+        return "cuda"
+    if requested != "auto":
+        return requested
+    try:
+        if not _setup_cuda_dlls():
+            return "cpu"
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() > 0:
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def _compute_type_for(device: str, requested: str) -> str:
+    """'auto' -> float16 on GPU (fast, fits VRAM), int8 on CPU (fits RAM)."""
+    if requested and requested != "auto":
+        return requested
+    return "float16" if device == "cuda" else "int8"
+
+
 def log_progress(stage: str, progress: float, message: str = ""):
     """
     Send progress updates to stdout in JSON format
@@ -79,8 +173,8 @@ def transcribe_audio(
     model_size: str = "large-v3",
     language: Optional[str] = None,
     translate: bool = False,
-    device: str = "cpu",
-    compute_type: str = "int8",
+    device: str = "auto",
+    compute_type: str = "auto",
     beam_size: int = 5,
     vad_filter: bool = True,
     on_progress: Optional[Callable[[str, float, str], None]] = None,
@@ -96,8 +190,8 @@ def transcribe_audio(
         model_size: Model size (tiny, base, small, medium, large-v3)
         language: Language code (None for auto-detect)
         translate: Translate to English
-        device: cpu or cuda
-        compute_type: int8, int16, float16, float32
+        device: auto (GPU first, CPU fallback — the default), cpu, or cuda
+        compute_type: auto (float16 on GPU / int8 on CPU), int8, int16, float16, float32
         beam_size: Beam search size (higher = more accurate but slower)
         vad_filter: Use Voice Activity Detection to filter silence
         on_progress: Optional callback function(stage, progress, message) for progress updates.
@@ -153,172 +247,200 @@ def transcribe_audio(
             log_error("invalid_path", error_msg)
         raise FileNotFoundError(error_msg)
     
-    # Log initial progress
-    progress_callback("loading", 0, f"Loading {model_size} model...")
-    
-    try:
-        # Load model
-        load_start = time.time()
-        model = WhisperModel(
-            model_size,
-            device=device,
-            compute_type=compute_type,
-            cpu_threads=2,   # Limit CTranslate2 threads — reduces per-thread memory overhead
-            num_workers=1,   # Single decoder worker — 4 workers was causing MKL OOM on large-v3
-        )
-        load_time = time.time() - load_start
-        
-        progress_callback("loading", 10, f"Model loaded in {load_time:.1f}s")
-        
-    except Exception as e:
-        error_msg = f"Failed to load model: {str(e)}"
-        if on_progress is None:
-            log_error("model_load_error", error_msg, str(e))
-        raise ModelLoadError(error_msg) from e
-    
-    # Start transcription
-    progress_callback("processing", 15, "Starting transcription...")
-    
-    try:
-        start_time = time.time()
-        
-        # Transcribe with word-level timestamps
-        segments_generator, info = model.transcribe(
-            str(audio_file),
-            beam_size=beam_size,
-            language=language,
-            vad_filter=vad_filter,
-            word_timestamps=True,  # Enable word-level timestamps
-            condition_on_previous_text=False,  # Slightly faster and more consistent
-            task="translate" if translate else "transcribe"
-        )
-        
-        # Log detected language
-        progress_callback(
-            "processing",
-            20,
-            f"Language: {info.language} ({info.language_probability:.1%} confidence)"
-        )
-        
-        # Process segments
-        segments_list = []
-        segment_count = 0
-        total_duration = info.duration if hasattr(info, 'duration') else 0
+    def _attempt(dev: str, ct: str, final: bool) -> Dict[str, Any]:
+        """One full load+transcribe pass on `dev`. Raises on failure; only the FINAL
+        attempt emits log_error (so a GPU failure that falls back doesn't spook the UI)."""
+        progress_callback("loading", 0, f"Loading {model_size} model ({dev}/{ct})...")
 
-        # Chunk batching — emit every 30s so renderer can act progressively
-        CHUNK_DURATION = 30.0
-        current_chunk_segments = []
-        current_chunk_start = 0.0
-        chunk_index = 0
+        try:
+            # Load model
+            load_start = time.time()
+            model = WhisperModel(
+                model_size,
+                device=dev,
+                compute_type=ct,
+                cpu_threads=2,   # Limit CTranslate2 threads — reduces per-thread memory overhead
+                num_workers=1,   # Single decoder worker — 4 workers was causing MKL OOM on large-v3
+            )
+            load_time = time.time() - load_start
 
-        for segment in segments_generator:
-            segment_count += 1
+            progress_callback("loading", 10, f"Model loaded in {load_time:.1f}s ({dev})")
 
-            # Build word list with timestamps
-            words = []
-            if segment.words:
-                for word in segment.words:
-                    words.append({
-                        "word": word.word.strip(),
-                        "start": round(word.start, 3),
-                        "end": round(word.end, 3),
-                        "confidence": round(word.probability, 3)
-                    })
+        except Exception as e:
+            error_msg = f"Failed to load model: {str(e)}"
+            if final and on_progress is None:
+                log_error("model_load_error", error_msg, str(e))
+            raise ModelLoadError(error_msg) from e
 
-            # Build segment object
-            segment_obj = {
-                "start": round(segment.start, 3),
-                "end": round(segment.end, 3),
-                "text": segment.text.strip(),
-                "words": words
-            }
-            segments_list.append(segment_obj)
-            current_chunk_segments.append(segment_obj)
+        # Start transcription
+        progress_callback("processing", 15, f"Starting transcription ({dev})...")
 
-            # Flush chunk when 30 seconds of audio accumulated
-            if segment.end - current_chunk_start >= CHUNK_DURATION:
+        try:
+            start_time = time.time()
+
+            # Transcribe with word-level timestamps
+            segments_generator, info = model.transcribe(
+                str(audio_file),
+                beam_size=beam_size,
+                language=language,
+                vad_filter=vad_filter,
+                word_timestamps=True,  # Enable word-level timestamps
+                condition_on_previous_text=False,  # Slightly faster and more consistent
+                task="translate" if translate else "transcribe"
+            )
+
+            # Log detected language
+            progress_callback(
+                "processing",
+                20,
+                f"Language: {info.language} ({info.language_probability:.1%} confidence)"
+            )
+
+            # Process segments
+            segments_list = []
+            segment_count = 0
+            total_duration = info.duration if hasattr(info, 'duration') else 0
+
+            # Chunk batching — emit every 30s so renderer can act progressively
+            CHUNK_DURATION = 30.0
+            current_chunk_segments = []
+            current_chunk_start = 0.0
+            chunk_index = 0
+
+            for segment in segments_generator:
+                segment_count += 1
+
+                # Build word list with timestamps
+                words = []
+                if segment.words:
+                    for word in segment.words:
+                        words.append({
+                            "word": word.word.strip(),
+                            "start": round(word.start, 3),
+                            "end": round(word.end, 3),
+                            "confidence": round(word.probability, 3)
+                        })
+
+                # Build segment object
+                segment_obj = {
+                    "start": round(segment.start, 3),
+                    "end": round(segment.end, 3),
+                    "text": segment.text.strip(),
+                    "words": words
+                }
+                segments_list.append(segment_obj)
+                current_chunk_segments.append(segment_obj)
+
+                # Flush chunk when 30 seconds of audio accumulated
+                if segment.end - current_chunk_start >= CHUNK_DURATION:
+                    chunk_data = {
+                        "chunkIndex": chunk_index,
+                        "startTime": round(current_chunk_start, 3),
+                        "endTime": round(segment.end, 3),
+                        "segments": current_chunk_segments,
+                        "text": " ".join(s["text"] for s in current_chunk_segments)
+                    }
+                    print(f"CHUNK|{json.dumps(chunk_data)}", flush=True)
+                    chunk_index += 1
+                    current_chunk_segments = []
+                    current_chunk_start = segment.end
+
+                # Calculate progress based on segment end time
+                if total_duration > 0:
+                    progress = 20 + (segment.end / total_duration) * 70
+                    progress_callback(
+                        "processing",
+                        progress,
+                        f"Processed {segment_count} segments..."
+                    )
+
+            # Flush remaining segments as the final chunk
+            if current_chunk_segments:
                 chunk_data = {
                     "chunkIndex": chunk_index,
                     "startTime": round(current_chunk_start, 3),
-                    "endTime": round(segment.end, 3),
+                    "endTime": round(current_chunk_segments[-1]["end"], 3),
                     "segments": current_chunk_segments,
                     "text": " ".join(s["text"] for s in current_chunk_segments)
                 }
                 print(f"CHUNK|{json.dumps(chunk_data)}", flush=True)
-                chunk_index += 1
-                current_chunk_segments = []
-                current_chunk_start = segment.end
 
-            # Calculate progress based on segment end time
-            if total_duration > 0:
-                progress = 20 + (segment.end / total_duration) * 70
-                progress_callback(
-                    "processing",
-                    progress,
-                    f"Processed {segment_count} segments..."
-                )
+            elapsed_time = time.time() - start_time
 
-        # Flush remaining segments as the final chunk
-        if current_chunk_segments:
-            chunk_data = {
-                "chunkIndex": chunk_index,
-                "startTime": round(current_chunk_start, 3),
-                "endTime": round(current_chunk_segments[-1]["end"], 3),
-                "segments": current_chunk_segments,
-                "text": " ".join(s["text"] for s in current_chunk_segments)
+            # Build full text
+            full_text = " ".join(seg["text"] for seg in segments_list)
+
+            # Calculate final duration from last segment
+            final_duration = segments_list[-1]["end"] if segments_list else 0
+
+            # Build result
+            result = {
+                "success": True,
+                "segments": segments_list,
+                "language": info.language,
+                "language_probability": round(info.language_probability, 3),
+                "duration": round(final_duration, 3),
+                "text": full_text,
+                "processing_time": round(elapsed_time, 2),
+                "model": model_size,
+                "device": dev,
+                "compute_type": ct,
+                "segment_count": segment_count
             }
-            print(f"CHUNK|{json.dumps(chunk_data)}", flush=True)
-        
-        elapsed_time = time.time() - start_time
-        
-        # Build full text
-        full_text = " ".join(seg["text"] for seg in segments_list)
-        
-        # Calculate final duration from last segment
-        final_duration = segments_list[-1]["end"] if segments_list else 0
-        
-        # Build result
-        result = {
-            "success": True,
-            "segments": segments_list,
-            "language": info.language,
-            "language_probability": round(info.language_probability, 3),
-            "duration": round(final_duration, 3),
-            "text": full_text,
-            "processing_time": round(elapsed_time, 2),
-            "model": model_size,
-            "device": device,
-            "segment_count": segment_count
-        }
-        
-        # Add performance metrics
-        if final_duration > 0:
-            rtf = elapsed_time / final_duration
-            result["real_time_factor"] = round(rtf, 3)
-            result["faster_than_realtime"] = bool(rtf < 1.0)
-        
-        progress_callback("complete", 100, f"Transcription complete! {segment_count} segments")
 
-        # Explicitly delete the model and force garbage collection so Python releases
-        # the ~1.5GB of RAM immediately rather than waiting for the GC.
-        # This matters when the next operation (e.g. analyzeMotion) also needs a large model.
+            # Add performance metrics
+            if final_duration > 0:
+                rtf = elapsed_time / final_duration
+                result["real_time_factor"] = round(rtf, 3)
+                result["faster_than_realtime"] = bool(rtf < 1.0)
+
+            progress_callback("complete", 100, f"Transcription complete! {segment_count} segments")
+
+            # Explicitly delete the model and force garbage collection so Python releases
+            # the ~1.5GB of RAM immediately rather than waiting for the GC.
+            # This matters when the next operation (e.g. analyzeMotion) also needs a large model.
+            try:
+                del model
+                import gc
+                gc.collect()
+            except Exception:
+                pass
+
+            return result
+
+        except (FileNotFoundError, ModelLoadError):
+            # Re-raise our custom exceptions
+            raise
+        except Exception as e:
+            error_msg = f"Transcription failed: {str(e)}"
+            if final and on_progress is None:
+                log_error("transcription_error", error_msg, str(e))
+            raise TranscriptionError(error_msg) from e
+
+    # GPU-first with CPU fallback. resolve_device('auto') answers 'cuda' only when a
+    # CUDA device is visible AND the cuBLAS/cuDNN DLLs loaded; anything that still goes
+    # wrong on the GPU (VRAM, driver, mid-stream CUDA error) retries once on CPU.
+    # GPU failures surface at model load or the first encode — before any CHUNK|
+    # line has streamed — so the CPU retry does not double-emit chunks in practice.
+    resolved = resolve_device(device)
+    attempts = ["cuda", "cpu"] if resolved == "cuda" else ["cpu"]
+
+    for i, dev in enumerate(attempts):
+        final = i == len(attempts) - 1
         try:
-            del model
-            import gc
-            gc.collect()
-        except Exception:
-            pass
+            return _attempt(dev, _compute_type_for(dev, compute_type), final)
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            if final:
+                raise
+            progress_callback(
+                "loading", 0,
+                f"GPU transcription failed ({e}) — falling back to CPU..."
+            )
 
-        return result
-
-    except (FileNotFoundError, ModelLoadError):
-        # Re-raise our custom exceptions
-        raise
-    except Exception as e:
-        error_msg = f"Transcription failed: {str(e)}"
-        if on_progress is None:
-            log_error("transcription_error", error_msg, str(e))
-        raise TranscriptionError(error_msg) from e
+    # Unreachable: the last attempt either returned or raised.
+    raise TranscriptionError("No transcription attempt could run")
 
 
 def run(input_path: str, output_path: str, **kwargs) -> None:
@@ -328,8 +450,8 @@ def run(input_path: str, output_path: str, **kwargs) -> None:
         "model_size": kwargs.get("model_size", "large-v3"),
         "language": kwargs.get("language", None),
         "translate": kwargs.get("translate", False),
-        "device": kwargs.get("device", "cpu"),
-        "compute_type": kwargs.get("compute_type", "int8"),
+        "device": kwargs.get("device", "auto"),
+        "compute_type": kwargs.get("compute_type", "auto"),
         "beam_size": kwargs.get("beam_size", 5),
         "vad_filter": kwargs.get("vad_filter", True),
         "on_progress": kwargs.get("on_progress", None),
@@ -385,17 +507,17 @@ def main():
     parser.add_argument(
         "--device",
         type=str,
-        default="cpu",
-        choices=["cpu", "cuda"],
-        help="Device to use (default: cpu)"
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="Device to use (default: auto — GPU first, CPU fallback)"
     )
-    
+
     parser.add_argument(
         "--compute-type",
         type=str,
-        default="int8",
-        choices=["int8", "int16", "float16", "float32"],
-        help="Compute type (default: int8)"
+        default="auto",
+        choices=["auto", "int8", "int16", "float16", "float32"],
+        help="Compute type (default: auto — float16 on GPU, int8 on CPU)"
     )
     
     parser.add_argument(

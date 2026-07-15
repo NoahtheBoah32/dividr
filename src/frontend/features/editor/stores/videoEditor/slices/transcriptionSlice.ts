@@ -66,8 +66,8 @@ export interface TranscriptionSlice {
         | 'large-v2'
         | 'large-v3';
       language?: string;
-      device?: 'cpu' | 'cuda';
-      computeType?: 'int8' | 'int16' | 'float16' | 'float32';
+      device?: 'auto' | 'cpu' | 'cuda';
+      computeType?: 'auto' | 'int8' | 'int16' | 'float16' | 'float32';
       beamSize?: number;
       vad?: boolean;
       processOnlyThisSegment?: boolean; // If true, only process this specific track/segment; if false/undefined, process all clips from source
@@ -119,8 +119,8 @@ export interface TranscriptionSlice {
         | 'large-v2'
         | 'large-v3';
       language?: string;
-      device?: 'cpu' | 'cuda';
-      computeType?: 'int8' | 'int16' | 'float16' | 'float32';
+      device?: 'auto' | 'cpu' | 'cuda';
+      computeType?: 'auto' | 'int8' | 'int16' | 'float16' | 'float32';
       beamSize?: number;
       vad?: boolean;
       sourceTrack?: VideoTrack; // Optional source track for timeline-aware positioning
@@ -425,8 +425,8 @@ export const createTranscriptionSlice: StateCreator<
         const result = await window.electronAPI.whisperTranscribe(audioPath, {
           model: options.model || 'base',
           language: options.language, // Omit for auto-detect
-          device: options.device || 'cpu',
-          computeType: options.computeType || 'int8',
+          device: options.device || 'auto',
+          computeType: options.computeType || 'auto',
           beamSize: options.beamSize || 5,
           vad: options.vad !== false, // Enable VAD by default
         });

@@ -532,35 +532,43 @@ function handleEncodingSettings(
   hwAccel: HardwareAcceleration | null,
 ): void {
   let videoCodec: string = ENCODING_DEFAULTS.VIDEO_CODEC;
+  const wantsHEVC =
+    job.operations.videoCodec === 'hevc' || job.operations.preferHEVC;
 
   if (hwAccel) {
     // Use hardware codec
     videoCodec =
-      job.operations.preferHEVC && hwAccel.hevcCodec
-        ? hwAccel.hevcCodec
-        : hwAccel.videoCodec;
+      wantsHEVC && hwAccel.hevcCodec ? hwAccel.hevcCodec : hwAccel.videoCodec;
 
     console.log(`🎮 Using hardware video codec: ${videoCodec}`);
     console.log(
       `⚠️  Note: If encoding fails, FFmpeg may not support this codec on your system.`,
     );
   } else {
+    if (wantsHEVC) videoCodec = 'libx265';
     console.log(`💻 Using software video codec: ${videoCodec}`);
   }
 
   cmd.args.push('-c:v', videoCodec);
   cmd.args.push('-c:a', ENCODING_DEFAULTS.AUDIO_CODEC);
 
+  // HEVC in MP4 needs the hvc1 tag for QuickTime/Apple playback
+  if (videoCodec === 'libx265') {
+    cmd.args.push('-tag:v', 'hvc1');
+  }
+
   // Add memory-efficient encoder settings
   if (!hwAccel) {
-    // Software encoding: Add memory-efficient x264 settings
-    console.log('💾 Adding memory-efficient software encoder settings...');
-    cmd.args.push(
-      '-x264-params',
-      'nal-hrd=cbr:force-cfr=1:rc-lookahead=10:bframes=0', // Reduce lookahead buffer, disable B-frames
-    );
-    console.log('   ✅ Reduced x264 lookahead to 10 frames (default 40)');
-    console.log('   ✅ Disabled B-frames (reduces encoder buffering)');
+    if (videoCodec === 'libx264') {
+      // Software encoding: Add memory-efficient x264 settings
+      console.log('💾 Adding memory-efficient software encoder settings...');
+      cmd.args.push(
+        '-x264-params',
+        'nal-hrd=cbr:force-cfr=1:rc-lookahead=10:bframes=0', // Reduce lookahead buffer, disable B-frames
+      );
+      console.log('   ✅ Reduced x264 lookahead to 10 frames (default 40)');
+      console.log('   ✅ Disabled B-frames (reduces encoder buffering)');
+    }
   } else {
     // Hardware encoding: Add hardware encoder flags
     if (hwAccel.encoderFlags) {
@@ -591,11 +599,14 @@ function handlePreset(
 
   if (!job.operations.preset) return;
 
+  // CRF quality — user/EDITH selectable (0–51, lower = better), default 28
+  const crf = Math.max(0, Math.min(51, Math.round(job.operations.crf ?? 28)));
+
   cmd.args.push('-preset', job.operations.preset);
-  cmd.args.push('-crf', '28');
+  cmd.args.push('-crf', String(crf));
   cmd.args.push('-b:a', '96k');
 
-  console.log(`🚀 Applied software encoding preset: ${job.operations.preset}`);
+  console.log(`🚀 Applied software encoding preset: ${job.operations.preset}, CRF ${crf}`);
 }
 
 /**

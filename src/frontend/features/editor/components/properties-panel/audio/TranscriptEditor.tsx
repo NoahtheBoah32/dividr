@@ -40,7 +40,12 @@ import {
 } from './transcriptEditUtils';
 import { pullPhrase } from './transcriptSurgery';
 import { operationEngine } from '../../../../mycelium/operationEngine';
-import { getSfxNames, ensureSfxLibrary } from '../../../../mycelium/sfxLibraryCache';
+import {
+  getSfxNames,
+  getSfxAliases,
+  ensureSfxLibrary,
+  refreshSfxLibrary,
+} from '../../../../mycelium/sfxLibraryCache';
 import { sfxOpForWord, SFX_MARKER_YELLOW } from './sfxTriggerUtils';
 import {
   applyDeletion,
@@ -54,6 +59,16 @@ interface TranscriptEditorProps {
   isTranscribing?: boolean;
   transcribingMediaId?: string | null;
 }
+
+/**
+ * Pending annotation text survives panel switches / tab-outs. The typing buffer
+ * is component state, so unmounting the panel used to VAPORIZE a half-typed
+ * *whoo — and blur used to cancel it too. Keyed by track id.
+ */
+const pendingTypingByTrack = new Map<
+  string,
+  { anchorWordId: string; text: string }
+>();
 
 /** Resolve the subject video track that a (possibly linked-audio) track belongs to. */
 function resolveSubjectTrack(track: VideoTrack, tracks: VideoTrack[]): VideoTrack {
@@ -288,11 +303,23 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     subjectSource: subject.source,
   };
 
-  const editorRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  // The editor div mounts LATE (after "no transcription yet" early-returns) and can
+  // be recreated — hold it in state too, so the beforeinput effect re-attaches to
+  // the live element instead of silently ending up with no listener at all.
+  const [editorEl, setEditorEl] = useState<HTMLDivElement | null>(null);
+  const setEditorRef = useCallback((el: HTMLDivElement | null) => {
+    editorRef.current = el;
+    setEditorEl(el);
+  }, []);
   const pendingCaretRef = useRef<EditCaret | null>(null);
   // Set right after a typing keystroke so the caret snaps to the end of the annotation
   // buffer on the next render (but never yanks it there on unrelated re-renders).
   const typingCaretPendingRef = useRef(false);
+  // Set by commitSfxMarker: park the caret right AFTER the freshly committed yellow
+  // token once it renders, so an immediate backspace melts the token instead of
+  // ripple-deleting the transcript word to its left.
+  const caretAfterMarkerRef = useRef<string | null>(null);
 
   // ---- DOM <-> model mapping -------------------------------------------------
   const caretFromDom = useCallback(
@@ -314,7 +341,35 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         editorRef.current.querySelectorAll('[data-wid]'),
       ) as HTMLElement[];
       if (spans.length === 0) return null;
-      const target = (node.nodeType === 1 ? node : host) as Element | null;
+      let target = (node.nodeType === 1 ? node : host) as Node | null;
+      // An element-level caret sits BETWEEN children of the line container (e.g.
+      // parked right after a committed *sfx* island by the token's onClick).
+      // Compare from the node immediately LEFT of the caret — comparing from the
+      // container itself skips every word in this line as "contained" and snaps
+      // the anchor to the PREVIOUS line's last word, so typing after a *sfx*
+      // teleported up a segment.
+      if (node.nodeType === 1 && offset > 0) {
+        const el = node as Element;
+        const before = el.childNodes[Math.min(offset, el.childNodes.length) - 1];
+        if (before) {
+          if (before.nodeType === 1) {
+            const bEl = before as Element;
+            // Caret directly after a word span → that word IS the anchor.
+            const wEnd = bEl.matches?.('[data-wid]')
+              ? (bEl as HTMLElement)
+              : (Array.from(bEl.querySelectorAll?.('[data-wid]') ?? []).pop() as
+                  | HTMLElement
+                  | undefined);
+            if (wEnd) {
+              return {
+                wordId: wEnd.getAttribute('data-wid')!,
+                offset: wEnd.textContent?.length ?? 0,
+              };
+            }
+          }
+          target = before;
+        }
+      }
       if (target) {
         let preceding: HTMLElement | null = null;
         for (const s of spans) {
@@ -389,6 +444,27 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
 
   // Restore the caret after each model-driven re-render.
   useLayoutEffect(() => {
+    if (caretAfterMarkerRef.current) {
+      const root = editorRef.current;
+      const id = caretAfterMarkerRef.current;
+      const el = root?.querySelector(
+        `[data-mk-sfx="${(window as any).CSS?.escape ? CSS.escape(id) : id}"]`,
+      ) as HTMLElement | null;
+      // The marker renders a frame or two after the store update — keep the flag
+      // until the element exists, then place once and clear.
+      if (root && el) {
+        caretAfterMarkerRef.current = null;
+        if (document.activeElement === root || root.contains(document.activeElement)) {
+          const range = document.createRange();
+          range.setStartAfter(el);
+          range.collapse(true);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+        return;
+      }
+    }
     if (pendingCaretRef.current) {
       placeCaret(pendingCaretRef.current);
       pendingCaretRef.current = null;
@@ -548,9 +624,21 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
   // marker) and ripples everything after it forward. An unfinished *whoosh or open
   // "..." does nothing. Nothing that already worked was removed.
   const SCENE_GREEN = '#22c55e';
-  const [typing, setTyping] = useState<{ anchorWordId: string; text: string } | null>(null);
+  const [typing, setTypingState] = useState<{ anchorWordId: string; text: string } | null>(
+    () => pendingTypingByTrack.get(track.id) ?? null,
+  );
   const typingRef = useRef(typing);
   typingRef.current = typing;
+  // Single setter that keeps state, ref, and the survive-unmount cache in sync.
+  const setTyping = useCallback(
+    (next: { anchorWordId: string; text: string } | null) => {
+      typingRef.current = next;
+      if (next) pendingTypingByTrack.set(track.id, next);
+      else pendingTypingByTrack.delete(track.id);
+      setTypingState(next);
+    },
+    [track.id],
+  );
   const [sfxMsg, setSfxMsg] = useState<string | null>(null);
   const sfxSeqRef = useRef(0);
   const quoteSeqRef = useRef(0);
@@ -560,8 +648,9 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
   }, []);
 
   // Scan the SFX library up front so typing *whoosh* resolves even when the EDITH panel
-  // (which used to be the only scanner) never mounted, or an HMR reload cleared the cache.
-  useEffect(() => { void ensureSfxLibrary(); }, []);
+  // (which used to be the only scanner) never mounted. A refresh (30s staleness) rather
+  // than ensure, so files dropped into the folder get picked up when the panel reopens.
+  useEffect(() => { void refreshSfxLibrary(30_000); }, []);
 
   // Timeline frame of the point the annotation sits at (end of the word it follows).
   const anchorFrame = useCallback((anchorWordId: string): number => {
@@ -587,7 +676,14 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         return;
       }
       const atFrame = anchorFrame(anchorWordId);
-      const op = sfxOpForWord(word, atFrame, modelRef.current.fps, names);
+      let op = sfxOpForWord(word, atFrame, modelRef.current.fps, names, getSfxAliases());
+      if (!op) {
+        // The file (or an aliases.txt entry) may have been dropped into the library
+        // folder AFTER the last scan — re-scan once and retry before giving up, so
+        // new sounds work without restarting DiviDr.
+        names = await refreshSfxLibrary(0);
+        op = sfxOpForWord(word, atFrame, modelRef.current.fps, names, getSfxAliases());
+      }
       if (!op) {
         flashSfx(`“${word}” isn't a sound effect in the library.`);
         return;
@@ -598,14 +694,19 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       const liveTrack = (st.tracks as any[]).find((x) => x.id === track.id);
       const markers = [...(((liveTrack ?? (track as any)).sfxMarkers as any[]) ?? [])];
       sfxSeqRef.current += 1;
+      const markerId = `sfx_${anchorWordId}_${sfxSeqRef.current}`;
       // Record atFrame so removal can find and delete exactly this placed clip later.
       updateTrack(track.id, {
         sfxMarkers: [
           ...markers,
-          { id: `sfx_${anchorWordId}_${sfxSeqRef.current}`, afterWordId: anchorWordId, word, file: op.file, atFrame },
+          { id: markerId, afterWordId: anchorWordId, word, file: op.file, atFrame },
         ],
       } as any);
-      flashSfx(`Placed ${op.trackName} — backspace or the × to undo.`);
+      // Park the caret right AFTER the new yellow token once it renders, so an
+      // immediate backspace edits the token (melts it) instead of eating the
+      // transcript word to its left.
+      caretAfterMarkerRef.current = markerId;
+      flashSfx(`Placed ${op.trackName} — backspace to edit it, × to remove.`);
     },
     [track, updateTrack, flashSfx, anchorFrame],
   );
@@ -682,11 +783,37 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
     );
   }, [readSelection]);
 
+  // A pending annotation buffer must not swallow keystrokes made somewhere else.
+  // The buffer survives blur (panel switches), so after clicking another line the
+  // old fragment can still be alive — typing then must follow the caret, not the
+  // stale buffer. True while the caret is inside the buffer span (where every
+  // keystroke re-parks it) or immediately after it.
+  const caretAtTypingBuffer = useCallback((): boolean => {
+    const root = editorRef.current;
+    if (!root) return false;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    const range = sel.getRangeAt(0);
+    const span = root.querySelector('[data-typing]') as HTMLElement | null;
+    // Buffer exists but its span hasn't rendered yet (keystrokes can outrun the
+    // render) — nothing else could have been clicked in between.
+    if (!span) return true;
+    if (span.contains(range.startContainer)) return true;
+    if (range.startContainer.nodeType === 1 && range.startOffset > 0) {
+      const before = (range.startContainer as Element).childNodes[range.startOffset - 1];
+      if (before === span) return true;
+    }
+    return false;
+  }, []);
+
   // Free typing at the caret → the annotation buffer. Triggers fire on completion.
   const handleTyping = useCallback(
     (data: string) => {
       if (!data) return;
       let cur = typingRef.current;
+      // The caret moved away since this buffer started (clicked another line):
+      // abandon the stale fragment and start typing where the caret actually is.
+      if (cur && !caretAtTypingBuffer()) cur = null;
       for (const ch of data) {
         if (ch === '\n' || ch === '\r') { cur = null; continue; }
         if (!cur) {
@@ -703,7 +830,7 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       typingCaretPendingRef.current = true;
       setTyping(cur);
     },
-    [startAnchor, tryFireTriggers],
+    [startAnchor, tryFireTriggers, caretAtTypingBuffer, setTyping],
   );
 
   const backspaceTyping = useCallback(() => {
@@ -729,14 +856,16 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
   // back or swapped. Older markers with no atFrame fall back to the newest overlay
   // clip of that file.
   const baseName = (s: string | undefined) => (s || '').split(/[\\/]/).pop() ?? '';
-  const removeSfxMarker = useCallback(
-    (markerId: string) => {
+  // Shared core: delete the marker record + the exact clip it placed (one undo
+  // step). Returns the removed marker so callers can decide what happens next.
+  const removeMarkerAndClip = useCallback(
+    (markerId: string, label: string): any | null => {
       const store = useVideoEditorStore.getState() as any;
       const liveTrack = (store.tracks as any[]).find((x) => x.id === track.id) ?? (track as any);
       const markers: any[] = (liveTrack.sfxMarkers as any[]) ?? [];
       const mk = markers.find((m) => m.id === markerId);
-      if (!mk) return;
-      store.beginGroup?.('Remove SFX');
+      if (!mk) return null;
+      store.beginGroup?.(label);
       try {
         // Find the placed clip: audio overlay of this file at the recorded frame.
         const audio = (store.tracks as any[]).filter(
@@ -748,27 +877,89 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
           audio
             .filter((t) => (t.trackRowIndex ?? 0) >= 1)
             .sort((a, b) => (b.startFrame ?? 0) - (a.startFrame ?? 0))[0];
-        if (clip) (useVideoEditorStore.getState() as any).removeTrack(clip.id);
+        if (clip) {
+          (useVideoEditorStore.getState() as any).removeTrack(clip.id);
+        } else {
+          // Placement is async after *word* completes, so a fast backspace can
+          // outrun the clip. Watch the store briefly and remove the clip the
+          // moment it lands — a melted marker must never strand an orphan clip.
+          const matches = (t: any) =>
+            t.type === 'audio' &&
+            baseName(t.source) === mk.file &&
+            (typeof mk.atFrame !== 'number' || t.startFrame === mk.atFrame);
+          let timer = 0;
+          const unsub = (useVideoEditorStore as any).subscribe((s: any) => {
+            const cand = (s.tracks as any[]).find(matches);
+            if (!cand) return;
+            unsub();
+            window.clearTimeout(timer);
+            (useVideoEditorStore.getState() as any).removeTrack(cand.id);
+          });
+          timer = window.setTimeout(() => unsub(), 15000);
+        }
         updateTrack(track.id, {
           sfxMarkers: markers.filter((m) => m.id !== markerId),
         } as any);
       } finally {
         (useVideoEditorStore.getState() as any).endGroup?.();
       }
-      flashSfx(`Removed *${mk.word}* and its clip.`);
+      return mk;
     },
-    [track, updateTrack, flashSfx],
+    [track, updateTrack],
   );
 
-  // If the collapsed caret sits at the very start of a word whose immediately
-  // preceding island (in document order, across line breaks) is a committed SFX
-  // marker, return that marker's id so backspace removes it instead of a character.
+  // The × button: remove the marker and its clip outright.
+  const removeSfxMarker = useCallback(
+    (markerId: string) => {
+      const mk = removeMarkerAndClip(markerId, 'Remove SFX');
+      if (mk) flashSfx(`Removed *${mk.word}* and its clip.`);
+    },
+    [removeMarkerAndClip, flashSfx],
+  );
+
+  // Backspace: MELT the committed marker back into editable text instead of
+  // nuking the whole block. The first backspace eats the closing asterisk —
+  // the clip lifts off the timeline (an unfinished *word doesn't trigger) and
+  // "*word" reappears as the live typing buffer, so further backspaces delete
+  // one character at a time and typing the * again re-places the sound.
+  const meltSfxMarker = useCallback(
+    (markerId: string) => {
+      const mk = removeMarkerAndClip(markerId, 'Edit SFX');
+      if (!mk) return;
+      const seeded = { anchorWordId: mk.afterWordId, text: `*${mk.word}` };
+      typingCaretPendingRef.current = true;
+      setTyping(seeded);
+      flashSfx(`Lifted ${mk.word} off the timeline — finish the *…* to place it again.`);
+    },
+    [removeMarkerAndClip, setTyping, flashSfx],
+  );
+
+  // Return the id of the committed SFX marker immediately LEFT of the collapsed
+  // caret, so backspace can melt it instead of deleting a character. Two shapes:
+  //   1. Caret placed directly after the marker island (element-level range —
+  //      what clicking the yellow token produces).
+  //   2. Caret at offset 0 of the word whose preceding island is a marker.
   const sfxMarkerLeftOfCaret = useCallback((): string | null => {
     const root = editorRef.current;
     if (!root) return null;
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
     const range = sel.getRangeAt(0);
+
+    // Shape 1: element-level caret sitting right after a marker node.
+    if (range.startContainer.nodeType === 1 && range.startOffset > 0) {
+      const container = range.startContainer as Element;
+      const before = container.childNodes[range.startOffset - 1];
+      if (before && before.nodeType === 1) {
+        const el = before as Element;
+        const mkEl = el.hasAttribute?.('data-mk-sfx')
+          ? el
+          : (el.querySelector?.('[data-mk-sfx]:last-of-type') as Element | null);
+        if (mkEl?.hasAttribute('data-mk-sfx')) return mkEl.getAttribute('data-mk-sfx');
+      }
+    }
+
+    // Shape 2: caret at the very start of the word after a marker.
     if (range.startOffset !== 0) return null; // a character is to the left → normal delete
     const host = (range.startContainer.nodeType === 3
       ? range.startContainer.parentElement
@@ -787,7 +978,7 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
   // Native beforeinput: free typing goes to the annotation buffer; deletions hit the
   // buffer first (while typing), else the word ripple-delete. Nothing applies natively.
   useEffect(() => {
-    const el = editorRef.current;
+    const el = editorEl;
     if (!el) return;
     const onBeforeInput = (e: Event) => {
       const ie = e as InputEvent;
@@ -795,17 +986,23 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
       e.preventDefault();
       if (t.startsWith('insert')) { handleTyping((ie.data ?? '') as string); return; }
       if (t.startsWith('delete')) {
-        if (typingRef.current) { backspaceTyping(); return; }
-        // Backspace right after a committed *sfx* removes that marker + its clip.
+        if (typingRef.current) {
+          if (caretAtTypingBuffer()) { backspaceTyping(); return; }
+          // Stale buffer from an earlier spot — abandon it; this delete belongs
+          // to whatever is at the caret now.
+          cancelTyping();
+        }
+        // Backspace right after a committed *sfx* MELTS it back into editable
+        // text (clip lifts off; further backspaces delete one char at a time).
         const mkId = sfxMarkerLeftOfCaret();
-        if (mkId) { removeSfxMarker(mkId); return; }
+        if (mkId) { meltSfxMarker(mkId); return; }
         handleDelete(t);
         return;
       }
     };
     el.addEventListener('beforeinput', onBeforeInput);
     return () => el.removeEventListener('beforeinput', onBeforeInput);
-  }, [handleDelete, handleTyping, backspaceTyping, sfxMarkerLeftOfCaret, removeSfxMarker]);
+  }, [editorEl, handleDelete, handleTyping, backspaceTyping, sfxMarkerLeftOfCaret, meltSfxMarker, caretAtTypingBuffer, cancelTyping]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -847,9 +1044,6 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         <ScrollText className="size-5 text-muted-foreground/70" />
         <p className="text-xs text-muted-foreground">
           Ask EDITH to transcribe this clip to edit it here.
-        </p>
-        <p className="text-[11px] text-muted-foreground/70">
-          Once transcribed, backspace through a word to remove it from the video.
         </p>
       </div>
     );
@@ -896,27 +1090,28 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         </div>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-        Backspace through a whole word to cut it from the video. You can also TYPE here:
-        a sound effect in <span className="font-mono" style={{ color: SFX_MARKER_YELLOW }}>*asterisks*</span>{' '}
-        (e.g. <span className="font-mono">*whoosh*</span>) drops it on the timeline, and a full{' '}
-        <span className="font-mono" style={{ color: SCENE_GREEN }}>"quoted line"</span> from the
-        transcript duplicates that scene here. Leave either one unfinished and nothing happens.
-        Changed your mind? Backspace right after a <span className="font-mono" style={{ color: SFX_MARKER_YELLOW }}>*sound*</span>{' '}
-        or click its × to remove it and its clip.
-      </p>
       {sfxMsg && (
         <p className="text-[11px]" style={{ color: SFX_MARKER_YELLOW }}>{sfxMsg}</p>
       )}
 
       <div
-        ref={editorRef}
+        ref={setEditorRef}
         contentEditable
         suppressContentEditableWarning
         spellCheck={false}
         onKeyDown={onKeyDown}
-        onBlur={() => { closeGroup(); cancelTyping(); }}
-        onPaste={(e) => e.preventDefault()}
+        // Blur KEEPS the pending annotation — switching panels or tabbing out
+        // must not vaporize a half-typed *whoo. Escape still cancels it.
+        onBlur={() => closeGroup()}
+        // Paste routes through the SAME path as typing: the text streams into the
+        // annotation buffer at the caret (never into the spoken words), so pasting
+        // "*boom*" or a copied "quoted line" fires the trigger exactly like typing
+        // it. Newlines are flattened to spaces — a raw \n would cancel the buffer.
+        onPaste={(e) => {
+          e.preventDefault();
+          const text = e.clipboardData?.getData('text/plain') ?? '';
+          if (text) handleTyping(text.replace(/\s*\r?\n\s*/g, ' '));
+        }}
         onDrop={(e) => e.preventDefault()}
         role="textbox"
         aria-multiline="true"
@@ -970,9 +1165,24 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
                         key={mk.id}
                         data-mk-sfx={mk.id}
                         contentEditable={false}
-                        className="group/sfx mx-0.5 inline select-none font-mono text-[13px] font-bold"
+                        onClick={(e) => {
+                          // Clicking the token puts the caret right AFTER it so
+                          // backspace immediately edits it — without this the
+                          // island is unreachable once focus has moved away.
+                          const target = e.currentTarget;
+                          const root = editorRef.current;
+                          if (!root) return;
+                          root.focus();
+                          const s = window.getSelection();
+                          const r = document.createRange();
+                          r.setStartAfter(target);
+                          r.collapse(true);
+                          s?.removeAllRanges();
+                          s?.addRange(r);
+                        }}
+                        className="group/sfx mx-0.5 inline cursor-text select-none font-mono text-[13px] font-bold"
                         style={{ color: SFX_MARKER_YELLOW, textShadow: '0 0 6px rgba(255,230,0,0.45)' }}
-                        title={`SFX on the timeline: ${mk.file} · backspace after it or click × to remove`}
+                        title={`SFX on the timeline: ${mk.file} · click, then backspace to edit · × removes it`}
                       >
                         *{mk.word}*
                         <button

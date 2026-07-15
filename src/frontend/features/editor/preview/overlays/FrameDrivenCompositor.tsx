@@ -24,7 +24,7 @@ import {
   resolveFrameRequests,
   resolveDipOverlay,
 } from '../services/FrameResolver';
-import { applyCSSColorGrade, GRADE_FILTER_ID } from '../utils/colorGradeUtils';
+import { applyCSSColorGrade, GRADE_FILTER_ID, removeGrainOverlay, removeVignetteOverlay } from '../utils/colorGradeUtils';
 import { gradeCompare } from '../utils/gradeCompareState';
 
 export interface FrameDrivenCompositorRef {
@@ -118,7 +118,10 @@ export const FrameDrivenCompositor = forwardRef<
 
       const applyFilter = () => {
         if (gradeCompare.enabled) {
+          // Keep the SVG filter alive — compare mode draws the graded half via ctx.filter
           canvas.style.filter = '';
+          removeVignetteOverlay();
+          removeGrainOverlay();
         } else {
           applyCSSColorGrade(canvas, mainGrade);
         }
@@ -128,6 +131,8 @@ export const FrameDrivenCompositor = forwardRef<
       window.addEventListener('dividr:gradeCompare', applyFilter);
       return () => {
         canvas.style.filter = '';
+        removeVignetteOverlay();
+        removeGrainOverlay();
         window.removeEventListener('dividr:gradeCompare', applyFilter);
       };
     }, [mainGrade]);
@@ -177,7 +182,16 @@ export const FrameDrivenCompositor = forwardRef<
       tmpCanvasRef.current = tmp;
       tmpCtxRef.current = tmp.getContext('2d', { alpha: false }) as CanvasRenderingContext2D;
 
+      // Setting canvas.width/height WIPES the bitmap. While paused nothing else
+      // repaints, so any resize (properties panel mounting on clip select /
+      // unmounting on Esc) left the preview solid black until the next frame
+      // change. Recomposite as soon as the new surface exists.
+      const raf = requestAnimationFrame(() => {
+        compositeFrameRef.current(currentFrameRef.current, true);
+      });
+
       return () => {
+        cancelAnimationFrame(raf);
         ctxRef.current = null;
         ghostCanvasRef.current = null;
         ghostCtxRef.current = null;
@@ -244,6 +258,22 @@ export const FrameDrivenCompositor = forwardRef<
         video.addEventListener('waiting', () => {
           const m = videosRef.current.get(clipId);
           if (m) m.isReady = false;
+        });
+        // A paused seek fires NO canplay/loadeddata — without this the composite that
+        // ran at seek-START (often a black frame on 4K hardware decode) is the one
+        // that sticks. Recomposite when the seeked frame is actually presentable:
+        // requestVideoFrameCallback lands exactly on frame presentation; the timeout
+        // fallback covers browsers/elements where rVFC never fires while paused.
+        video.addEventListener('seeked', () => {
+          if (isPlayingRef.current) return;
+          const recomposite = () =>
+            compositeFrameRef.current(currentFrameRef.current, false);
+          if (typeof (video as any).requestVideoFrameCallback === 'function') {
+            (video as any).requestVideoFrameCallback(() => recomposite());
+            setTimeout(recomposite, 160); // belt-and-braces: rVFC can starve when paused
+          } else {
+            setTimeout(recomposite, 60);
+          }
         });
 
         videosRef.current.set(clipId, managed);
@@ -401,8 +431,12 @@ export const FrameDrivenCompositor = forwardRef<
           ctx.translate(-fcx, -fcy);
         }
 
-        // Try drawing from video
-        if (video.readyState >= 2) {
+        // Try drawing from video. A MID-SEEK element is treated as not-ready: on 4K
+        // hardware decode, drawImage during a seek yields a BLACK frame, which then
+        // sticks on the canvas (and poisons anything that samples it — the relighter,
+        // light detection, thumbnails). The last-good-frame fallback below covers the
+        // gap, and the 'seeked' recomposite repaints the real frame when it's ready.
+        if (video.readyState >= 2 && !video.seeking) {
           try {
             ctx.drawImage(video, drawX, drawY, drawWidth, drawHeight);
             ctx.restore();
@@ -489,7 +523,8 @@ export const FrameDrivenCompositor = forwardRef<
 
         // Draw video inside the clipped region using cover-scaling (preserve aspect ratio)
         const drawSize = diameter - bw;
-        const src = video.readyState >= 2 ? video : managed.lastDrawnFrame;
+        // Same mid-seek guard as drawVideoFrame: a seeking 4K element draws black.
+        const src = video.readyState >= 2 && !video.seeking ? video : managed.lastDrawnFrame;
         if (src) {
           const srcW = (src as HTMLVideoElement).videoWidth || (src as ImageBitmap).width || drawSize;
           const srcH = (src as HTMLVideoElement).videoHeight || (src as ImageBitmap).height || drawSize;
@@ -722,13 +757,21 @@ export const FrameDrivenCompositor = forwardRef<
         }
 
         if (renderedAny) {
+          // Never capture the fallback snapshot while a video is mid-seek: the frame
+          // just drawn may be decoder black, and a poisoned snapshot makes every
+          // later fallback restore black instead of the last real picture.
+          const anySeeking = requests.some(
+            (r) => videosRef.current.get(r.clipId)?.element.seeking,
+          );
           try {
-            lastCanvasStateRef.current = ctx.getImageData(
-              0,
-              0,
-              canvas.width,
-              canvas.height,
-            );
+            if (!anySeeking) {
+              lastCanvasStateRef.current = ctx.getImageData(
+                0,
+                0,
+                canvas.width,
+                canvas.height,
+              );
+            }
           } catch {
             // Ignore
           }
@@ -859,7 +902,7 @@ export const FrameDrivenCompositor = forwardRef<
           const rotation = transform?.rotation ?? 0;
           const cg = t.colorGrade;
           const gradeKey = cg
-            ? `${cg.temperature ?? 0},${cg.tint ?? 0},${cg.hue ?? 0},${cg.shadows ?? 0},${cg.midtones ?? 0},${cg.highlights ?? 0},${cg.curves ? '1' : '0'}`
+            ? `${cg.temperature ?? 0},${cg.tint ?? 0},${cg.hue ?? 0},${cg.shadows ?? 0},${cg.midtones ?? 0},${cg.highlights ?? 0},${cg.vignette ?? 0},${cg.sharpen ?? 0},${cg.blur ?? 0},${cg.curves ? '1' : '0'}`
             : '';
           return `${t.id}:${x},${y},${scale},${rotation},${t.filter ?? ''},${t.proxyBlockedMessage ?? ''},${gradeKey},${(t as any).motionBlur ?? 0},${(t as any).flipH ? 1 : 0}${(t as any).flipV ? 1 : 0}`;
         })

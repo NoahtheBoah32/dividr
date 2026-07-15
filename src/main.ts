@@ -951,6 +951,22 @@ function getMediaCacheDir(): string {
   return mediaCacheDir;
 }
 
+// Baked-effect outputs (speed, reverse, facezoom, rack focus, …) are app-internal
+// working files, NEVER user deliverables — they must live in app storage, not
+// next to the user's source footage (which put them in Downloads).
+let bakedDir: string | null = null;
+function getBakedDir(): string {
+  if (bakedDir) return bakedDir;
+  const dir = path.join(app.getPath('userData'), 'baked');
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    console.warn('Failed to ensure baked directory:', error);
+  }
+  bakedDir = dir;
+  return bakedDir;
+}
+
 function resolveMediaPath(input: string): string | null {
   if (!input) return null;
 
@@ -1355,6 +1371,38 @@ ipcMain.handle('get-downloads-directory', async () => {
     return { success: false, error: error.message };
   }
 });
+
+// IPC Handler for writing a subtitle/text export file (.srt, .vtt, chapters .txt).
+// Backs the long-declared preload `writeSubtitleFile` contract — used by the
+// SRT caption export and the YouTube chapters export.
+ipcMain.handle(
+  'write-subtitle-file',
+  async (
+    _event,
+    options: { content: string; filename: string; outputPath?: string },
+  ) => {
+    try {
+      if (!options?.filename || typeof options.content !== 'string') {
+        return { success: false, error: 'filename and content are required' };
+      }
+      const dir =
+        options.outputPath && options.outputPath.trim()
+          ? options.outputPath
+          : path.join(os.homedir(), 'Downloads');
+      fs.mkdirSync(dir, { recursive: true });
+      // Strip path separators/illegal chars — filename only, never a path
+      const illegal = '<>:"/\\|?*';
+      const safeName = Array.from(options.filename)
+        .map((ch) => (ch.charCodeAt(0) < 32 || illegal.includes(ch) ? '_' : ch))
+        .join('');
+      const filePath = path.join(dir, safeName);
+      fs.writeFileSync(filePath, options.content, 'utf8');
+      return { success: true, filePath };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+);
 
 // IPC Handler for showing file in folder/explorer
 ipcMain.handle('show-item-in-folder', async (event, filePath: string) => {
@@ -3368,8 +3416,8 @@ ipcMain.handle(
         | 'large-v3';
       language?: string;
       translate?: boolean;
-      device?: 'cpu' | 'cuda';
-      computeType?: 'int8' | 'int16' | 'float16' | 'float32';
+      device?: 'auto' | 'cpu' | 'cuda';
+      computeType?: 'auto' | 'int8' | 'int16' | 'float16' | 'float32';
       beamSize?: number;
       vad?: boolean;
     },
@@ -5928,7 +5976,7 @@ ipcMain.handle(
 
     try {
       const ext = path.extname(filePath) || '.mp4';
-      const outputFile = path.join(path.dirname(filePath), `speed_${Date.now()}${ext}`);
+      const outputFile = path.join(getBakedDir(), `speed_${Date.now()}${ext}`);
       const pts = (1 / speed).toFixed(6);
 
       function buildAtempo(s: number): string {
@@ -6067,7 +6115,7 @@ ipcMain.handle(
 
     try {
       const ext = path.extname(filePath) || '.mp4';
-      const outputFile = path.join(path.dirname(filePath), `reverse_${Date.now()}${ext}`);
+      const outputFile = path.join(getBakedDir(), `reverse_${Date.now()}${ext}`);
 
       const origDuration = await new Promise<number>((resolve) => {
         let out = '';
@@ -6321,7 +6369,7 @@ ipcMain.handle(
 
     try {
       const ext = path.extname(filePath) || '.mp4';
-      const outputFile = path.join(path.dirname(filePath), `facezoom_${Date.now()}${ext}`);
+      const outputFile = path.join(getBakedDir(), `facezoom_${Date.now()}${ext}`);
 
       // Resolve Python executable + main.py via the same logic as mediaToolsRunner
       const isWindows = process.platform === 'win32';
@@ -6446,7 +6494,7 @@ ipcMain.handle(
       const pythonExe = fs.existsSync(venvPython) ? venvPython : (isWindows ? 'python' : 'python3');
 
       const ext = path.extname(filePath) || '.mp4';
-      const outputPath = path.join(path.dirname(filePath), `skeleton_${Date.now()}${ext}`);
+      const outputPath = path.join(getBakedDir(), `skeleton_${Date.now()}${ext}`);
 
       const result = await new Promise<{ outputPath: string }>((resolve, reject) => {
         const proc = spawn(pythonExe, [mainPy, 'skeleton-render', '--input', filePath, '--output', outputPath]);
@@ -6526,7 +6574,7 @@ ipcMain.handle(
       };
       const pyMode = modeMap[mode] ?? 'freezeWorld';
       const ext = path.extname(filePath) || '.mp4';
-      const outputFile = path.join(path.dirname(filePath), `mfreeze_${Date.now()}${ext}`);
+      const outputFile = path.join(getBakedDir(), `mfreeze_${Date.now()}${ext}`);
       const flags = [
         '--input', filePath, '--output', outputFile,
         '--start', String(startSeconds), '--end', String(endSeconds),
@@ -6554,7 +6602,7 @@ ipcMain.handle(
     if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
     try {
       const ext = path.extname(filePath) || '.mp4';
-      const outputFile = path.join(path.dirname(filePath), `regionspeed_${Date.now()}${ext}`);
+      const outputFile = path.join(getBakedDir(), `regionspeed_${Date.now()}${ext}`);
       const flags = [
         '--input', filePath, '--output', outputFile,
         '--start', String(startSeconds), '--end', String(endSeconds),
@@ -6566,6 +6614,36 @@ ipcMain.handle(
       return result;
     } catch (err: any) {
       console.error('media:regionalSpeed error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:rackFocus — depth-plane focus pull (near↔far), MiDaS depth + animated defocus
+ipcMain.handle(
+  'media:rackFocus',
+  async (
+    _event,
+    { filePath, startSeconds, endSeconds, direction = 'near-to-far', strength = 70, hold = 0.35, fromSubject = '', toSubject = '' }:
+    { filePath: string; startSeconds: number; endSeconds: number; direction?: string; strength?: number; hold?: number; fromSubject?: string; toSubject?: string },
+  ): Promise<{ success: boolean; filePath?: string; direction?: string; duration?: number; reason?: string; error?: string; anchoredFrom?: boolean; anchoredTo?: boolean }> => {
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    try {
+      const ext = path.extname(filePath) || '.mp4';
+      const outputFile = path.join(getBakedDir(), `rackfocus_${Date.now()}${ext}`);
+      const dir = direction === 'far-to-near' ? 'far-to-near' : 'near-to-far';
+      const flags = [
+        '--input', filePath, '--output', outputFile,
+        '--start', String(startSeconds), '--end', String(endSeconds),
+        '--direction', dir, '--strength', String(strength), '--hold', String(hold),
+      ];
+      if (fromSubject) flags.push('--from-subject', fromSubject);
+      if (toSubject) flags.push('--to-subject', toSubject);
+      const result = await runPythonSkill('rack-focus', flags, 'rackFocus');
+      if (!result?.success) return { success: false, error: result?.error ?? 'Rack focus failed', reason: result?.reason };
+      return result;
+    } catch (err: any) {
+      console.error('media:rackFocus error:', err);
       return { success: false, error: err.message ?? String(err) };
     }
   },

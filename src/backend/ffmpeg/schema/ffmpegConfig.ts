@@ -59,6 +59,13 @@ export interface TrackInfo {
   /** Motion blur intensity 0–100. Maps to tmix frame blending at export. */
   motionBlur?: number;
 
+  /**
+   * Prebuilt color-grade / adjustment filter chain (curves/hue/unsharp/gblur/vignette),
+   * generated renderer-side from the track's colorGrade with the same math as the
+   * live preview. Appended verbatim to this clip's video filter chain.
+   */
+  colorGradeFilter?: string;
+
   /** PiP frame config — when set on the base layer (layer 0), renders it as a floating frame over B-roll */
   pipFrame?: {
     style: 'circle' | 'rounded-square' | 'square';
@@ -183,6 +190,10 @@ export interface VideoEditJob {
     textStyle?: TextStyleConfig; // Text styling for subtitles
     preset?: EncodingPreset; // FFmpeg encoding preset for speed/quality tradeoff
     threads?: number; // Limit used threads
+    /** Software video codec: 'h264' (libx264, default) or 'hevc' (libx265). */
+    videoCodec?: 'h264' | 'hevc';
+    /** Constant Rate Factor quality (0–51, lower = better). Default 28. */
+    crf?: number;
     useHardwareAcceleration?: boolean; // Enable hardware acceleration if available
     hwaccelType?:
       | 'auto'

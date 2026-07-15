@@ -52,6 +52,18 @@ export interface Transition {
   };
 }
 
+/**
+ * A user timeline marker — a labeled flag on the ruler (note, sync point,
+ * chapter start). `frame` is in display-fps frame space, the same space as
+ * `currentFrame` and the ruler. Persists with the project (part of `timeline`).
+ */
+export interface TimelineMarker {
+  id: string;
+  frame: number;
+  label: string;
+  color?: string;
+}
+
 export interface TimelineState {
   currentFrame: number;
   totalFrames: number;
@@ -71,6 +83,8 @@ export interface TimelineState {
   visibleTrackRows: string[]; // Track row IDs that are visible (e.g., ['video', 'audio', 'subtitle', 'image'])
   /** Transitions between overlapping same-row clips. Type/params only — duration derives from overlap. */
   transitions?: Transition[];
+  /** User timeline markers — labeled ruler flags (chapters, notes, sync points). */
+  timelineMarkers?: TimelineMarker[];
   /** Match-cut alignment aid: ghosts a target clip's frame over the preview so the user can
    * scrub the main clip until the two visually rhyme, then cut. Manual, no AI. */
   matchCut?: {

@@ -20,11 +20,21 @@ import {
 } from '@/frontend/features/editor/preview/utils/voiceIsolationCurve';
 import { SeparationCache } from '@/frontend/features/editor/preview/services/SeparationCache';
 import { setSfxLibrary, getSfxEntries, type SfxEntry } from './sfxLibraryCache';
+import {
+  buildCurvesFromAnchors,
+  lerpLutToIdentity,
+  resolveLabelColor,
+  resolveLook,
+  CLIP_LABEL_COLORS,
+  LOOK_PRESETS,
+  STINGER_CANDIDATES,
+} from './colorLooks';
 import { DEFAULT_AGE_YEARS } from '@/frontend/features/editor/preview/utils/voiceAgeParams';
 import {
   estimateLight,
   defaultLight,
   lightFromSource,
+  relightFromSource,
   kelvinToRgb,
   newLightId,
   type LightSource,
@@ -39,6 +49,16 @@ import {
   matchPhraseInWords,
   wordToTimelineRange,
 } from '@/frontend/features/editor/components/properties-panel/audio/transcriptEditUtils';
+import {
+  extractSubtitleSegments,
+  generateSRTContent,
+} from '@/backend/ffmpeg/subtitles/subtitleExporter';
+import {
+  resolveExportPreset,
+  SOCIAL_EXPORT_PRESETS,
+} from '@/frontend/features/export/utils/exportPresets';
+import { getDisplayFps } from '@/frontend/features/editor/stores/videoEditor/types/timeline.types';
+import { buildYouTubeChapterText } from '@/frontend/features/editor/stores/videoEditor/utils/markerUtils';
 
 export { pickSubtitleRow };
 
@@ -2062,6 +2082,359 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'adjust': {
+      // V2: {"type":"adjust","temperature":20,"shadows":10,"vignette":30}
+      // Merges Lightroom-style params into the clip's colorGrade — live preview
+      // via the SVG grade filter, baked at export via curves/unsharp/gblur/vignette.
+      const o = op as any;
+      const clip = o.clipName ? findClipByName(store, o.clipName) : findMainVideoTrack(store);
+      if (!clip) throw new Error(`adjust: ${o.clipName ? `clip "${o.clipName}" not found` : 'no main video on timeline'}`);
+      const existing = (clip as any).colorGrade ?? {};
+      let next: Record<string, unknown>;
+      if (o.reset) {
+        // Clear manual adjustments, keep extracted reference data (palette/curves)
+        next = { ...existing };
+        for (const k of ['temperature', 'tint', 'hue', 'shadows', 'midtones', 'highlights', 'vignette', 'sharpen', 'blur', 'grain', 'saturation', 'look']) {
+          delete next[k];
+        }
+      } else {
+        next = { ...existing };
+        const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+        if (o.temperature !== undefined) next.temperature = clamp(o.temperature, -100, 100);
+        if (o.tint !== undefined) next.tint = clamp(o.tint, -100, 100);
+        if (o.hue !== undefined) next.hue = clamp(o.hue, -180, 180);
+        if (o.shadows !== undefined) next.shadows = clamp(o.shadows, -100, 100);
+        if (o.midtones !== undefined) next.midtones = clamp(o.midtones, -100, 100);
+        if (o.highlights !== undefined) next.highlights = clamp(o.highlights, -100, 100);
+        if (o.vignette !== undefined) next.vignette = clamp(o.vignette, 0, 100);
+        if (o.sharpen !== undefined) next.sharpen = clamp(o.sharpen, 0, 100);
+        if (o.blur !== undefined) next.blur = clamp(o.blur, 0, 100);
+        if (o.grain !== undefined) next.grain = clamp(o.grain, 0, 100);
+        if (o.saturation !== undefined) next.saturation = clamp(o.saturation, 0, 2);
+      }
+      store.updateTrack(clip.id, { colorGrade: next } as any);
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      break;
+    }
+
+    case 'exportSettings': {
+      // V2: {"type":"exportSettings","preset":"tiktok"}
+      //     {"type":"exportSettings","codec":"hevc","crf":20,"fps":60}
+      //     {"type":"exportSettings","reset":true}
+      const o = op as any;
+      if (o.reset) {
+        (store as any).setExportSettings(null);
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: '✓ Export settings reset to defaults' } }));
+        break;
+      }
+      const patch: Record<string, unknown> = {};
+      if (o.preset !== undefined) {
+        const preset = resolveExportPreset(o.preset);
+        if (!preset) {
+          throw new Error(
+            `exportSettings: unknown preset "${o.preset}". Available: ${Object.keys(SOCIAL_EXPORT_PRESETS).join(', ')}`,
+          );
+        }
+        patch.preset = preset.name;
+      }
+      if (o.codec !== undefined) {
+        if (o.codec !== 'h264' && o.codec !== 'hevc') {
+          throw new Error('exportSettings: codec must be "h264" or "hevc"');
+        }
+        patch.videoCodec = o.codec;
+      }
+      if (o.crf !== undefined) patch.crf = Math.max(0, Math.min(51, Math.round(o.crf)));
+      if (o.fps !== undefined) patch.fps = Math.max(1, Math.min(120, Math.round(o.fps)));
+      (store as any).setExportSettings(patch);
+      const s = (useVideoEditorStore.getState() as any).exportSettings ?? {};
+      const summary = [
+        s.preset && `preset ${s.preset}`,
+        s.videoCodec && `codec ${s.videoCodec}`,
+        s.crf != null && `CRF ${s.crf}`,
+        s.fps != null && `${s.fps}fps`,
+      ].filter(Boolean).join(', ');
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ Export settings: ${summary}` } }));
+      break;
+    }
+
+    case 'exportSrt': {
+      // V2: {"type":"exportSrt"} | {"type":"exportSrt","filename":"my-captions.srt"}
+      // Timeline subtitle tracks first (matches the exported video); falls back
+      // to the cached transcript (source timing) when nothing is on the timeline.
+      const o = op as any;
+      let srt = generateSRTContent(
+        extractSubtitleSegments(store.tracks as any, (store as any).timeline),
+      );
+      if (!srt) {
+        const media = (store.mediaLibrary as any[])?.find(
+          (m) => m?.cachedKaraokeSubtitles?.transcriptionResult?.segments?.length,
+        );
+        const segs = media?.cachedKaraokeSubtitles?.transcriptionResult?.segments ?? [];
+        srt = generateSRTContent(
+          segs
+            .filter((s: any) => (s.text ?? '').trim())
+            .map((s: any, i: number) => ({
+              startTime: s.start,
+              endTime: s.end,
+              text: String(s.text).trim(),
+              index: i + 1,
+            })),
+        );
+      }
+      if (!srt) {
+        throw new Error('exportSrt: no subtitles on the timeline and no transcript cached — transcribe first');
+      }
+      const rawName = (o.filename && String(o.filename)) || 'captions.srt';
+      const filename = rawName.toLowerCase().endsWith('.srt') ? rawName : `${rawName}.srt`;
+      const api = (window as any).electronAPI;
+      const result = await api?.writeSubtitleFile?.({
+        content: srt,
+        filename,
+        outputPath: o.outputPath ?? '',
+      });
+      if (!result?.success) {
+        throw new Error(`exportSrt: write failed — ${result?.error ?? 'writeSubtitleFile bridge unavailable'}`);
+      }
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ Captions exported → ${result.filePath}` } }));
+      break;
+    }
+
+    case 'addMarker': {
+      // V2: {"type":"addMarker","atSeconds":12.5,"label":"Hook ends","color":"#3F7A4E"}
+      const o = op as any;
+      if (!o.label || typeof o.label !== 'string') throw new Error('addMarker: label is required');
+      const fps = getDisplayFps(store.tracks as any);
+      const frame = Math.round(Math.max(0, o.atSeconds ?? 0) * fps);
+      (store as any).addTimelineMarker(frame, o.label.trim(), o.color);
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ Marker "${o.label.trim()}" at ${(frame / fps).toFixed(1)}s` } }));
+      break;
+    }
+
+    case 'removeMarker': {
+      // V2: {"type":"removeMarker","label":"Hook ends"} | {"type":"removeMarker","atSeconds":12.5}
+      const o = op as any;
+      const markers = (((store as any).timeline?.timelineMarkers ?? []) as any[]);
+      let target: any = null;
+      if (o.label) {
+        const q = String(o.label).trim().toLowerCase();
+        target =
+          markers.find((m) => m.label.toLowerCase() === q) ??
+          markers.find((m) => m.label.toLowerCase().includes(q));
+      } else if (o.atSeconds !== undefined) {
+        const fps = getDisplayFps(store.tracks as any);
+        const at = o.atSeconds * fps;
+        for (const m of markers) {
+          if (!target || Math.abs(m.frame - at) < Math.abs(target.frame - at)) target = m;
+        }
+        // nearest only counts within 2 seconds
+        if (target && Math.abs(target.frame - at) > 2 * fps) target = null;
+      }
+      if (!target) throw new Error('removeMarker: no matching marker found');
+      (store as any).removeTimelineMarker(target.id);
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ Marker "${target.label}" removed` } }));
+      break;
+    }
+
+    case 'exportChapters': {
+      // V2: {"type":"exportChapters"} | {"type":"exportChapters","filename":"my-chapters.txt"}
+      const o = op as any;
+      const markers = (((store as any).timeline?.timelineMarkers ?? []) as any[]);
+      if (!markers.length) throw new Error('exportChapters: no timeline markers — add markers first');
+      const fps = getDisplayFps(store.tracks as any);
+      const text = buildYouTubeChapterText(markers, fps);
+      const rawName = (o.filename && String(o.filename)) || 'chapters.txt';
+      const filename = rawName.toLowerCase().endsWith('.txt') ? rawName : `${rawName}.txt`;
+      const api = (window as any).electronAPI;
+      const result = await api?.writeSubtitleFile?.({
+        content: text,
+        filename,
+        outputPath: o.outputPath ?? '',
+      });
+      if (!result?.success) {
+        throw new Error(`exportChapters: write failed — ${result?.error ?? 'writeSubtitleFile bridge unavailable'}`);
+      }
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ Chapters exported → ${result.filePath}` } }));
+      break;
+    }
+
+    case 'setClipColor': {
+      // V2: {"type":"setClipColor","clipName":"footage.mp4","color":"teal"}
+      //     {"type":"setClipColor","clipName":"footage.mp4","clear":true}
+      const o = op as any;
+      const clip = o.clipId
+        ? (store.tracks as any[]).find((t: any) => t.id === o.clipId)
+        : o.clipName
+          ? findClipByName(store, o.clipName)
+          : findMainVideoTrack(store);
+      if (!clip) throw new Error(`setClipColor: ${o.clipName ? `clip "${o.clipName}" not found` : 'no clip found'}`);
+      if (o.clear) {
+        store.updateTrack(clip.id, { labelColor: undefined } as any);
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ Label removed from "${clip.name}"` } }));
+        break;
+      }
+      const hex = resolveLabelColor(o.color);
+      if (!hex) {
+        throw new Error(
+          `setClipColor: unknown color "${o.color}". Use a #hex or: ${Object.keys(CLIP_LABEL_COLORS).join(', ')}`,
+        );
+      }
+      store.updateTrack(clip.id, { labelColor: hex } as any);
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ "${clip.name}" labeled ${o.color}` } }));
+      break;
+    }
+
+    case 'setCurves': {
+      // V2: {"type":"setCurves","master":[[0,0.08],[0.5,0.5],[1,0.95]]}
+      //     {"type":"setCurves","red":[[0.25,0.2],[0.75,0.85]],"blue":[[0.5,0.42]]}
+      //     {"type":"setCurves","reset":true}
+      const o = op as any;
+      const clip = o.clipName ? findClipByName(store, o.clipName) : findMainVideoTrack(store);
+      if (!clip) throw new Error(`setCurves: ${o.clipName ? `clip "${o.clipName}" not found` : 'no main video on timeline'}`);
+      const existing = (clip as any).colorGrade ?? {};
+      if (o.reset) {
+        const next = { ...existing };
+        delete next.curves;
+        store.updateTrack(clip.id, { colorGrade: next } as any);
+        window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: '✓ Curves reset' } }));
+        break;
+      }
+      if (!o.red?.length && !o.green?.length && !o.blue?.length && !o.master?.length) {
+        throw new Error('setCurves: provide anchor points for red/green/blue/master (or reset:true)');
+      }
+      const curves = buildCurvesFromAnchors({ red: o.red, green: o.green, blue: o.blue, master: o.master });
+      store.updateTrack(clip.id, { colorGrade: { ...existing, curves } } as any);
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      const chs = ['red', 'green', 'blue', 'master'].filter((c) => o[c]?.length).join('+');
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `✓ Curves applied (${chs})` } }));
+      break;
+    }
+
+    case 'applyLook': {
+      // V2: {"type":"applyLook","look":"teal-orange"} | {"type":"applyLook","look":"bw","intensity":70}
+      const o = op as any;
+      const clip = o.clipName ? findClipByName(store, o.clipName) : findMainVideoTrack(store);
+      if (!clip) throw new Error(`applyLook: ${o.clipName ? `clip "${o.clipName}" not found` : 'no main video on timeline'}`);
+      const look = resolveLook(o.look);
+      if (!look) {
+        throw new Error(
+          `applyLook: unknown look "${o.look}". Available: ${Object.keys(LOOK_PRESETS).join(', ')}`,
+        );
+      }
+      const t = Math.max(0, Math.min(100, o.intensity ?? 100)) / 100;
+      const existing = (clip as any).colorGrade ?? {};
+      const next: Record<string, unknown> = { ...existing };
+      // A look replaces the whole grade personality: clear previous adjustments + curves
+      for (const k of ['temperature', 'tint', 'hue', 'shadows', 'midtones', 'highlights', 'vignette', 'sharpen', 'blur', 'grain', 'saturation', 'look']) {
+        delete next[k];
+      }
+      delete next.curves;
+      for (const [k, v] of Object.entries(look.params)) {
+        const neutral = k === 'saturation' ? 1 : 0;
+        next[k] = neutral + ((v as number) - neutral) * t;
+      }
+      if (look.curves) {
+        const full = buildCurvesFromAnchors(look.curves);
+        next.curves = {
+          r: lerpLutToIdentity(full.r, t),
+          g: lerpLutToIdentity(full.g, t),
+          b: lerpLutToIdentity(full.b, t),
+          ffmpegFilter: full.ffmpegFilter,
+        };
+      }
+      next.look = look.key;
+      store.updateTrack(clip.id, { colorGrade: next } as any);
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `✓ Look "${look.title}" applied${t < 1 ? ` at ${Math.round(t * 100)}%` : ''}` },
+      }));
+      break;
+    }
+
+    case 'stinger': {
+      // V2: {"type":"stinger"} | {"type":"stinger","atSeconds":12.5,"sound":"vine_boom"}
+      const o = op as any;
+      const fps: number = (store as any).fps ?? (store as any).timeline?.fps ?? 30;
+      const atSec: number = o.atSeconds ?? ((store as any).timeline?.currentFrame ?? 0) / fps;
+      const lib = getSfxEntries();
+      let file: string | null = null;
+      if (o.sound) {
+        const q = String(o.sound).toLowerCase().replace(/\.(mp3|wav|ogg)$/i, '');
+        const hit =
+          lib.find((e) => e.name.toLowerCase().replace(/\.(mp3|wav|ogg)$/i, '') === q) ??
+          lib.find((e) => e.name.toLowerCase().includes(q));
+        if (!hit) throw new Error(`stinger: sound "${o.sound}" not found in the SFX library`);
+        file = hit.name;
+      } else {
+        for (const cand of STINGER_CANDIDATES) {
+          const hit = lib.find((e) => e.name.toLowerCase().includes(cand));
+          if (hit) { file = hit.name; break; }
+        }
+        if (!file) throw new Error('stinger: no impact/hit sound found in the SFX library');
+      }
+      await applyOp({
+        type: 'placeSFX',
+        file,
+        atTime: atSec,
+        volume: o.volume ?? -2,
+        trackName: `stinger — ${file.replace(/\.(mp3|wav|ogg)$/i, '')}`,
+        color: '#ef4444',
+      } as Op);
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `✓ Stinger "${file}" at ${atSec.toFixed(1)}s` },
+      }));
+      break;
+    }
+
+    case 'beatSync': {
+      // V2: {"type":"beatSync"} | {"type":"beatSync","clipName":"music.mp3","sensitivity":4}
+      // Detects musical hits on the music bed and drops a gold marker on every
+      // beat — cuts and transitions can then snap straight to them.
+      const o = op as any;
+      let target: any = o.clipName ? findClipByName(store, o.clipName) : null;
+      if (!target) {
+        // The music bed = the longest audio clip that isn't a short SFX hit
+        // (>5s). No music → fall back to the main video's own audio.
+        const fpsGuess = getDisplayFps(store.tracks as any);
+        const audios = (store.tracks as any[]).filter(
+          (t: any) => t.type === 'audio' && (t.endFrame - t.startFrame) / fpsGuess > 5,
+        );
+        target = audios.sort(
+          (a: any, b: any) => (b.endFrame - b.startFrame) - (a.endFrame - a.startFrame),
+        )[0] ?? findMainVideoTrack(store);
+      }
+      if (!target?.source) throw new Error('beatSync: no audio clip found — add music to the timeline first');
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `Detecting beats in "${target.name}"…` } }));
+      // Detection reports SOURCE-file times capped at maxTransients from the
+      // file's start — so detect broadly, window to the clip's trim, THEN cap.
+      // Capping at detection would starve clips trimmed away from the start.
+      const res = await (window.electronAPI as any).invoke('detect:transients', {
+        clipPath: target.source,
+        sensitivity: o.sensitivity ?? 3,
+        minGapSec: o.minGapSec ?? 0.25,
+        maxTransients: 1000,
+      });
+      if (!res?.success) throw new Error(res?.error ?? 'beatSync: beat detection failed');
+      const fps = getDisplayFps(store.tracks as any);
+      const clipStartSec = target.startFrame / fps;
+      const clipEndSec = target.endFrame / fps;
+      const srcOffset = target.sourceStartTime ?? 0;
+      const cap = Math.max(1, Math.min(200, o.maxMarkers ?? 60));
+      let placed = 0;
+      for (const tSec of (res.transients as number[])) {
+        if (placed >= cap) break;
+        const timelineSec = clipStartSec + (tSec - srcOffset);
+        if (timelineSec < clipStartSec - 1e-6 || timelineSec > clipEndSec + 1e-6) continue;
+        placed++;
+        (store as any).addTimelineMarker(Math.round(timelineSec * fps), `Beat ${placed}`, '#E6A412');
+      }
+      if (!placed) throw new Error('beatSync: no beats detected inside the clip — try a lower sensitivity');
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `✓ ${placed} beat marker${placed !== 1 ? 's' : ''} on "${target.name}" — cuts can snap to them` },
+      }));
+      break;
+    }
+
     case 'resize': {
       // V2: {“type”:”resize”,”ratio”:”9:16”}
       const { canvasWidth, canvasHeight } = store.preview;
@@ -2177,7 +2550,11 @@ async function applyOp(op: Op): Promise<void> {
       const src = sampleAndEstimateLight();
       const existing = [...(((main as any).paintedLights as any[]) ?? [])];
       const seeded = existing.length ? existing : [lightFromSource(src, newLightId(), 0.8)];
-      store.updateTrack(main.id, { lightSource: src, paintedLights: seeded });
+      // Seed the screen-space relight to match the scene (colour + place on the bright
+      // side). Preserve any hand-tuned relight the user already has on the clip.
+      const priorRelight = (main as any).relight;
+      const relight = priorRelight ?? relightFromSource(src);
+      store.updateTrack(main.id, { lightSource: src, paintedLights: seeded, relight });
       window.dispatchEvent(
         new CustomEvent('edith:status', {
           detail: {
@@ -2232,7 +2609,7 @@ async function applyOp(op: Op): Promise<void> {
       // V2: {"type":"clearLights"} — remove all painted lights + the detected source.
       const main = findMainVideoTrack(store);
       if (!main) throw new Error('clearLights: no video on the timeline');
-      store.updateTrack(main.id, { paintedLights: [], lightSource: undefined });
+      store.updateTrack(main.id, { paintedLights: [], lightSource: undefined, relight: undefined });
       window.dispatchEvent(
         new CustomEvent('edith:status', { detail: { text: 'Cleared painted lights' } }),
       );
@@ -2499,6 +2876,83 @@ async function applyOp(op: Op): Promise<void> {
       } as any);
       window.dispatchEvent(new CustomEvent('dividr:forceRender'));
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Selective freeze applied' } }));
+      break;
+    }
+
+    case 'rackFocus': {
+      // {"type":"rackFocus","clipName":"footage.mp4","startSeconds":4,"endSeconds":9}
+      // {"type":"rackFocus","clipId":"abc-123","direction":"far-to-near"}   (whole-clip: dragged into the chatbar)
+      // Focus travels from one depth plane to another mid-shot — foreground sharp/
+      // background soft, then the lens "racks" and they swap. MiDaS depth + animated
+      // defocus, re-baked from the immutable originalSource (spine).
+      const rfClip = (op as any).clipId
+        ? store.tracks.find((t: any) => t.id === (op as any).clipId)
+        : (op as any).clipName ? findClipByName(store, (op as any).clipName) : findMainVideoTrack(store);
+      if (!rfClip) throw new Error('rackFocus: target clip not found');
+      if (!rfClip.source) throw new Error('rackFocus: clip has no source file');
+      const rfBase = (rfClip as any).originalSource ?? rfClip.source;
+      const rfFps = getDisplayFps(store.tracks as any);
+      // Omitted range = the clip's own trimmed window in SOURCE time (the
+      // drag-into-chatbar case: "apply it to this clip").
+      const rfSrcStart = (rfClip as any).sourceStartTime ?? 0;
+      const rfClipDur = (rfClip.endFrame - rfClip.startFrame) / rfFps;
+      const rfStart = (op as any).startSeconds ?? rfSrcStart;
+      const rfEnd = (op as any).endSeconds ?? (rfSrcStart + rfClipDur);
+      const rfDir = (op as any).direction === 'far-to-near' ? 'far-to-near' : 'near-to-far';
+      const rfFrom = ((op as any).from ?? '').toString().trim();
+      const rfTo = ((op as any).to ?? '').toString().trim();
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: {
+          text: rfFrom || rfTo
+            ? `Racking focus${rfFrom ? ` from ${rfFrom}` : ''}${rfTo ? ` to ${rfTo}` : ''}…`
+            : rfDir === 'far-to-near' ? 'Racking focus from the background to the foreground…' : 'Racking focus from the foreground to the background…',
+        },
+      }));
+      const rfResult = await (window.electronAPI as any).invoke('media:rackFocus', {
+        filePath: rfBase,
+        startSeconds: rfStart,
+        endSeconds: rfEnd,
+        direction: rfDir,
+        strength: (op as any).strength ?? 70,
+        hold: (op as any).holdSeconds ?? 0.35,
+        fromSubject: rfFrom,
+        toSubject: rfTo,
+      });
+      if (!rfResult?.success || !rfResult.filePath) {
+        if (rfResult?.reason === 'no-depth') {
+          // Clean decline, not a thrown error — the footage genuinely can't support it.
+          window.dispatchEvent(new CustomEvent('edith:status', {
+            detail: { text: rfResult?.error ?? "This shot has no usable depth separation — rack focus needs a clear foreground and background (everything here sits in one plane)." },
+          }));
+          break;
+        }
+        throw new Error(rfResult?.error ?? 'Rack focus failed');
+      }
+      // Named subjects the vision pass could NOT find fall back to depth planes —
+      // say so instead of silently pretending they anchored.
+      const rfMisses = [
+        rfFrom && rfResult.anchoredFrom === false ? `"${rfFrom}"` : null,
+        rfTo && rfResult.anchoredTo === false ? `"${rfTo}"` : null,
+      ].filter(Boolean);
+      if (rfMisses.length) {
+        window.dispatchEvent(new CustomEvent('edith:status', {
+          detail: { text: `Couldn't spot ${rfMisses.join(' or ')} in the frame — using the shot's own depth planes instead.` },
+        }));
+      }
+      let rfPreview = rfResult.filePath;
+      try {
+        const p = await window.electronAPI.createPreviewUrl(rfResult.filePath);
+        if (p && typeof p === 'object' && (p as any).url) rfPreview = (p as any).url;
+        else if (typeof p === 'string') rfPreview = p;
+      } catch { /* use filePath */ }
+      store.updateTrack(rfClip.id, {
+        source: rfResult.filePath,
+        previewUrl: rfPreview,
+        originalSource: rfBase,
+        rackFocus: { direction: rfDir, start: rfResult.regionStart, end: rfResult.regionEnd, appliedByEdith: true },
+      } as any);
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Rack focus applied' } }));
       break;
     }
 

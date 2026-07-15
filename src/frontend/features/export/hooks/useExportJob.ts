@@ -7,6 +7,8 @@ import { useCallback } from 'react';
 import { NoiseReductionCache } from '../../editor/preview/services/NoiseReductionCache';
 import { buildFfmpegVoiceChain } from '../../editor/preview/utils/voiceIsolationCurve';
 import { buildFfmpegAgeChain, ageToParams } from '../../editor/preview/utils/voiceAgeParams';
+import { buildFfmpegGradeFilter } from '../../editor/preview/utils/colorGradeUtils';
+import { resolveExportPreset, fitPresetDimensions } from '../utils/exportPresets';
 import {
   useVideoEditorStore,
   VideoTrack,
@@ -24,6 +26,9 @@ export const useExportJob = () => {
     (state) => state.getTextStyleForSubtitle,
   );
   const preview = useVideoEditorStore((state) => state.preview);
+  const exportSettings = useVideoEditorStore(
+    (state) => (state as any).exportSettings,
+  );
 
   const createFFmpegJob = useCallback(
     (
@@ -183,7 +188,25 @@ export const useExportJob = () => {
       );
 
       // The final output dimensions are the custom dimensions from the canvas
-      const finalOutputDimensions = videoDimensions;
+      let finalOutputDimensions = videoDimensions;
+
+      // Session export settings (user / EDITH `exportSettings` op): a social
+      // preset supplies the base bundle, explicit fields override it.
+      const socialPreset = resolveExportPreset(exportSettings?.preset);
+      const effectiveCodec = exportSettings?.videoCodec ?? socialPreset?.videoCodec ?? undefined;
+      const effectiveCrf = exportSettings?.crf ?? socialPreset?.crf ?? undefined;
+      const effectiveFps = exportSettings?.fps ?? socialPreset?.fps ?? timelineFps;
+      if (socialPreset) {
+        // Fit the preset's resolution class to the canvas aspect — never distorts
+        finalOutputDimensions = fitPresetDimensions(
+          finalOutputDimensions.width,
+          finalOutputDimensions.height,
+          socialPreset,
+        );
+        console.log(
+          `📤 Social preset "${socialPreset.name}": ${finalOutputDimensions.width}x${finalOutputDimensions.height} @ ${effectiveFps}fps, ${effectiveCodec}, CRF ${effectiveCrf}`,
+        );
+      }
 
       console.log(
         `📐 Video dimensions: ` +
@@ -227,13 +250,15 @@ export const useExportJob = () => {
           concat: trackInfos.length > 1,
           preset: 'superfast',
           threads: 8,
-          targetFrameRate: timelineFps,
+          targetFrameRate: effectiveFps,
           normalizeFrameRate: trackInfos.length > 1,
           subtitles: subtitleContent ? 'temp_subtitles.ass' : undefined,
           textStyle: currentTextStyle,
           useHardwareAcceleration: false,
           hwaccelType: 'auto', // Auto-detect best available hardware acceleration
-          preferHEVC: false, // Use H.264 (set to true for H.265/HEVC)
+          preferHEVC: effectiveCodec === 'hevc',
+          videoCodec: effectiveCodec, // 'h264' | 'hevc' — from export settings/preset
+          crf: effectiveCrf, // CRF quality from export settings/preset
           aspect: targetAspectRatio, // Pass target aspect ratio for aspect ratio conversion
         },
         subtitleContent, // Only subtitles
@@ -250,6 +275,7 @@ export const useExportJob = () => {
       textStyle,
       getTextStyleForSubtitle,
       preview,
+      exportSettings,
     ],
   );
 
@@ -578,6 +604,12 @@ function convertTracksToFFmpegInputs(
         ? (track as any).pipFrame
         : undefined,
       motionBlur: (track as any).motionBlur ?? undefined,
+      // Bake the color grade (white balance / tone / vignette / sharpen / blur)
+      // so the exported file matches the live preview filter.
+      colorGradeFilter:
+        track.type === 'video'
+          ? buildFfmpegGradeFilter((track as any).colorGrade) ?? undefined
+          : undefined,
     };
 
     console.log('Track Info: ', trackInfo);

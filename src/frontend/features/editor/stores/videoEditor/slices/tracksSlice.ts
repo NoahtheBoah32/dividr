@@ -3,13 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { StateCreator } from 'zustand';
 import {
   calculateMultiTrackSnapPosition,
-  calculateSafeMovementDelta,
   calculateSnapPosition,
   findAdjacentClipsInRow,
   findAvailableRowIndexForRange,
   findNearestAvailablePositionInRow,
-  findNearestAvailablePositionInRowWithPlayhead,
-  hasCollision,
+  resolveOverwrite,
 } from '../../../timeline/utils/collisionDetection';
 import {
   getNextAvailableRowIndex,
@@ -264,6 +262,7 @@ export interface TracksSlice {
     mediaId: string,
     startFrame?: number,
     trackRowIndex?: number,
+    explicitStart?: boolean,
   ) => Promise<string>;
   removeTrack: (trackId: string) => void;
   removeSelectedTracks: () => void;
@@ -401,14 +400,19 @@ export const createTracksSlice: StateCreator<
             ? findLastEndFrameForType(state.tracks, 'video')
             : trackData.startFrame;
 
-      const videoStartFrame = findNearestAvailablePositionInRow(
-        consecutiveVideoStart,
-        duration,
-        'video',
-        videoRowIndex,
-        state.tracks,
-        [], // No tracks to exclude for new additions
-      );
+      // TIMELINE CONTRACT: an explicit placement (user drop / deliberate op)
+      // lands EXACTLY where asked and overwrites what's under it (resolved
+      // after insertion below). Only auto-placed clips get collision-relocated.
+      const videoStartFrame = (trackData as any).explicitStart
+        ? Math.max(0, consecutiveVideoStart)
+        : findNearestAvailablePositionInRow(
+            consecutiveVideoStart,
+            duration,
+            'video',
+            videoRowIndex,
+            state.tracks,
+            [], // No tracks to exclude for new additions
+          );
       // Audio row index: prefer the provided row index, but avoid overlapping
       // independent audio by selecting the next available audio row if needed.
       const preferredAudioRowIndex =
@@ -473,9 +477,14 @@ export const createTracksSlice: StateCreator<
         noiseReductionEnabled: false,
       };
 
-      set((state: any) => ({
-        tracks: [...state.tracks, videoTrack, audioTrack],
-      }));
+      set((state: any) => {
+        let tracks = [...state.tracks, videoTrack, audioTrack];
+        // Explicit placement wins over whatever occupied that lane+time.
+        if ((trackData as any).explicitStart) {
+          tracks = resolveOverwrite(tracks, [id], state.timeline?.fps ?? 30);
+        }
+        return { tracks };
+      });
 
       // Refresh state reference after set
       state = get() as any;
@@ -513,7 +522,11 @@ export const createTracksSlice: StateCreator<
       // and always create on a new row. No overlap detection needed.
       // For other types: use consecutive placement logic
       let startFrame: number;
-      if (isExtensibleTrack && trackData.startFrame > 0) {
+      if ((trackData as any).explicitStart) {
+        // TIMELINE CONTRACT: explicit placement (user drop) lands exactly where
+        // asked — even at frame 0 — and overwrites what's under it (below).
+        startFrame = Math.max(0, trackData.startFrame);
+      } else if (isExtensibleTrack && trackData.startFrame > 0) {
         // Extensible tracks with explicit position: use exact startFrame
         startFrame = trackData.startFrame;
       } else if (trackData.startFrame === 0) {
@@ -594,9 +607,13 @@ export const createTracksSlice: StateCreator<
         }),
       };
 
-      set((state: any) => ({
-        tracks: [...state.tracks, track],
-      }));
+      set((state: any) => {
+        let tracks = [...state.tracks, track];
+        if ((trackData as any).explicitStart) {
+          tracks = resolveOverwrite(tracks, [id], state.timeline?.fps ?? 30);
+        }
+        return { tracks };
+      });
 
       // Auto-create track row for subtitle and image types
       // Use setTimeout to avoid synchronous state updates that can cause loops
@@ -813,6 +830,7 @@ export const createTracksSlice: StateCreator<
     mediaId,
     startFrame = 0,
     trackRowIndex?: number,
+    explicitStart?: boolean,
   ) => {
     const state = get() as any;
     const mediaItem = state.mediaLibrary?.find(
@@ -898,7 +916,24 @@ export const createTracksSlice: StateCreator<
     // CRITICAL: Use source FPS from media item, not timeline export FPS
     // This ensures track duration is always calculated correctly based on original media FPS
     const sourceFps = mediaItem.metadata?.fps || 30; // Fallback to 30 if not available
-    const duration = Math.floor(mediaItem.duration * sourceFps);
+    let duration = Math.floor(Number(mediaItem.duration) * sourceFps);
+
+    // Guard the "clicked before it loaded" bug: if the media's duration hasn't been
+    // probed yet, `duration` is 0/NaN and we'd add a zero-length track that never renders
+    // but still counts as "on timeline" (the item sticks on "Added" and can't be re-added).
+    if (!Number.isFinite(duration) || duration <= 0) {
+      if (mediaItem.type === 'image') {
+        // Images have no intrinsic duration — default to 5s so they always place.
+        duration = Math.floor(5 * sourceFps);
+      } else {
+        // Video/audio still loading. Defer instead of creating a ghost track; the item
+        // stays clickable and adds cleanly once probing finishes.
+        console.warn(
+          `⏳ "${mediaItem.name}" is still loading (no duration yet) — deferring timeline add.`,
+        );
+        return '';
+      }
+    }
 
     // Use stored aspect ratio from media library item if available,
     // otherwise detect from dimensions (fallback for older imports)
@@ -959,6 +994,10 @@ export const createTracksSlice: StateCreator<
         mediaItem.type === 'subtitle'
           ? resolveSubtitleRowIndex(state.tracks, trackRowIndex)
           : trackRowIndex,
+      // A positioned drop (drag onto a lane) is EXPLICIT: land exactly there,
+      // even at frame 0, overwriting what's underneath. Click-to-add stays on
+      // the auto-append path.
+      ...(explicitStart ? { explicitStart: true } : {}),
       ...(mediaItem.type === 'subtitle' && {
         subtitleText: `Subtitle: ${mediaItem.name}`,
       }),
@@ -978,6 +1017,22 @@ export const createTracksSlice: StateCreator<
         `🎬 Setting canvas size to match first video track: ${track.width}×${track.height}`,
       );
       (get() as any).setCanvasSize(track.width, track.height);
+    }
+
+    // Self-heal: drop any earlier broken (zero/NaN-length) track for this same source —
+    // e.g. one left behind by a click before the media loaded — so this fresh, valid
+    // track is the only one and the stuck "Added" state clears.
+    const brokenIds = (get() as any).tracks
+      .filter((t: any) => {
+        if (t.source !== mediaItem.source) return false;
+        const len = (t.endFrame ?? 0) - (t.startFrame ?? 0);
+        return !(Number.isFinite(len) && len > 0);
+      })
+      .map((t: any) => t.id);
+    if (brokenIds.length) {
+      set((s: any) => ({
+        tracks: s.tracks.filter((t: any) => !brokenIds.includes(t.id)),
+      }));
     }
 
     return await get().addTrack(track);
@@ -1172,94 +1227,12 @@ export const createTracksSlice: StateCreator<
         }
       }
 
-      // ===== COLLISION DETECTION (Row-Aware - only same type + same row) =====
-      let finalMovementDelta = boundedDelta;
-
-      if (linkedTrack) {
-        // For linked tracks, calculate safe delta for both
-        const primarySafeDelta = calculateSafeMovementDelta(
-          trackToMove,
-          boundedDelta,
-          state.tracks,
-          excludeIds,
-        );
-
-        const linkedSafeDelta = calculateSafeMovementDelta(
-          linkedTrack,
-          boundedDelta,
-          state.tracks,
-          excludeIds,
-        );
-
-        finalMovementDelta =
-          Math.abs(primarySafeDelta) < Math.abs(linkedSafeDelta)
-            ? primarySafeDelta
-            : linkedSafeDelta;
-      } else {
-        finalMovementDelta = calculateSafeMovementDelta(
-          trackToMove,
-          boundedDelta,
-          state.tracks,
-          excludeIds,
-        );
-      }
-
-      // ===== FORCE DRAG BYPASS =====
-      const FORCE_DRAG_THRESHOLD = 15;
-      const isForceDragActive =
-        state.playback?.boundaryCollisionCount >= FORCE_DRAG_THRESHOLD;
-
-      if (
-        isForceDragActive &&
-        Math.abs(finalMovementDelta) < Math.abs(boundedDelta)
-      ) {
-        const trackRowIndex = trackToMove.trackRowIndex ?? 0;
-
-        if (boundedDelta < 0) {
-          if (
-            !hasCollision(
-              0,
-              duration,
-              trackToMove.type,
-              trackRowIndex,
-              state.tracks,
-              { excludeTrackIds: excludeIds },
-            )
-          ) {
-            finalMovementDelta = -trackToMove.startFrame;
-          }
-        } else if (boundedDelta > 0) {
-          const rowTracks = state.tracks.filter(
-            (t: VideoTrack) =>
-              !excludeIds.includes(t.id) &&
-              t.type === trackToMove.type &&
-              (t.trackRowIndex ?? 0) === trackRowIndex,
-          );
-          if (rowTracks.length > 0) {
-            const maxEndFrame = Math.max(
-              ...rowTracks.map((t: VideoTrack) => t.endFrame),
-            );
-            if (
-              !hasCollision(
-                maxEndFrame,
-                maxEndFrame + duration,
-                trackToMove.type,
-                trackRowIndex,
-                state.tracks,
-                { excludeTrackIds: excludeIds },
-              )
-            ) {
-              finalMovementDelta = maxEndFrame - trackToMove.startFrame;
-            }
-          }
-        }
-      }
-
-      // Track boundary collision for force drag detection
-      const wasBlocked = Math.abs(finalMovementDelta) < Math.abs(boundedDelta);
-      if (state.playback?.isDraggingTrack && state.trackBoundaryCollision) {
-        state.trackBoundaryCollision(boundedNewStartFrame, wasBlocked);
-      }
+      // ===== TIMELINE CONTRACT: the clip follows the pointer EXACTLY =====
+      // No collision clamping, no push-back, no force-drag teleport. During a
+      // live drag the clip may overlap others; overlaps are resolved as an
+      // OVERWRITE when the drag ends (endDraggingTrack) or, for programmatic
+      // single moves, immediately below.
+      const finalMovementDelta = boundedDelta;
 
       // Update magnetic snap indicator (shows snap line across ALL tracks)
       const newPlaybackState =
@@ -1297,6 +1270,19 @@ export const createTracksSlice: StateCreator<
     });
 
     const state = get() as any;
+    // A programmatic move (no live drag in progress) commits immediately —
+    // resolve any overlap the exact placement created via overwrite. During a
+    // drag this is deferred to endDraggingTrack so mid-drag overlaps are free.
+    if (!state.playback?.isDraggingTrack) {
+      const moved = state.tracks.find((t: VideoTrack) => t.id === trackId);
+      if (moved) {
+        const ids = [trackId];
+        if (moved.isLinked && moved.linkedTrackId) ids.push(moved.linkedTrackId);
+        set((s: any) => ({
+          tracks: resolveOverwrite(s.tracks, ids, s.timeline?.fps ?? 30),
+        }));
+      }
+    }
     state.markUnsavedChanges?.();
   },
 
@@ -1382,45 +1368,10 @@ export const createTracksSlice: StateCreator<
         }
       }
 
-      // ===== ROW-AWARE COLLISION DETECTION =====
-      const findGroupSafeMovementDelta = (movementDelta: number): number => {
-        if (movementDelta === 0) return 0;
-
-        let minSafeDelta = movementDelta;
-
-        tracksToMoveArray.forEach((trackId) => {
-          const track = state.tracks.find((t: VideoTrack) => t.id === trackId);
-          if (!track) return;
-
-          const safeDelta = calculateSafeMovementDelta(
-            track,
-            movementDelta,
-            state.tracks,
-            tracksToMoveArray,
-          );
-
-          if (movementDelta > 0) {
-            minSafeDelta = Math.min(minSafeDelta, safeDelta);
-          } else {
-            minSafeDelta = Math.max(minSafeDelta, safeDelta);
-          }
-        });
-
-        return minSafeDelta;
-      };
-
-      const finalMovementDelta =
-        findGroupSafeMovementDelta(boundedMovementDelta);
-
-      // ===== FORCE DRAG BYPASS =====
-      // Track boundary collision
-      const wasBlocked =
-        Math.abs(finalMovementDelta) < Math.abs(boundedMovementDelta);
-      const proposedStartForDraggedTrack =
-        originalDraggedStart + boundedMovementDelta;
-      if (state.playback?.isDraggingTrack && state.trackBoundaryCollision) {
-        state.trackBoundaryCollision(proposedStartForDraggedTrack, wasBlocked);
-      }
+      // ===== TIMELINE CONTRACT: the selection follows the pointer EXACTLY =====
+      // No collision clamping — overlaps resolve as an overwrite on release
+      // (endDraggingTrack) or immediately for programmatic calls (below).
+      const finalMovementDelta = boundedMovementDelta;
 
       // Update magnetic snap indicator
       const newPlaybackState =
@@ -1468,6 +1419,20 @@ export const createTracksSlice: StateCreator<
     });
 
     const state = get() as any;
+    // Programmatic group move (no live drag) commits immediately — overwrite.
+    if (!state.playback?.isDraggingTrack) {
+      const movedIds = new Set<string>();
+      (state.timeline.selectedTrackIds || []).forEach((id: string) => {
+        movedIds.add(id);
+        const t = state.tracks.find((tr: VideoTrack) => tr.id === id);
+        if (t?.isLinked && t.linkedTrackId) movedIds.add(t.linkedTrackId);
+      });
+      if (movedIds.size > 0) {
+        set((s: any) => ({
+          tracks: resolveOverwrite(s.tracks, [...movedIds], s.timeline?.fps ?? 30),
+        }));
+      }
+    }
     state.markUnsavedChanges?.();
   },
 
@@ -1496,14 +1461,6 @@ export const createTracksSlice: StateCreator<
     const finalTargetRowIndex = Math.max(0, targetRowIndex);
     const duration = trackToMove.endFrame - trackToMove.startFrame;
 
-    // Build exclude list
-    const excludeIds = [trackId];
-    if (trackToMove.isLinked && trackToMove.linkedTrackId) {
-      excludeIds.push(trackToMove.linkedTrackId);
-    }
-
-    const isLinkedAudioPrimary =
-      trackToMove.type === 'audio' && trackToMove.isLinked;
     const linkedTrack =
       trackToMove.isLinked && trackToMove.linkedTrackId
         ? state.tracks.find(
@@ -1511,111 +1468,47 @@ export const createTracksSlice: StateCreator<
           )
         : null;
 
-    // Calculate final start frame with collision detection for the TARGET row
-    let finalStartFrame = newStartFrame ?? trackToMove.startFrame;
+    // TIMELINE CONTRACT: the clip lands EXACTLY where the user dropped it —
+    // target lane, target frame. Anything already there yields (overwrite).
+    const finalStartFrame = Math.max(0, newStartFrame ?? trackToMove.startFrame);
 
-    if (newStartFrame !== undefined || isChangingRows) {
-      const proposedStart = newStartFrame ?? trackToMove.startFrame;
-
-      // Check for collision at target row
-      const wouldCollide = hasCollision(
-        proposedStart,
-        proposedStart + duration,
-        trackToMove.type,
-        normalizedTargetIndex,
-        state.tracks,
-        { excludeTrackIds: excludeIds },
-      );
-
-      if (wouldCollide && !isLinkedAudioPrimary) {
-        // Find nearest available position in the target row
-        finalStartFrame = findNearestAvailablePositionInRowWithPlayhead(
-          proposedStart,
-          duration,
-          trackToMove.type,
-          normalizedTargetIndex,
-          state.tracks,
-          excludeIds,
-          state.timeline?.currentFrame,
-        );
-      } else {
-        finalStartFrame = Math.max(0, proposedStart);
-      }
-    }
-
-    let resolvedPrimaryAudioRowIndex: number | null = null;
-    if (isLinkedAudioPrimary) {
-      resolvedPrimaryAudioRowIndex = findAvailableRowIndexForRange(
-        finalStartFrame,
-        finalStartFrame + duration,
-        'audio',
-        state.tracks,
-        {
-          preferredRowIndex: normalizedTargetIndex,
-          excludeTrackIds: excludeIds,
-        },
-      );
-    }
-
-    let resolvedLinkedAudioRowIndex: number | null = null;
-    if (linkedTrack && linkedTrack.type === 'audio') {
-      const linkedDuration = linkedTrack.endFrame - linkedTrack.startFrame;
-      const originalOffset = linkedTrack.startFrame - trackToMove.startFrame;
-      const linkedFinalStart = finalStartFrame + originalOffset;
-
-      resolvedLinkedAudioRowIndex = findAvailableRowIndexForRange(
-        linkedFinalStart,
-        linkedFinalStart + linkedDuration,
-        'audio',
-        state.tracks,
-        {
-          preferredRowIndex: normalizedTargetIndex,
-          excludeTrackIds: excludeIds,
-        },
-      );
-    }
-
-    // Update track with new row index and calculated start frame
     set((state: any) => {
       let updatedTracks = state.tracks.map((track: VideoTrack) => {
         if (track.id === trackId) {
           return {
             ...track,
-            trackRowIndex:
-              track.type === 'audio' && resolvedPrimaryAudioRowIndex !== null
-                ? resolvedPrimaryAudioRowIndex
-                : finalTargetRowIndex,
+            trackRowIndex: finalTargetRowIndex,
             startFrame: finalStartFrame,
             endFrame: finalStartFrame + duration,
           };
         }
 
-        // Also move linked track (audio follows video, video follows audio)
+        // The linked partner stays time-locked but KEEPS ITS OWN LANE — moving
+        // a video between video lanes should never shuffle its audio around.
         if (trackToMove.isLinked && trackToMove.linkedTrackId === track.id) {
           const linkedDuration = track.endFrame - track.startFrame;
-
-          // Calculate linked track's position based on original relative position
           const originalOffset = track.startFrame - trackToMove.startFrame;
-          const linkedFinalStart = finalStartFrame + originalOffset;
-
-          // Keep linked tracks time-locked; resolve collisions via row selection for audio.
+          const linkedFinalStart = Math.max(0, finalStartFrame + originalOffset);
 
           return {
             ...track,
-            trackRowIndex:
-              track.type === 'audio' && resolvedLinkedAudioRowIndex !== null
-                ? resolvedLinkedAudioRowIndex
-                : finalTargetRowIndex,
-            startFrame: Math.max(0, linkedFinalStart),
-            endFrame: Math.max(0, linkedFinalStart) + linkedDuration,
+            startFrame: linkedFinalStart,
+            endFrame: linkedFinalStart + linkedDuration,
           };
         }
 
         return track;
       });
 
-      // Normalize row indices after drop
+      // Resolve fractional between-lane inserts to integers (stable lanes:
+      // integer indices never renumber), then let the placed clips overwrite
+      // whatever they now overlap on their lanes.
       updatedTracks = normalizeAfterDrop(updatedTracks);
+      updatedTracks = resolveOverwrite(
+        updatedTracks,
+        linkedTrack ? [trackId, linkedTrack.id] : [trackId],
+        state.timeline?.fps ?? 30,
+      );
 
       return { tracks: updatedTracks };
     });

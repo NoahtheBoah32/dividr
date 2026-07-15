@@ -2,6 +2,7 @@
 import { AgentMessage, AgentPlan, AgentStatus, QueuedOp } from './types';
 import { operationEngine } from './operationEngine';
 import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor/index';
+import { getDisplayFps } from '@/frontend/features/editor/stores/videoEditor/types/timeline.types';
 import { usePanelStore } from '@/frontend/features/editor/stores/PanelStore';
 import type { HistoryEntry, MediaContextItem, SfxEntry, TimelineSnapshot } from '@/backend/mycelium/agentRuntime';
 import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
@@ -348,6 +349,22 @@ const STATUS_DOT: Record<AgentStatus, string> = {
   error: 'bg-red-400',
 };
 
+// The [clip "name" id:… at Xs-Ys on the timeline] token EDITH targets is part of
+// the persisted history text. It must never be SHOWN — parse it back out so a
+// reloaded chat renders the same clean card the user saw when sending.
+const CLIP_TOKEN_RE = /\s*\[clip "([^"]+)" id:([^\s\]]+) at ([\d.]+)s-([\d.]+)s on the timeline\]/g;
+function extractClipTokens(text: string): {
+  clean: string;
+  clips: NonNullable<AgentMessage['clipAttachments']>;
+} {
+  const clips: NonNullable<AgentMessage['clipAttachments']> = [];
+  const clean = text.replace(CLIP_TOKEN_RE, (_m, name, trackId, s, e) => {
+    clips.push({ trackId, name, startSec: parseFloat(s), endSec: parseFloat(e) });
+    return '';
+  }).trim();
+  return { clean, clips };
+}
+
 function historyToMessages(entries: HistoryEntry[]): AgentMessage[] {
   return entries
     // Internal agent-loop "continue" turns fire silently (no chat bubble) when they
@@ -372,6 +389,16 @@ function historyToMessages(entries: HistoryEntry[]): AgentMessage[] {
           },
         };
       } catch { /* fall through */ }
+    }
+    if (e.role === 'user') {
+      const { clean, clips } = extractClipTokens(e.text);
+      return {
+        id: e.id,
+        role: 'user' as AgentMessage['role'],
+        text: clean,
+        timestamp: e.timestamp,
+        ...(clips.length > 0 && { clipAttachments: clips }),
+      };
     }
     return {
       id: e.id,
@@ -447,6 +474,59 @@ export function FridayPanel({ className }: { className?: string }) {
   const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
   const tracks = useVideoEditorStore((state) => state.tracks);
   const timeline = useVideoEditorStore((state) => state.timeline);
+  // Drag-a-clip-into-the-chat: while a timeline clip is mid-drag the input lights
+  // up; releasing over it attaches the clip as a card (thumbnail + time range).
+  // The [clip …] token EDITH targets is serialized only when the message sends.
+  const clipDragActive = useVideoEditorStore(
+    (state) => !!(state.playback.dragGhost?.isActive && state.playback.dragGhost?.trackId),
+  );
+  const [clipRefs, setClipRefs] = useState<Array<{
+    trackId: string; name: string; startSec: number; endSec: number; thumbnail?: string;
+  }>>([]);
+  const handleClipDropIntoChat = useCallback(() => {
+    const s = useVideoEditorStore.getState() as any;
+    const ghost = s.playback.dragGhost;
+    if (!ghost?.isActive || !ghost.trackId) return;
+    const clip = s.tracks.find((t: any) => t.id === ghost.trackId);
+    if (!clip) return;
+    // CRITICAL: the live drag has ALREADY displaced the clip by the time the
+    // mouse reaches the chat — its current startFrame is mid-drag garbage.
+    // The clip's true position is where the drag STARTED.
+    const dragOrigin = s.playback.dragStartFrame ?? clip.startFrame;
+    const fps = getDisplayFps(s.tracks) || 30;
+    const durFrames = clip.endFrame - clip.startFrame;
+    const startSec = +(dragOrigin / fps).toFixed(1);
+    const endSec = +((dragOrigin + durFrames) / fps).toFixed(1);
+    const media = (s.mediaLibrary ?? []).find((m: any) => m.id === clip.mediaId);
+    setClipRefs((prev) =>
+      prev.some((r) => r.trackId === clip.id)
+        ? prev
+        : [...prev, { trackId: clip.id, name: clip.name, startSec, endSec, thumbnail: media?.thumbnail }],
+    );
+    // The drop landed in chat, not on a timeline row — end the drag with NO move
+    // and no undo entry, then snap the clip (and its linked partner) back to the
+    // drag origin.
+    s.endDraggingTrack?.(false);
+    s.clearDragGhost?.();
+    const fresh = useVideoEditorStore.getState() as any;
+    const moved = fresh.tracks.find((t: any) => t.id === clip.id);
+    if (moved && moved.startFrame !== dragOrigin) {
+      const delta = moved.startFrame - dragOrigin;
+      fresh.updateTrack(moved.id, {
+        startFrame: moved.startFrame - delta,
+        endFrame: moved.endFrame - delta,
+      });
+      if (moved.isLinked && moved.linkedTrackId) {
+        const partner = fresh.tracks.find((t: any) => t.id === moved.linkedTrackId);
+        if (partner) {
+          fresh.updateTrack(partner.id, {
+            startFrame: partner.startFrame - delta,
+            endFrame: partner.endFrame - delta,
+          });
+        }
+      }
+    }
+  }, []);
   const approvalPending = useDownloadApprovalStore((s) => s.pending);
   const approvalApprove = useDownloadApprovalStore((s) => s.approve);
   const approvalApproveAll = useDownloadApprovalStore((s) => s.approveAll);
@@ -1570,7 +1650,7 @@ export function FridayPanel({ className }: { className?: string }) {
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || submittingRef.current) return;
+    if ((!text && attachments.length === 0 && clipRefs.length === 0) || submittingRef.current) return;
     interruptedRef.current = false;
     submittingRef.current = true;
     edithLlmActiveRef.current = true; // block chunk pipeline until this turn completes
@@ -1583,14 +1663,21 @@ export function FridayPanel({ className }: { className?: string }) {
     const imagePreviews = attachments.filter((a) => a.preview).map((a) => a.preview!);
     const denyCtx = denyContextRef.current;
     denyContextRef.current = null;
+    // Dropped timeline clips serialize into the token EDITH targets, appended
+    // to the message text (the input box only ever shows the clean card).
+    const clipTokens = clipRefs
+      .map((r) => `[clip "${r.name}" id:${r.trackId} at ${r.startSec}s-${r.endSec}s on the timeline]`)
+      .join(' ');
+    const textWithClips = clipTokens ? `${text ? `${text} ` : ''}${clipTokens}` : text;
     const fullText = attachedPaths.length > 0
-      ? `${text}\n\n[Attached: ${attachedPaths.join(', ')}]`
+      ? `${textWithClips}\n\n[Attached: ${attachedPaths.join(', ')}]`
       : denyCtx
-        ? `${denyCtx}\n\nUser says: ${text}`
-        : text;
+        ? `${denyCtx}\n\nUser says: ${textWithClips}`
+        : textWithClips;
     setInput('');
     try { localStorage.removeItem(getDraftKey()); } catch {}
     setAttachments([]);
+    setClipRefs([]);
     isNearBottomRef.current = true; // always scroll when user sends
     activePlanIdRef.current = null;
     setMessages((prev) => [
@@ -1598,14 +1685,18 @@ export function FridayPanel({ className }: { className?: string }) {
       {
         id: Math.random().toString(36).slice(2),
         role: 'user',
-        text: text || `[${attachments.length} attachment${attachments.length > 1 ? 's' : ''}]`,
+        text: text
+          || (clipRefs.length > 0
+            ? '' // the clip card IS the message, Gemini-style
+            : `[${attachments.length} attachment${attachments.length > 1 ? 's' : ''}]`),
         timestamp: Date.now(),
         ...(imagePreviews.length > 0 && { imagePreviews }),
+        ...(clipRefs.length > 0 && { clipAttachments: clipRefs }),
       },
     ]);
     // Fast-path: a plain "find the moment" request skips the LLM and runs the finder
-    // directly (instant CTRL-F). Only when there are no attachments / deny-context.
-    const fastFind = (!attachedPaths.length && !denyCtx) ? resolveFindIntent(text) : null;
+    // directly (instant CTRL-F). Only when there are no attachments / clips / deny-context.
+    const fastFind = (!attachedPaths.length && !denyCtx && !clipTokens) ? resolveFindIntent(text) : null;
     if (fastFind) {
       const label = fastFind.target === 'motion'
         ? 'the action'
@@ -1630,7 +1721,7 @@ export function FridayPanel({ className }: { className?: string }) {
       activeDownloads,
       sfxLibrary,
     });
-  }, [input, attachments, activeDownloads, sfxLibrary, buildMediaContext, buildTimelineSnapshot]);
+  }, [input, attachments, clipRefs, activeDownloads, sfxLibrary, buildMediaContext, buildTimelineSnapshot]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2020,6 +2111,45 @@ export function FridayPanel({ className }: { className?: string }) {
             return (
               <div key={msg.id} className="px-4 py-1.5 flex justify-end">
                 <div className="flex flex-col items-end gap-1.5 max-w-[85%]">
+                  {msg.clipAttachments?.map((c) => {
+                    // Live echo carries the thumbnail; hydrated history re-resolves
+                    // it from the media library (survives source swaps from bakes).
+                    const tr = tracks.find((t) => t.id === c.trackId);
+                    const thumb = c.thumbnail
+                      ?? (tr ? mediaLibrary?.find((m) => m.id === (tr as any).mediaId)?.thumbnail : undefined);
+                    return (
+                      <div
+                        key={c.trackId}
+                        className="rounded-xl border border-white/10 overflow-hidden"
+                        style={{ background: '#1e1e1e', width: 148 }}
+                      >
+                        <div className="relative w-full" style={{ height: 76, background: '#111' }}>
+                          {thumb ? (
+                            <img src={thumb} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth="1.6">
+                                <rect x="2" y="4" width="20" height="16" rx="3"/><path d="M10 9l5 3-5 3V9z" fill="#52525b" stroke="none"/>
+                              </svg>
+                            </div>
+                          )}
+                          <div
+                            className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full px-2 py-0.5"
+                            style={{ background: 'rgba(0,0,0,0.75)' }}
+                          >
+                            <svg width="8" height="8" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4V1z" fill="#fff"/></svg>
+                            <span className="text-[10px] font-semibold text-white tabular-nums">
+                              {(c.endSec - c.startSec).toFixed(1)}s
+                            </span>
+                          </div>
+                        </div>
+                        <div className="px-2 py-1.5">
+                          <p className="text-[10px] text-zinc-300 font-medium truncate">{c.name}</p>
+                          <p className="text-[10px] text-zinc-500 tabular-nums">{c.startSec}s – {c.endSec}s on timeline</p>
+                        </div>
+                      </div>
+                    );
+                  })}
                   {msg.imagePreviews?.map((src, i) => (
                     <img key={i} src={src} className="rounded-lg max-w-full max-h-40 object-contain border border-white/10" />
                   ))}
@@ -2130,6 +2260,49 @@ export function FridayPanel({ className }: { className?: string }) {
 
       {/* Input */}
       <div className="px-3 pb-3 pt-2 border-t border-white/[0.06] select-none">
+        {clipRefs.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {clipRefs.map((r) => (
+              <div
+                key={r.trackId}
+                className="group relative rounded-xl border border-white/10 overflow-hidden"
+                style={{ background: '#1e1e1e', width: 148 }}
+              >
+                <div className="relative w-full" style={{ height: 76, background: '#111' }}>
+                  {r.thumbnail ? (
+                    <img src={r.thumbnail} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth="1.6">
+                        <rect x="2" y="4" width="20" height="16" rx="3"/><path d="M10 9l5 3-5 3V9z" fill="#52525b" stroke="none"/>
+                      </svg>
+                    </div>
+                  )}
+                  {/* duration pill — Gemini-style play badge */}
+                  <div
+                    className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full px-2 py-0.5"
+                    style={{ background: 'rgba(0,0,0,0.75)' }}
+                  >
+                    <svg width="8" height="8" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4V1z" fill="#fff"/></svg>
+                    <span className="text-[10px] font-semibold text-white tabular-nums">
+                      {(r.endSec - r.startSec).toFixed(1)}s
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setClipRefs((prev) => prev.filter((x) => x.trackId !== r.trackId))}
+                    className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white/80 hover:text-white"
+                    style={{ background: 'rgba(0,0,0,0.7)' }}
+                    aria-label="Remove clip"
+                  >×</button>
+                </div>
+                <div className="px-2 py-1.5">
+                  <p className="text-[10px] text-zinc-300 font-medium truncate">{r.name}</p>
+                  <p className="text-[10px] text-zinc-500 tabular-nums">{r.startSec}s – {r.endSec}s on timeline</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-2">
             {attachments.map((a, i) => (
@@ -2154,7 +2327,12 @@ export function FridayPanel({ className }: { className?: string }) {
 
         <div
           className="flex items-end gap-2 rounded-lg px-3 py-2 border transition-colors"
-          style={{ background: '#1e1e1e', borderColor: 'rgba(255,255,255,0.08)' }}
+          style={{
+            background: '#1e1e1e',
+            borderColor: clipDragActive ? '#22c55e' : 'rgba(255,255,255,0.08)',
+            boxShadow: clipDragActive ? '0 0 0 1px #22c55e66' : 'none',
+          }}
+          onMouseUp={handleClipDropIntoChat}
         >
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -2175,7 +2353,7 @@ export function FridayPanel({ className }: { className?: string }) {
           />
           <button
             onClick={sendMessage}
-            disabled={(!input.trim() && attachments.length === 0) || submittingRef.current}
+            disabled={(!input.trim() && attachments.length === 0 && clipRefs.length === 0) || submittingRef.current}
             className="flex-shrink-0 w-6 h-6 rounded flex items-center justify-center transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
             style={{ background: '#22c55e' }}
           >

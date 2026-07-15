@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import { VideoTrack } from '../../stores/videoEditor/types';
 
 /**
@@ -769,4 +770,121 @@ export const findAvailableRowIndexForRange = (
   }
 
   return maxCandidateIndex;
+};
+
+/**
+ * OVERWRITE RESOLUTION — the timeline contract (Premiere-style):
+ * "the clip goes where the user put it, and stays there."
+ *
+ * The placed clips (winners) keep their exact positions. Any clip on the SAME
+ * type + SAME lane that overlaps a winner yields:
+ *   - fully covered            → removed
+ *   - overlapped at its head   → trimmed to start where the winner ends
+ *   - overlapped at its tail   → trimmed to end where the winner starts
+ *   - winner inside its middle → split into two pieces around the winner
+ *
+ * Nothing is relocated, no lanes renumber, and clips on other lanes are
+ * untouched. Trims keep source in-points correct (sourceStartTime shifts by
+ * the trimmed head, in seconds). Linked partners of a REMOVED clip are
+ * unlinked (never silently deleted); a middle split keeps the link on the
+ * left piece only.
+ *
+ * Pure function — returns a new tracks array. Callers wrap it in their own
+ * undo transaction.
+ */
+export const resolveOverwrite = (
+  allTracks: VideoTrack[],
+  placedIds: string[],
+  fps: number,
+): VideoTrack[] => {
+  const placedSet = new Set(placedIds);
+  const winners = allTracks.filter((t) => placedSet.has(t.id));
+  if (winners.length === 0) return allTracks;
+
+  const safeFps = fps > 0 ? fps : 30;
+  let tracks = allTracks;
+
+  for (const winner of winners) {
+    const wStart = winner.startFrame;
+    const wEnd = winner.endFrame;
+    const wRow = winner.trackRowIndex ?? 0;
+    if (wEnd - wStart <= 0) continue;
+
+    const next: VideoTrack[] = [];
+    const splitRights: VideoTrack[] = [];
+    const removedIds = new Set<string>();
+    const hasSource = (t: VideoTrack) => t.type === 'video' || t.type === 'audio';
+
+    for (const t of tracks) {
+      const isLoserCandidate =
+        !placedSet.has(t.id) &&
+        t.type === winner.type &&
+        (t.trackRowIndex ?? 0) === wRow &&
+        t.startFrame < wEnd &&
+        t.endFrame > wStart;
+
+      if (!isLoserCandidate) {
+        next.push(t);
+        continue;
+      }
+
+      const coversHead = wStart <= t.startFrame;
+      const coversTail = wEnd >= t.endFrame;
+
+      if (coversHead && coversTail) {
+        removedIds.add(t.id);
+        continue;
+      }
+
+      if (coversHead) {
+        // Winner covers the loser's head — trim the loser to start at wEnd.
+        if (t.endFrame - wEnd < 1) {
+          removedIds.add(t.id);
+          continue;
+        }
+        next.push({
+          ...t,
+          startFrame: wEnd,
+          duration: t.endFrame - wEnd,
+          ...(hasSource(t)
+            ? { sourceStartTime: (t.sourceStartTime ?? 0) + (wEnd - t.startFrame) / safeFps }
+            : {}),
+        });
+        continue;
+      }
+
+      if (coversTail) {
+        // Winner covers the loser's tail — trim the loser to end at wStart.
+        if (wStart - t.startFrame < 1) {
+          removedIds.add(t.id);
+          continue;
+        }
+        next.push({ ...t, endFrame: wStart, duration: wStart - t.startFrame });
+        continue;
+      }
+
+      // Winner sits inside the loser — split into left + right pieces.
+      next.push({ ...t, endFrame: wStart, duration: wStart - t.startFrame });
+      splitRights.push({
+        ...t,
+        id: uuidv4(),
+        startFrame: wEnd,
+        endFrame: t.endFrame,
+        duration: t.endFrame - wEnd,
+        isLinked: false,
+        linkedTrackId: undefined,
+        ...(hasSource(t)
+          ? { sourceStartTime: (t.sourceStartTime ?? 0) + (wEnd - t.startFrame) / safeFps }
+          : {}),
+      });
+    }
+
+    tracks = next.concat(splitRights).map((t) =>
+      t.linkedTrackId && removedIds.has(t.linkedTrackId)
+        ? { ...t, isLinked: false, linkedTrackId: undefined }
+        : t,
+    );
+  }
+
+  return tracks;
 };

@@ -11,7 +11,9 @@ import { useVideoEditorStore } from '../index';
 export const createTrackShortcuts = (store: any): ShortcutConfig[] => [
   {
     id: 'track-slice-playhead',
-    keys: ['ctrl+b', 'cmd+b', 'k', 'ctrl+k', 'cmd+k'],
+    // Bare 'k' was moved to the J/K/L shuttle (K = stop); slice keeps
+    // its CapCut (ctrl+b) and Premiere (ctrl+k) bindings.
+    keys: ['ctrl+b', 'cmd+b', 'ctrl+k', 'cmd+k'],
     description: 'Slice at Playhead',
     category: 'Track Editing',
     scope: 'track',

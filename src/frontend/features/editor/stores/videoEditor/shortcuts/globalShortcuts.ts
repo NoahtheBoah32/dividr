@@ -3,6 +3,7 @@ import {
   createProjectShortcuts,
   type ProjectShortcutHandlers,
 } from './projectShortcuts';
+import { shuttleForward, shuttleReverse, shuttleStop } from './shuttle';
 import { ShortcutConfig } from './types';
 
 /**
@@ -181,6 +182,70 @@ export const createGlobalShortcuts = (
     handler: (e) => {
       e?.preventDefault();
       getStore().toggleFullscreen();
+    },
+  },
+  // J/K/L shuttle — appended after the existing entries because
+  // useGlobalShortcuts binds by array index (0-14 must stay stable).
+  {
+    id: 'playback-shuttle-reverse',
+    keys: 'j',
+    description: 'Shuttle Backward (tap again: 2x, 4x)',
+    category: 'Playback',
+    scope: 'global',
+    priority: 'high',
+    handler: (e) => {
+      e?.preventDefault();
+      shuttleReverse(getStore);
+    },
+  },
+  {
+    id: 'playback-shuttle-stop',
+    keys: 'k',
+    description: 'Shuttle Stop',
+    category: 'Playback',
+    scope: 'global',
+    priority: 'high',
+    handler: (e) => {
+      e?.preventDefault();
+      shuttleStop(getStore);
+    },
+  },
+  {
+    id: 'playback-shuttle-forward',
+    keys: 'l',
+    description: 'Shuttle Forward (tap again: 2x, 4x)',
+    category: 'Playback',
+    scope: 'global',
+    priority: 'high',
+    handler: (e) => {
+      e?.preventDefault();
+      shuttleForward(getStore);
+    },
+  },
+  {
+    id: 'timeline-set-in-point',
+    keys: 'i',
+    description: 'Set In Point at Playhead',
+    category: 'Navigation',
+    scope: 'global',
+    handler: (e) => {
+      e?.preventDefault();
+      const store = getStore();
+      if (store.render?.isRendering) return;
+      store.setInPoint(store.timeline.currentFrame);
+    },
+  },
+  {
+    id: 'timeline-set-out-point',
+    keys: 'o',
+    description: 'Set Out Point at Playhead',
+    category: 'Navigation',
+    scope: 'global',
+    handler: (e) => {
+      e?.preventDefault();
+      const store = getStore();
+      if (store.render?.isRendering) return;
+      store.setOutPoint(store.timeline.currentFrame);
     },
   },
 ];

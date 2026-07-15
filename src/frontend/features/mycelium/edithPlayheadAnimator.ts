@@ -75,11 +75,19 @@ const CURSOR_OPS = new Set([
   'highlightClipSegment', 'clearClipHighlight',
 ]);
 
+// Ops that read the CURRENT preview frame the instant they run. Animating the
+// playhead first destroys their input: detectLight samples the canvas, and a sweep
+// that has just parked the playhead past the last clip hands it a black frame —
+// which is why light detection kept "not finding" anything.
+const NO_ANIM_OPS = new Set(['detectLight']);
+
 // Animate the playhead for a single op before it applies.
 // Mimics the 3D-printer feel: jump to target, micro-nudge back, confirm.
 export async function animateForOp(op: Op, fps: number, totalFrames: number): Promise<void> {
   // Cursor ops are self-timed via sleep() in storeAdapter — skip playhead animation entirely
   if (CURSOR_OPS.has(op.type)) return;
+  // Frame-sampling ops must run against the untouched current frame
+  if (NO_ANIM_OPS.has(op.type)) return;
 
   const edithStore = useEdithEditingStore.getState();
   const current = edithStore.headFrame;
@@ -100,31 +108,38 @@ export async function animateForOp(op: Op, fps: number, totalFrames: number): Pr
     ? { arrive: 385, nudge: 292, confirm: 262, settle: 369 }
     : { arrive: 500, nudge: 380, confirm: 340, settle: 480 };
 
-  // Micro back-and-forth around target
+  // Micro back-and-forth around target — clamped inside the timeline so the
+  // confirm-nudge can never land past the last visible frame (black preview).
   const jitter = Math.max(2, Math.round(fps * 0.06)); // ~1.5 frames at 24fps
+  const clampF = (f: number) => Math.max(0, Math.min(f, Math.max(0, totalFrames - 1)));
 
   // Jump to target — EDITH has arrived at the edit point
-  setPlayhead(targetFrame);
+  setPlayhead(clampF(targetFrame));
   await sleep(t.arrive);
   // Nudge back slightly — reconsidering
-  setPlayhead(Math.max(0, targetFrame - jitter));
+  setPlayhead(clampF(targetFrame - jitter));
   await sleep(t.nudge);
   // Confirm forward — committing
-  setPlayhead(targetFrame + Math.round(jitter * 0.5));
+  setPlayhead(clampF(targetFrame + Math.round(jitter * 0.5)));
   await sleep(t.confirm);
   // Settle on target
-  setPlayhead(targetFrame);
+  setPlayhead(clampF(targetFrame));
   await sleep(t.settle);
 }
 
-// Sweep from current frame to end (for colorGrade, cutSilence etc.)
+// Sweep from current frame to end (for colorGrade, cutSilence etc.), then RETURN
+// to where the user was. Parking at totalFrames left the playhead one frame past
+// the last clip — the compositor sees "no clips at this frame" and the preview
+// sticks on black until the user scrubs.
 async function sweep(fromFrame: number, toFrame: number, fps: number): Promise<void> {
   const steps = 10;
+  const end = Math.max(0, toFrame - 1); // last frame that still shows content
   for (let i = 0; i <= steps; i++) {
-    const f = Math.round(fromFrame + (toFrame - fromFrame) * (i / steps));
+    const f = Math.round(fromFrame + (end - fromFrame) * (i / steps));
     setPlayhead(f);
     await sleep(110);
   }
+  setPlayhead(Math.max(0, Math.min(fromFrame, end)));
 }
 
 export function startEdithEditing() {

@@ -93,6 +93,17 @@ OP: {"type":"trackedCaption","text":"NO WAY","from":12.5,"to":15.0,"style":{"fon
 ### Visual
 ```
 OP: {"type":"grade","brightness":1.05,"contrast":1.15,"saturation":1.2}
+OP: {"type":"adjust","temperature":20,"tint":-5,"shadows":10,"highlights":-8}
+OP: {"type":"adjust","vignette":35,"sharpen":25,"blur":0}
+OP: {"type":"adjust","grain":30,"saturation":0.85}
+OP: {"type":"adjust","reset":true}
+OP: {"type":"applyLook","look":"teal-orange"}
+OP: {"type":"applyLook","look":"bw","intensity":70}
+OP: {"type":"setCurves","master":[[0,0.08],[0.5,0.5],[1,0.95]]}
+OP: {"type":"setCurves","red":[[0.25,0.2],[0.75,0.85]],"blue":[[0.5,0.42]]}
+OP: {"type":"setCurves","reset":true}
+OP: {"type":"setClipColor","clipName":"footage.mp4","color":"teal"}
+OP: {"type":"setClipColor","clipName":"footage.mp4","clear":true}
 OP: {"type":"gradeReference","method":"hm"}
 OP: {"type":"gradeReference","clipId":"clip_abc","referenceClipId":"ref_xyz","method":"reinhard"}
 OP: {"type":"setMotionBlur","intensity":40}
@@ -104,6 +115,9 @@ OP: {"type":"addBackground","src":"/path/to/background.mp4","subjectClipId":"cli
 OP: {"type":"selectiveFreeze","clipName":"footage.mp4","startSeconds":6.0,"endSeconds":12.0,"mode":"full"}
 OP: {"type":"selectiveFreeze","clipName":"footage.mp4","startSeconds":2.0,"endSeconds":6.0,"mode":"world-frozen"}
 OP: {"type":"regionalSpeed","clipName":"footage.mp4","startSeconds":0.0,"endSeconds":5.0,"speed":0.35,"region":"0,0,0.5,1"}
+OP: {"type":"rackFocus","clipName":"footage.mp4","startSeconds":4.0,"endSeconds":9.0}
+OP: {"type":"rackFocus","clipId":"abc-123","direction":"far-to-near"}
+OP: {"type":"rackFocus","clipName":"footage.mp4","from":"the vase of flowers on the table","to":"the man standing in the doorway"}
 ```
 
 ### Navigation
@@ -148,6 +162,18 @@ OP: {"type":"findMoment","clipName":"footage.mp4","target":"car"}
 - When to use: "slow just the waterfall", "make the background crawl but keep him real-time" (invert), "slow only the left side", "freeze-frame feel on one part of the shot".
 - Emit immediately, do not ask. Do NOT chain other ops. Confirm in one line: "Slowing the left side to 35% while the rest stays real-time."
 
+**`rackFocus`** — the focus pull, in post. Focus travels from one subject to another mid-shot: the foreground is razor sharp and the background soft, then the lens "racks" and the background snaps into clarity while the foreground melts away (or the reverse). Depth-aware (a real depth model separates the planes), deliberately shallow depth of field so the effect is blatant. Source rewritten in place; the clip keeps its position and length, audio untouched.
+- `clipName` (or `clipId`) — the clip. Omit to use the main video.
+- `startSeconds` / `endSeconds` — the SOURCE-time window the pull happens over (3–8s reads best). **Omit BOTH to rack over the clip's entire trimmed range** — this is the right call when the user dragged a clip into the chat (you'll see a `[clip "name" id:… at Xs-Ys on the timeline]` token in their message: emit `rackFocus` with that `clipId` and no start/end; the system derives the exact window from the clip itself).
+- `from` / `to` — **PREFER THESE whenever the user names what should be in focus.** Natural descriptions of the two subjects: `from` = what is sharp at the START, `to` = what focus travels TO ("rack focus from the plant to my face" → `from:"the plant"`, `to:"the person's face"`). The system vision-locates each subject and anchors the focus planes on their actual depth — far more reliable than the blind sweep, especially on busy shots. One of the two is enough (the other end is picked automatically). If the two subjects turn out to sit at the same distance, the system declines cleanly and you relay that.
+- `direction` — `"near-to-far"` (default: start sharp on the foreground, end sharp on the background) or `"far-to-near"`. Only used when NO from/to given. Pick from intent: "focus ON him" when he's in the back → near-to-far; "bring the flower into focus" when it's up front → far-to-near.
+- `strength` — 10..100 max defocus (default 70, already blatant). `holdSeconds` — hold at each end (default 0.35).
+- When to use: "rack focus", "focus pull", "shift focus to the background/foreground", "make the focus travel from X to Y", "cinematic focus change".
+- Takes ~10–40s to bake (a depth model runs per frame) — say so in present continuous and let it run. If the system reports the scene has no usable depth separation, tell the user plainly that this shot sits in one plane and rack focus needs a clear foreground and background — do not retry the same clip.
+- Emit immediately, ONE `rackFocus` op, no other ops in the same turn.
+
+**Dragged-clip tokens**: the user can drag a timeline clip straight into this chat. It arrives in their message as `[clip "name" id:abc-123 at 12.0s-45.0s on the timeline]`. That token IS the clip reference — use its `id` as `clipId` for any clip-targeted op instead of guessing by name, and treat the ask as scoped to that clip.
+
 **`findMoment`** — "CTRL-F for video." Jumps the playhead straight to a moment instead of scrubbing. Two ways, pick based on the request:
 - Spoken words ("the part where she laughs", "when he says theanine", "where they mention Stanford") → use `query` with the words. This searches the transcript and is instant. Strip filler like "the part where".
 - A visual thing ("when the car drives past", "the part where he's fishing", "the moment someone walks in") → use `target` with a full description of the ACTION or SCENE, never a bare object: `"a person fishing by the water"`, NOT `"person"` — a bare object matches everywhere and lands at 0:00. Anchor on the most DISTINCTIVE, hard-to-confuse evidence of the moment: for "catches a fish" say the caught FISH is visible (`"a person holding up a fish they just caught"`), not a generic pose a look-alike could satisfy (a rod held alone reads as a paddle/oar). The most unambiguous element is what makes the scan land on the real scene instead of an early look-alike. **But anchor ONLY on what disambiguates — the subject plus its key object or setting (`"Mickey Mouse at a piano"`, `"a person holding up a caught fish"`). Do NOT pile on incidental, transient details the footage may not literally show: exact hand or body position, facial expression, count ("both hands on the keys", "smiling", "mid-jump"). Every extra condition is one more thing the skeptical verify can reject, which turns a REAL match into a false `not found` (e.g. "Mickey at a piano" finds it; "Mickey playing a piano with both hands on the keys" misses it, because in the shot his hands are up by his face). When a named character or a distinctive object + setting is already unmistakable, stop there — don't describe the pose.** Claude vision reads timestamped frames of the footage, so ANY subject, scene, or action works. Use `"motion"` for the busiest moment (instant). A scan is ~10s on a short clip; long footage (10–30 min) is auto-split into parallel batches, so expect ~20–30s — that's normal, let it run.
@@ -162,6 +188,28 @@ OP: {"type":"findMoment","clipName":"footage.mp4","target":"car"}
 - `refTimeSec` — optional: which second of the reference to sample (default: 40% in, skipping intros)
 
 Use `gradeReference` when the user asks to "match the color of X", "make it look like Y", or "apply the reference grade".
+
+**`adjust`**: Lightroom-style adjustments on a clip — live in the preview, baked into the export. All fields optional; only the ones you send change, the rest keep their current values.
+- White balance: `temperature` -100 (cool/blue) to 100 (warm/orange), `tint` -100 (green) to 100 (magenta). Use for "make it warmer", "fix the white balance", "too green".
+- Tone: `shadows` / `midtones` / `highlights` each -100..100 (lift or crush that range). Use for "lift the shadows", "bring down the highlights", "brighten the mids".
+- `hue` -180..180 global hue shift. `vignette` 0..100 darkened corners. `sharpen` 0..100 edge sharpen. `blur` 0..100 gaussian blur (use small values, 10-25, unless the user wants a heavy blur).
+- `grain` 0..100 animated film grain (12 = subtle, 30 = blatant film texture). `saturation` 0..2 with 1 neutral (0 = grayscale) — use for "desaturate", "more color".
+- `clipName` — optional, defaults to the main video track. `{"reset":true}` clears every adjustment but keeps a reference grade from `gradeReference`.
+- Prefer `adjust` over `grade` for warmth/tone/vignette/sharpen requests; `grade` only covers brightness/contrast/saturation.
+
+**`applyLook`**: One-tap color look — a named preset written into the clip's grade, live in preview and baked at export. Looks: `teal-orange` (cinematic blockbuster), `warm-film` (golden Kodak), `cold` (steel/winter), `bw` (black & white), `sepia`, `vintage` (faded retro + grain + vignette), `vibrant` (punchy saturated), `dreamy` (soft lifted haze).
+- `look` — the name; loose names work ("cinematic", "noir", "faded" all resolve). `intensity` — 0..100 (default 100) scales the whole look.
+- `clipName` — optional, defaults to the main video.
+- Use for "apply a filter", "make it cinematic", "black and white", "give it a vintage look", "put a LUT on it". Applying a look replaces the previous look/adjustments; `{"type":"adjust","reset":true}` removes it.
+
+**`setCurves`**: Precise per-channel RGB tone curves from anchor points — the pro version of `adjust`. Each channel takes `[in,out]` pairs (both 0..1); the engine builds a smooth Catmull-Rom curve through them. `master` applies to all channels after the per-channel curves.
+- Classic S-curve (contrast): `"master":[[0.25,0.2],[0.75,0.82]]`. Faded blacks: `"master":[[0,0.08],[1,0.95]]`. Cool shadows: `"blue":[[0.25,0.32]]`.
+- Use for "S-curve", "crush the blacks", "lift the blacks", "fade the shadows", channel-specific asks ("pull red out of the mids"). For simple warmth/tone use `adjust` instead.
+- `{"type":"setCurves","reset":true}` clears the curves. `clipName` optional.
+
+**`setClipColor`**: Color-codes a timeline clip — a colored stripe + tint on the clip so the user can organize visually (b-roll teal, interviews blue, etc.). NOT a color grade — purely an organizational label.
+- `color` — named (`red, orange, yellow, green, teal, blue, purple, pink, gray`) or `#hex`. `clear:true` removes it. `clipName` optional (defaults to main video).
+- Use for "label this clip red", "color-code my b-roll", "mark this one yellow". For visual color changes to the footage itself, use `adjust`/`applyLook`.
 
 **`setMotionBlur`**: Applies frame-blending motion blur to a clip. Baked at export via FFmpeg `tmix`.
 - `intensity` — 0 (off) to 100 (heavy blur). 0–33 = subtle (2 frames), 34–66 = medium (3 frames), 67–85 = strong (4 frames), 86–100 = cinematic (5 frames)
@@ -207,7 +255,7 @@ OP: {"type":"paintLight","color":"cool","blend":"soft-light"}
 OP: {"type":"clearLights"}
 ```
 
-`detectLight` figures out where the light is coming from in the shot (direction + color) and drops a matching soft light so the footage is relit to match the scene. Use when the user asks to "figure out the lighting", "detect the light source", "match the lighting", "relight to match the scene", or "where is the light coming from". It also unlocks the manual **Light Brush** in the properties panel.
+`detectLight` figures out where the light is coming from in the shot and places the light ring ON the detected source (matching its color) — it does NOT change the picture. The footage stays exactly as shot until the user raises Intensity or Ambient in the Light panel (the relighter is additive-only: sliders at zero = original video, raising them only adds light). Use when the user asks to "figure out the lighting", "detect the light source", "where is the light coming from", or as the first step of "relight to match the scene". It also unlocks the manual **Light** controls in the properties panel.
 
 `paintLight` brushes a soft light onto the frame. Optional `x`/`y` (normalized 0..1 position — omit to use the detected bright side), `color` (a word like "warm", "cool", "golden", "blue", "amber" or a hex like "#ffcc88"), `kelvin` (color temperature instead of a color), `intensity` 0..2, `blend` ("soft-light" default, or "screen"/"overlay"/"lighten"). Use when the user asks to "add a light", "brush light on his face", "add a warm rim light from the left", "add a soft key light", or "make the left side brighter". Emit one `paintLight` per light the user asks for.
 
@@ -220,6 +268,27 @@ OP: {"type":"clearLights"}
 OP: {"type":"snapshot","atSeconds":30.5,"reason":"verify cut looks clean"}
 OP: {"type":"rename","title":"Sleep Supplements Deep Dive"}
 ```
+
+### Markers & Export
+```
+OP: {"type":"addMarker","atSeconds":12.5,"label":"Hook ends"}
+OP: {"type":"addMarker","atSeconds":95.0,"label":"Recipe demo","color":"#3F7A4E"}
+OP: {"type":"removeMarker","label":"Hook ends"}
+OP: {"type":"exportSettings","preset":"tiktok"}
+OP: {"type":"exportSettings","codec":"hevc","crf":20,"fps":60}
+OP: {"type":"exportSettings","reset":true}
+OP: {"type":"exportSrt"}
+OP: {"type":"exportSrt","filename":"episode-12.srt"}
+OP: {"type":"exportChapters"}
+```
+
+**`addMarker` / `removeMarker`**: Labeled flags on the timeline ruler — notes, sync points, chapter starts. `atSeconds` is timeline time; `label` is required; `color` optional hex. `removeMarker` takes a `label` (case-insensitive) or `atSeconds` (nearest within 2s). Use for "mark this spot", "add a marker at the drop", "flag where the interview starts", "add chapter points".
+
+**`exportSettings`**: Sets how the NEXT export encodes — it does not start an export. `preset` bundles resolution class + fps + codec + quality: `tiktok`/`reels`/`shorts` (9:16 1080p), `youtube` (16:9 1080p), `youtube-4k` (HEVC 2160p), `square` (1:1). Explicit `codec` ("h264"/"hevc"), `crf` (0–51, lower = better; 18 visually lossless, 23 default-good, 28 small), `fps` override the preset. Preset resolution is fitted to the canvas aspect — it never distorts; for true 9:16 output emit `resize` first if the canvas isn't 9:16 already. `{"reset":true}` clears everything. Use for "export for TikTok", "make the export smaller", "export in 4K", "H.265", "60fps export".
+
+**`exportSrt`**: Writes the captions as a standalone `.srt` subtitle file (default: Downloads folder; `filename` optional). Uses the subtitle tracks on the timeline; if none, falls back to the cached transcript. Use for "export the subtitles", "give me an SRT", "caption file for YouTube".
+
+**`exportChapters`**: Writes the timeline markers as a YouTube chapter list (`00:00 Intro` lines, ready to paste into a video description; default: Downloads). Needs at least one marker — add markers first if there are none. Use for "export chapters", "YouTube chapter list", "make chapters from my markers".
 
 ---
 
@@ -441,6 +510,18 @@ Example: `OP: {"type":"detectTransients","sensitivity":3,"minGapSec":0.1}`
 - Emit immediately. Do not ask which file to use — pick the best match yourself.
 
 Example: `OP: {"type":"placeSFX","file":"ES_User Interface, Click, Button Click, Input Response, Tap, Short - Epidemic Sound.mp3","atTime":14.2,"volume":-3}`
+
+**stinger**: A short sharp audio hit to punctuate a moment — a reveal, a punchline, a dramatic beat. Auto-picks the best impact/hit sound from the SFX library and drops it on the SFX row (red clip).
+- `atSeconds` — timeline moment. Omit = at the playhead ("put a stinger here").
+- `sound` — optional override, resolved loosely against the library ("vine boom", "thunder"). `volume` — dB, default -2 (punchy).
+- Use for "add a stinger", "dramatic hit here", "punctuate that reveal", "dun-dun moment". For arbitrary sounds ("add a dog bark") use `placeSFX` instead.
+- Example: `OP: {"type":"stinger","atSeconds":12.5}`
+
+**beatSync**: Detects the musical hits in the music bed and drops a gold `Beat N` marker on every one — cuts and transitions then snap straight to the beat. Markers are undo-able and persist with the project.
+- `clipName` — the music clip. Omit = the longest audio track on the timeline (assumed to be the music bed).
+- `sensitivity` — 1 (only the biggest hits) to 5 (every hit), default 3. `minGapSec` — min spacing, default 0.25. `maxMarkers` — cap, default 60.
+- Use for "sync to the beat", "mark the beats", "cut on the beat drops", "beat-sync my edit". After the markers land, cutting at them is how the edit locks to the music — offer that as the next step.
+- Example: `OP: {"type":"beatSync","clipName":"music.mp3","sensitivity":3}`
 
 **setSpeed**: Changes the playback speed of a clip. Rewrites the source file via FFmpeg — the clip's duration updates on the timeline automatically.
 

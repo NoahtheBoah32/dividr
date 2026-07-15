@@ -107,6 +107,27 @@ export const useGlobalShortcuts = () => {
     globalShortcuts[6].keys,
   );
 
+  const shuttleReverseKeys = useShortcutKeys(
+    'playback-shuttle-reverse',
+    globalShortcuts[15].keys,
+  );
+  const shuttleStopKeys = useShortcutKeys(
+    'playback-shuttle-stop',
+    globalShortcuts[16].keys,
+  );
+  const shuttleForwardKeys = useShortcutKeys(
+    'playback-shuttle-forward',
+    globalShortcuts[17].keys,
+  );
+  const setInPointKeys = useShortcutKeys(
+    'timeline-set-in-point',
+    globalShortcuts[18].keys,
+  );
+  const setOutPointKeys = useShortcutKeys(
+    'timeline-set-out-point',
+    globalShortcuts[19].keys,
+  );
+
   // Playback toggle
   useHotkeys(
     playbackKeys,
@@ -217,6 +238,43 @@ export const useGlobalShortcuts = () => {
   useHotkeys(
     projectCloseKeys,
     globalShortcuts[6].handler,
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
+  );
+
+  // J/K/L shuttle transport
+  useHotkeys(
+    shuttleReverseKeys,
+    globalShortcuts[15].handler,
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
+  );
+
+  useHotkeys(
+    shuttleStopKeys,
+    globalShortcuts[16].handler,
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
+  );
+
+  useHotkeys(
+    shuttleForwardKeys,
+    globalShortcuts[17].handler,
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
+  );
+
+  // I/O points at playhead
+  useHotkeys(
+    setInPointKeys,
+    globalShortcuts[18].handler,
+    { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
+    [isCapturing],
+  );
+
+  useHotkeys(
+    setOutPointKeys,
+    globalShortcuts[19].handler,
     { preventDefault: true, enableOnFormTags: false, enabled: !isCapturing },
     [isCapturing],
   );

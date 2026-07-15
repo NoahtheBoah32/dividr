@@ -29,11 +29,6 @@ import { TimelineRuler } from './timelineRuler';
 import { TimelineTrackControllers } from './timelineTrackControllers';
 import { TimelineTracks } from './timelineTracks';
 import {
-  findAvailableRowIndexForRange,
-  findNearestAvailablePositionInRowWithPlayhead,
-  hasCollision,
-} from './utils/collisionDetection';
-import {
   calculatePlaceholderRows,
   calculateRowBoundsWithPlaceholders,
   detectInsertionPoint,
@@ -45,6 +40,7 @@ import {
   TrackRowDefinition,
 } from './utils/dynamicTrackRows';
 import { buildInteractionRowBounds } from './utils/rowFiltering';
+import { MAX_PLACEHOLDER_ROWS } from './utils/timelineConstants';
 import {
   calculateFrameFromPosition,
   handleTimelineMouseDown as centralizedHandleMouseDown,
@@ -263,9 +259,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
     }, []);
 
     const dynamicRowsWithPlaceholders = useMemo(() => {
-      const MAX_PLACEHOLDER_ROWS = 3;
-
-      // Calculate placeholder counts (same logic as timelineTracks.tsx)
+      // Calculate placeholder counts (MUST match timelineTracks.tsx exactly —
+      // shared constant; a mismatch offsets all drag/drop row detection)
       const baseRowCount = 2;
       const extraRowsCount = Math.max(0, dynamicRows.length - baseRowCount);
       const remainingPlaceholders = Math.max(
@@ -519,7 +514,9 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
           if (playback.isDraggingTrack || playback.dragGhost?.isActive) {
             const dragGhost = playback.dragGhost;
 
-            // If we have a valid drop target, apply the move with collision detection
+            // TIMELINE CONTRACT: the clip lands EXACTLY where it was released —
+            // no collision-relocation. Overlaps resolve as an overwrite inside
+            // moveTrackToRow / endDraggingTrack.
             if (
               dragGhost &&
               dragGhost.targetRow &&
@@ -531,42 +528,10 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
               );
 
               if (primaryTrack && targetRowParsed) {
-                const duration =
-                  primaryTrack.endFrame - primaryTrack.startFrame;
-                const excludeIds = dragGhost.selectedTrackIds || [
-                  dragGhost.trackId,
-                ];
-
-                // Check for collision at drop position
-                const wouldCollide = hasCollision(
-                  dragGhost.targetFrame,
-                  dragGhost.targetFrame + duration,
-                  primaryTrack.type,
-                  targetRowParsed.rowIndex,
-                  tracks,
-                  { excludeTrackIds: excludeIds },
-                );
-
-                let finalStartFrame = dragGhost.targetFrame;
-
-                if (wouldCollide) {
-                  // Find nearest available position
-                  finalStartFrame =
-                    findNearestAvailablePositionInRowWithPlayhead(
-                      dragGhost.targetFrame,
-                      duration,
-                      primaryTrack.type,
-                      targetRowParsed.rowIndex,
-                      tracks,
-                      excludeIds,
-                    );
-                }
-
-                // Apply the move
                 moveTrackToRow(
                   dragGhost.trackId,
                   targetRowParsed.rowIndex,
-                  finalStartFrame,
+                  dragGhost.targetFrame,
                 );
               }
             }
@@ -793,6 +758,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
             payload.mediaId,
             targetFrame,
             targetRowIndex ?? 0,
+            true, // positioned drop — land exactly here (overwrite what's under)
           ).catch(console.error);
           return;
         }
@@ -2140,67 +2106,16 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                     // Calculate the offset for each track from the primary track
                     const primaryTrackStartFrame = primaryTrack.startFrame;
 
-                    // Parse target row to validate drop
+                    // Parse target row to validate drop. TIMELINE CONTRACT:
+                    // overlapping an existing clip is a VALID drop (it
+                    // overwrites) — only a type mismatch is invalid.
                     const targetRowParsed = parseRowId(dragGhost.targetRow);
-                    let isValidDrop =
+                    const isValidDrop =
                       targetRowParsed &&
                       targetRowParsed.type === primaryTrack.type;
 
-                    // Resolve primary audio row if needed (linked audio avoids overlap)
-                    let resolvedPrimaryRowId = dragGhost.targetRow;
-                    if (
-                      isValidDrop &&
-                      targetRowParsed &&
-                      primaryTrack.type === 'audio' &&
-                      primaryTrack.isLinked &&
-                      dragGhost.targetFrame !== null
-                    ) {
-                      const duration =
-                        primaryTrack.endFrame - primaryTrack.startFrame;
-                      const proposedStart = dragGhost.targetFrame;
-                      const proposedEnd = proposedStart + duration;
-
-                      const resolvedAudioRowIndex =
-                        findAvailableRowIndexForRange(
-                          proposedStart,
-                          proposedEnd,
-                          'audio',
-                          tracks,
-                          {
-                            preferredRowIndex: targetRowParsed.rowIndex,
-                            excludeTrackIds: dragGhost.selectedTrackIds,
-                          },
-                        );
-
-                      resolvedPrimaryRowId = `audio-${resolvedAudioRowIndex}`;
-                    }
-
-                    // Additionally check for collisions at the drop position
-                    if (isValidDrop && targetRowParsed) {
-                      const duration =
-                        primaryTrack.endFrame - primaryTrack.startFrame;
-                      const proposedStart = dragGhost.targetFrame;
-                      const proposedEnd = proposedStart + duration;
-
-                      // Check if dropping here would cause a collision
-                      const wouldCollide = hasCollision(
-                        proposedStart,
-                        proposedEnd,
-                        primaryTrack.type,
-                        targetRowParsed.rowIndex,
-                        tracks,
-                        { excludeTrackIds: dragGhost.selectedTrackIds },
-                      );
-
-                      if (
-                        wouldCollide &&
-                        !(
-                          primaryTrack.type === 'audio' && primaryTrack.isLinked
-                        )
-                      ) {
-                        isValidDrop = false;
-                      }
-                    }
+                    // The primary lands exactly on the targeted lane.
+                    const resolvedPrimaryRowId = dragGhost.targetRow;
                     // Get current scroll position for viewport clipping
                     const currentScrollY = tracksRef.current?.scrollTop || 0;
                     const viewportHeight = tracksRef.current?.clientHeight || 0;
@@ -2224,35 +2139,8 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                               ? resolvedPrimaryRowId
                               : getTrackRowId(track);
 
-                          if (targetRowParsed) {
-                            const isLinkedPartner =
-                              primaryTrack.isLinked &&
-                              primaryTrack.linkedTrackId === track.id;
-
-                            if (isLinkedPartner && track.type === 'audio') {
-                              const resolvedAudioRowIndex =
-                                findAvailableRowIndexForRange(
-                                  targetStartFrame,
-                                  targetEndFrame,
-                                  'audio',
-                                  tracks,
-                                  {
-                                    preferredRowIndex: targetRowParsed.rowIndex,
-                                    excludeTrackIds: dragGhost.selectedTrackIds,
-                                  },
-                                );
-
-                              trackTargetRow = `audio-${resolvedAudioRowIndex}`;
-                            } else if (
-                              isLinkedPartner &&
-                              track.type === 'video' &&
-                              primaryTrack.type === 'audio'
-                            ) {
-                              trackTargetRow = `video-${Math.round(
-                                targetRowParsed.rowIndex,
-                              )}`;
-                            }
-                          }
+                          // Linked partners keep their OWN lane (they move in
+                          // time only) — matches moveTrackToRow's commit.
 
                           return (
                             <DropZoneIndicator

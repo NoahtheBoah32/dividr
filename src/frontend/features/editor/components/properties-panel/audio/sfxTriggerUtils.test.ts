@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseAsteriskTriggers,
+  parseSfxAliasFile,
   resolveSfxName,
   isValidSfxWord,
   normalizeSfxKey,
@@ -144,5 +145,70 @@ describe('sfx asterisk trigger — op building (every SFX places correctly)', ()
     expect(sfxOpForWord('whoosh', 60, fps, LIB)!.file).toBe('whoosh_transition.mp3');
     expect(sfxOpForWord('slide', 60, fps, LIB)!.file).toBe('swoosh_in.mp3');
     expect(sfxOpForWord('ding', 60, fps, LIB)!.file).toBe('ding_notification.mp3');
+  });
+});
+
+describe('user aliases.txt — parsing', () => {
+  it('parses word = target lines, both separators, comments, and blanks', () => {
+    const parsed = parseSfxAliasFile(
+      [
+        '# my custom sounds',
+        '// also a comment',
+        '',
+        'bark = dog_barking',
+        'Air Horn : airhorn_blast.mp3',
+        'cha-ching=cash_register',
+        'nonsense line without separator',
+        '  = missing key',
+      ].join('\n'),
+    );
+    expect(parsed).toEqual({
+      bark: 'dog_barking',
+      airhorn: 'airhorn_blast.mp3',
+      chaching: 'cash_register',
+    });
+  });
+
+  it('normalizes keys so any spelling of the alias matches', () => {
+    const parsed = parseSfxAliasFile('Dog Bark = dog_barking');
+    expect(parsed['dogbark']).toBe('dog_barking');
+  });
+});
+
+describe('user aliases.txt — resolution ordering', () => {
+  const LIB2 = [...LIB, 'dog_barking.mp3'];
+  const ALIASES = {
+    bark: 'dog_barking',
+    doggo: 'dog_barking.mp3', // full filename target works too
+    boom: 'vine_boom', // user override of a word token matching would win
+    whooshtransition: 'explosion', // can NOT beat an exact filename match
+    ghost: 'not_a_real_file', // target missing from the library → no trigger
+  };
+
+  it('an alias resolves through stem or full-filename targets', () => {
+    expect(resolveSfxName('bark', LIB2, ALIASES)).toBe('dog_barking.mp3');
+    expect(resolveSfxName('doggo', LIB2, ALIASES)).toBe('dog_barking.mp3');
+    expect(resolveSfxName('Dog-Go', LIB2, { dICMissing: 'x', doggo: 'dog_barking' })).toBe(
+      'dog_barking.mp3',
+    );
+  });
+
+  it('user alias OUTRANKS token matching but NOT an exact filename', () => {
+    // without aliases, *boom* token-matches boom_impact; the user remapped it
+    expect(resolveSfxName('boom', LIB2)).toBe('boom_impact.mp3');
+    expect(resolveSfxName('boom', LIB2, ALIASES)).toBe('vine_boom.mp3');
+    // an exact stem match always wins, even if an alias tries to redirect it
+    expect(resolveSfxName('whoosh_transition', LIB2, ALIASES)).toBe('whoosh_transition.mp3');
+  });
+
+  it('an alias pointing at a file that is not in the library does not trigger', () => {
+    expect(resolveSfxName('ghost', LIB2, ALIASES)).toBeNull();
+    expect(isValidSfxWord('ghost', LIB2, ALIASES)).toBe(false);
+  });
+
+  it('sfxOpForWord threads aliases through', () => {
+    const op = sfxOpForWord('bark', 90, 30, LIB2, ALIASES);
+    expect(op!.file).toBe('dog_barking.mp3');
+    expect(op!.trackName).toBe('dog_barking');
   });
 });

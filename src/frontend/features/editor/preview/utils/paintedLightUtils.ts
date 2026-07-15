@@ -19,6 +19,12 @@ export interface LightSource {
   color: [number, number, number];
   /** 0..1 — how strongly directional the estimate is (off-centre highlight = higher). */
   confidence: number;
+  /**
+   * Where the brightest blob actually sits in the frame (normalized 0..1) — the lamp,
+   * the window, the practical. Detection places the ring HERE instead of on a fixed
+   * circle around centre, so it lands on the visible source.
+   */
+  centroid?: [number, number];
 }
 
 export interface PaintedLight {
@@ -75,6 +81,17 @@ export function estimateLight(data: Uint8ClampedArray, width: number, height: nu
   const n = width * height;
   if (n === 0 || data.length < 4) return defaultLight();
 
+  // Degenerate frame (black / not yet decoded after a seek): estimating from it would
+  // seed a BLACK light and a nonsense position. Fall back to the neutral default.
+  let quickMax = 0;
+  for (let i = 0; i < n; i += 7) {
+    const o = i * 4;
+    const L = luma(data[o], data[o + 1], data[o + 2]);
+    if (L > quickMax) quickMax = L;
+    if (quickMax >= 16) break;
+  }
+  if (quickMax < 16) return defaultLight();
+
   // Shades-of-Gray illuminant (Minkowski p=6) — robust generalization of gray-world.
   const P = 6;
   let sr = 0, sg = 0, sb = 0;
@@ -92,6 +109,10 @@ export function estimateLight(data: Uint8ClampedArray, width: number, height: nu
   }
   const lumaMean = lumaSum / n;
   const hiThresh = lumaMean + (lumaMax - lumaMean) * 0.55; // top of the bright range
+  // A tighter threshold isolates the actual source (the lamp, the window) from merely
+  // bright surfaces (a white shirt); its quadratic-weighted centroid is where the ring lands.
+  const srcThresh = lumaMean + (lumaMax - lumaMean) * 0.82;
+  let scx = 0, scy = 0, swsum = 0;
 
   for (let i = 0; i < n; i += stride) {
     const o = i * 4;
@@ -108,6 +129,12 @@ export function estimateLight(data: Uint8ClampedArray, width: number, height: nu
       cy += y * w;
       wsum += w;
       hr += r; hg += g; hb += b; hcount++;
+      if (L >= srcThresh) {
+        const sw = (L - srcThresh + 1) * (L - srcThresh + 1);
+        scx += x * sw;
+        scy += y * sw;
+        swsum += sw;
+      }
     }
   }
 
@@ -155,7 +182,10 @@ export function estimateLight(data: Uint8ClampedArray, width: number, height: nu
   // Grazing when the highlight is far off-centre; head-on when centred.
   const elevation = clamp(60 - confidence * 40, 15, 60);
 
-  return { dir: [dx, dy], azimuth, elevation, color, confidence };
+  const centroid: [number, number] | undefined =
+    swsum > 0 ? [clamp01(scx / swsum / width), clamp01(scy / swsum / height)] : undefined;
+
+  return { dir: [dx, dy], azimuth, elevation, color, confidence, centroid };
 }
 
 /** A sensible neutral key light from the top-left when nothing can be estimated. */
@@ -212,4 +242,108 @@ let seq = 0;
 export function newLightId(): string {
   seq += 1;
   return `light_${seq}`;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Relight (v2) — the real screen-space relighter that replaces the flat 2D glow.
+ *
+ * Instead of pasting a radial gradient over the frame, the renderer (relightGL.ts)
+ * reconstructs per-pixel surface normals from the image's OWN luminance (a heightfield:
+ * form = large-scale shape, detail = fine micro-relief), then shades them with a light
+ * you drag INSIDE the scene — all in linear light. No subject matte, no isolation: the
+ * whole environment is lit consistently, which is what keeps it from looking flat.
+ * These are the params behind the sliders; the config lives per-clip on `track.relight`.
+ * ──────────────────────────────────────────────────────────────────────────── */
+export interface RelightConfig {
+  /** Master switch — the relighter passes the frame straight through when false. */
+  enabled: boolean;
+  /** Light position in normalized frame space, 0..1 (y down, DOM convention). */
+  pos: [number, number];
+  /** Light height above the image plane, ~0.15 (grazing) .. 1.5 (head-on). */
+  height: number;
+  /** Light color, 0..255 RGB (brightness is carried by `intensity`, not the color). */
+  color: [number, number, number];
+  /** Brightness of the added light, 0..2.5. 0 = adds nothing (original untouched). */
+  intensity: number;
+  /**
+   * Scene-wide ambient lift ADDED on top of the original, 0..1.
+   * 0 = the original video exactly; 1 = strong whole-scene boost in the light's color.
+   * (The engine is additive-only — the base footage is never darkened or re-keyed.)
+   */
+  ambient: number;
+  /** Half-Lambert softness — 0 = hard terminator, 1 = soft wrap-around, 0..1. */
+  wrap: number;
+  /** Large-scale shape sculpting from the luminance heightfield, 0..3. */
+  form: number;
+  /** Fine surface micro-relief (texture, skin, fabric), 0..3. */
+  detail: number;
+  /** Specular sheen — the clean highlight, 0..1.5. */
+  sheen: number;
+  /** Rim / edge backlight, 0..1.5. */
+  rim: number;
+  /** Soft room spill around the light — sells it as being in the scene, 0..1.5. */
+  spill: number;
+  /** Negative fill — deepen the side facing away from the light, 0..1. */
+  neg: number;
+  /** How far the light reaches across the frame, 0.2..2. */
+  radius: number;
+  /** Legacy field — the additive engine has one look; kept so stored projects load. */
+  mode: 'shape' | 'faux';
+}
+
+/**
+ * The default relight starts at BASE: intensity 0, ambient 0, negative fill 0 —
+ * enabling the tool (or detecting the light) changes NOTHING until a slider is raised.
+ * Zero = the original video; raising Intensity/Ambient only ever ADDS light.
+ */
+export function defaultRelight(): RelightConfig {
+  return {
+    enabled: true,
+    pos: [0.5, 0.42],
+    height: 0.55,
+    color: [255, 224, 170],
+    intensity: 0,
+    ambient: 0,
+    wrap: 0.5,
+    form: 0.45,
+    detail: 1.0,
+    sheen: 0.35,
+    rim: 0.4,
+    spill: 0.4,
+    neg: 0,
+    radius: 0.95,
+    mode: 'shape',
+  };
+}
+
+/**
+ * Seed a relight from a detected LightSource: take its colour and land the ring ON the
+ * detected source (the bright blob's centroid) when we have one; otherwise fall back to
+ * the bright side of frame. Starts at base (adds nothing) — detection only detects.
+ */
+export function relightFromSource(src: LightSource): RelightConfig {
+  return {
+    ...defaultRelight(),
+    pos: src.centroid ?? [clamp01(0.5 + src.dir[0] * 0.42), clamp01(0.5 + src.dir[1] * 0.42)],
+    color: src.color,
+  };
+}
+
+/**
+ * Back-compat: turn a track's legacy `paintedLights` (+ optional `lightSource`) into a
+ * RelightConfig, so projects saved before the relighter still light — through the new
+ * engine — without a migration step. Returns null when there's nothing to convert.
+ */
+export function relightFromLegacy(
+  paintedLights: Pick<PaintedLight, 'pos' | 'color' | 'intensity'>[] | undefined,
+  lightSource?: LightSource,
+): RelightConfig | null {
+  const first = paintedLights?.[0];
+  if (!first) return null;
+  return {
+    ...defaultRelight(),
+    pos: first.pos,
+    color: first.color ?? lightSource?.color ?? [255, 224, 170],
+    intensity: clamp(first.intensity ?? 1, 0, 2.5),
+  };
 }

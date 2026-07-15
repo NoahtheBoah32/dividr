@@ -182,3 +182,7 @@ background_*.wav
 
 # Test output
 test-results/
+
+# test run artifacts (screenshots, result dumps)
+tests/edith/*.png
+tests/edith/*-results.json

@@ -2,7 +2,7 @@ import { ClosedCaption, Image, Music, Type, Video } from 'lucide-react';
 import React from 'react';
 import { VideoTrack } from '../../stores/videoEditor/types';
 import { buildInteractionRowBounds } from './rowFiltering';
-import { getRowHeight } from './timelineConstants';
+import { getRowHeight, MAX_PLACEHOLDER_ROWS } from './timelineConstants';
 
 export interface TrackRowDefinition {
   id: string;
@@ -599,90 +599,58 @@ export function normalizeRowIndices(tracks: VideoTrack[]): VideoTrack[] {
  * @returns Tracks with normalized integer row indices
  */
 export function normalizeAfterDrop(tracks: VideoTrack[]): VideoTrack[] {
-  console.log(
-    `🔄 NORMALIZE: Before -`,
-    tracks.map((t) => `${t.type}-${t.trackRowIndex}`).join(', '),
-  );
+  // TIMELINE CONTRACT: integer lane indices are STABLE — a drop never renumbers
+  // lanes the user didn't touch. The old behavior compacted every group to
+  // 0,1,2,… after each drop, which silently reshuffled other clips' lanes
+  // ("post-drop lane renumbering"). Now only FRACTIONAL indices (deliberate
+  // between-lane inserts from drag) are resolved: the inserted lane becomes the
+  // next integer up, and only lanes ABOVE the insertion point shift by one.
+  const remapGroup = (group: VideoTrack[]): Map<number, number> => {
+    const uniq = [...new Set(group.map((t) => t.trackRowIndex ?? 0))].sort(
+      (a, b) => a - b,
+    );
+    const map = new Map<number, number>();
+    let offset = 0;
+    for (const v of uniq) {
+      if (Number.isInteger(v)) {
+        map.set(v, Math.max(0, v + offset));
+      } else {
+        map.set(v, Math.max(0, Math.floor(v) + 1 + offset));
+        offset += 1;
+      }
+    }
+    return map;
+  };
 
-  // Separate tracks into non-audio and audio groups
   const nonAudioTracks = tracks.filter(
     (t) => !AUDIO_GROUP_TYPES.includes(t.type),
   );
   const audioTracks = tracks.filter((t) => AUDIO_GROUP_TYPES.includes(t.type));
 
-  // ========================================
-  // NORMALIZE NON-AUDIO TRACKS
-  // ========================================
+  const hasFractional = (group: VideoTrack[]) =>
+    group.some((t) => !Number.isInteger(t.trackRowIndex ?? 0));
 
-  // Collect all unique indices (including fractional)
-  const nonAudioIndices = nonAudioTracks.map((t) => t.trackRowIndex ?? 0);
-  const uniqueIndices = [...new Set(nonAudioIndices)].sort((a, b) => a - b);
+  const normalizedNonAudio = hasFractional(nonAudioTracks)
+    ? (() => {
+        const map = remapGroup(nonAudioTracks);
+        return nonAudioTracks.map((t) => ({
+          ...t,
+          trackRowIndex: map.get(t.trackRowIndex ?? 0) ?? 0,
+        }));
+      })()
+    : nonAudioTracks;
 
-  // Create mapping: sorted position → new sequential index
-  // This preserves relative order while making indices sequential
-  const indexMapping = new Map<number, number>();
-  uniqueIndices.forEach((oldIndex, position) => {
-    indexMapping.set(oldIndex, position);
-  });
+  const normalizedAudio = hasFractional(audioTracks)
+    ? (() => {
+        const map = remapGroup(audioTracks);
+        return audioTracks.map((t) => ({
+          ...t,
+          trackRowIndex: map.get(t.trackRowIndex ?? 0) ?? 0,
+        }));
+      })()
+    : audioTracks;
 
-  console.log(`   Unique indices: [${uniqueIndices.join(', ')}]`);
-  console.log(
-    `   Index mapping:`,
-    Array.from(indexMapping.entries())
-      .map(([old, newIdx]) => `${old}→${newIdx}`)
-      .join(', '),
-  );
-
-  // Apply mapping to non-audio tracks
-  const normalizedNonAudio = nonAudioTracks.map((track) => {
-    const oldIndex = track.trackRowIndex ?? 0;
-    let newIndex = indexMapping.get(oldIndex) ?? 0;
-
-    // CRITICAL: Ensure base video track stays at index 0
-    // If video-0 got displaced, we need to adjust
-    if (track.type === 'video' && oldIndex === 0) {
-      // Check if index 0 is still available
-      const indexZeroMapping = indexMapping.get(0);
-      if (indexZeroMapping !== undefined) {
-        newIndex = indexZeroMapping;
-      }
-    }
-
-    console.log(`   ${track.type}: ${oldIndex} → ${newIndex}`);
-    return { ...track, trackRowIndex: newIndex };
-  });
-
-  // ========================================
-  // NORMALIZE AUDIO TRACKS (same logic)
-  // ========================================
-
-  const audioIndices = audioTracks.map((t) => t.trackRowIndex ?? 0);
-  const uniqueAudioIndices = [...new Set(audioIndices)].sort((a, b) => a - b);
-
-  const audioIndexMapping = new Map<number, number>();
-  uniqueAudioIndices.forEach((oldIndex, position) => {
-    audioIndexMapping.set(oldIndex, position);
-  });
-
-  const normalizedAudio = audioTracks.map((track) => {
-    const oldIndex = track.trackRowIndex ?? 0;
-    const newIndex = audioIndexMapping.get(oldIndex) ?? 0;
-
-    // Ensure base audio track stays at index 0
-    if (track.type === 'audio' && oldIndex === 0) {
-      return { ...track, trackRowIndex: audioIndexMapping.get(0) ?? 0 };
-    }
-
-    return { ...track, trackRowIndex: newIndex };
-  });
-
-  const result = [...normalizedNonAudio, ...normalizedAudio];
-  console.log(
-    `🔄 NORMALIZE: After -`,
-    result.map((t) => `${t.type}-${t.trackRowIndex}`).join(', '),
-  );
-
-  return result;
+  return [...normalizedNonAudio, ...normalizedAudio];
 }
 
 /**
@@ -1284,7 +1252,9 @@ export function getTracksByVisualOrder(tracks: VideoTrack[]): VideoTrack[] {
  */
 export function calculatePlaceholderRows(
   dynamicRows: TrackRowDefinition[],
-  maxPlaceholderRows = 3,
+  // Default MUST match the rendered layout (timelineTracks.tsx) — a mismatch
+  // shifts every interaction row bound by whole rows.
+  maxPlaceholderRows = MAX_PLACEHOLDER_ROWS,
 ): {
   placeholderRowsAbove: number;
   placeholderRowsBelow: number;

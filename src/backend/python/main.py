@@ -136,6 +136,24 @@ def main():
                     help='Slow the COMPLEMENT of the region (keep the drawn subject real-time)')
 
     # =========================================================================
+    # Rack-focus subcommand — depth-plane focus pull (near↔far)
+    # =========================================================================
+    rf = subparsers.add_parser('rack-focus', help='Rack focus — focus travels between depth planes')
+    rf.add_argument('--input',     required=True)
+    rf.add_argument('--output',    required=True)
+    rf.add_argument('--start',     type=float, required=True, help='Region start (seconds)')
+    rf.add_argument('--end',       type=float, required=True, help='Region end (seconds)')
+    rf.add_argument('--direction', type=str, default='near-to-far',
+                    choices=['near-to-far', 'far-to-near'])
+    rf.add_argument('--strength',  type=float, default=70.0, help='Max defocus blur 10..100')
+    rf.add_argument('--hold',      type=float, default=0.35,
+                    help='Seconds to hold focus at each end before/after the pull')
+    rf.add_argument('--from-subject', type=str, default='', dest='from_subject',
+                    help='Subject initially in focus (natural description, vision-located)')
+    rf.add_argument('--to-subject',   type=str, default='', dest='to_subject',
+                    help='Subject focus travels to (natural description, vision-located)')
+
+    # =========================================================================
     # Voice-separate subcommand — true 2-stem split (voice + background)
     # =========================================================================
     vs = subparsers.add_parser('voice-separate', help='Separate voice and background stems')
@@ -179,15 +197,15 @@ def main():
     )
     transcribe_parser.add_argument(
         "--device",
-        choices=["cpu", "cuda"],
-        default="cpu",
-        help="Device to use (default: cpu)"
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Device to use (default: auto — GPU first, CPU fallback)"
     )
     transcribe_parser.add_argument(
         "--compute-type",
-        choices=["int8", "int16", "float16", "float32"],
-        default="int8",
-        help="Compute type (default: int8)"
+        choices=["auto", "int8", "int16", "float16", "float32"],
+        default="auto",
+        help="Compute type (default: auto — float16 on GPU, int8 on CPU)"
     )
     transcribe_parser.add_argument(
         "--beam-size",
@@ -305,6 +323,10 @@ def main():
         elif args.command == "regional-speed":
             from scripts import regional_speed
             regional_speed.handle_args(args)
+
+        elif args.command == "rack-focus":
+            from scripts import rack_focus
+            rack_focus.handle_args(args)
 
         elif args.command == "organize-media":
             from scripts import organize_media

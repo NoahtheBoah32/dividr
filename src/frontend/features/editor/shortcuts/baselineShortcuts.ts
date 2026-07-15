@@ -83,6 +83,27 @@ export const baselineShortcuts: BaselineShortcut[] = [
     scope: 'global',
     keys: ['space'],
   },
+  {
+    id: 'playback-shuttle-reverse',
+    action: 'Shuttle Backward (tap again: 2x, 4x)',
+    category: 'Playback',
+    scope: 'global',
+    keys: ['j'],
+  },
+  {
+    id: 'playback-shuttle-stop',
+    action: 'Shuttle Stop',
+    category: 'Playback',
+    scope: 'global',
+    keys: ['k'],
+  },
+  {
+    id: 'playback-shuttle-forward',
+    action: 'Shuttle Forward (tap again: 2x, 4x)',
+    category: 'Playback',
+    scope: 'global',
+    keys: ['l'],
+  },
 
   // Navigation
   {
@@ -126,6 +147,20 @@ export const baselineShortcuts: BaselineShortcut[] = [
     category: 'Navigation',
     scope: 'global',
     keys: ['up'],
+  },
+  {
+    id: 'timeline-set-in-point',
+    action: 'Set In Point at Playhead',
+    category: 'Navigation',
+    scope: 'global',
+    keys: ['i'],
+  },
+  {
+    id: 'timeline-set-out-point',
+    action: 'Set Out Point at Playhead',
+    category: 'Navigation',
+    scope: 'global',
+    keys: ['o'],
   },
 
   // Preview (global)
@@ -183,11 +218,12 @@ export const baselineShortcuts: BaselineShortcut[] = [
     keys: ['c'],
   },
   {
+    // Bare 'k' now belongs to the J/K/L shuttle (K = stop).
     id: 'timeline-split-playhead-k',
     action: 'Split at Playhead',
     category: 'Timeline Tools',
     scope: 'timeline',
-    keys: ['k'],
+    keys: ['ctrl+k'],
   },
   {
     id: 'timeline-exit-split-mode',
@@ -208,11 +244,13 @@ export const baselineShortcuts: BaselineShortcut[] = [
 
   // Track Editing
   {
+    // Bare 'k' moved to the J/K/L shuttle; slice keeps CapCut (ctrl+b)
+    // and Premiere (ctrl+k) bindings.
     id: 'track-slice-playhead',
     action: 'Slice at Playhead',
     category: 'Track Editing',
     scope: 'track',
-    keys: ['ctrl+b', 'cmd+b', 'k', 'ctrl+k', 'cmd+k'],
+    keys: ['ctrl+b', 'cmd+b', 'ctrl+k', 'cmd+k'],
   },
   {
     id: 'track-duplicate',

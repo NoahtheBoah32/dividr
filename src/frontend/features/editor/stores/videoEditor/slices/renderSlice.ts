@@ -2,8 +2,24 @@
 import { StateCreator } from 'zustand';
 import { RenderState } from '../types/render.types';
 
+/**
+ * Session export settings, set by the user or EDITH's `exportSettings` op.
+ * `preset` names a social bundle (resolution class/fps/codec/crf); the
+ * explicit fields override the preset. All optional — absent = pipeline
+ * defaults (timeline fps, libx264, CRF 28).
+ */
+export interface ExportSettingsState {
+  preset?: string | null;
+  videoCodec?: 'h264' | 'hevc' | null;
+  crf?: number | null;
+  fps?: number | null;
+}
+
 export interface RenderSlice {
   render: RenderState;
+  exportSettings: ExportSettingsState;
+  /** Merge a patch into export settings; pass null to reset everything */
+  setExportSettings: (patch: Partial<ExportSettingsState> | null) => void;
   startRender: (job: {
     outputPath: string;
     format: string;
@@ -31,6 +47,13 @@ export const createRenderSlice: StateCreator<
     currentTime: undefined,
     currentJob: undefined,
   },
+
+  exportSettings: {},
+
+  setExportSettings: (patch) =>
+    set((state: any) => ({
+      exportSettings: patch === null ? {} : { ...state.exportSettings, ...patch },
+    })),
 
   startRender: (job) =>
     set((state: any) => ({
