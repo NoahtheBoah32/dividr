@@ -25,9 +25,6 @@ interface TrackContextMenuProps {
 
 export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
   ({ track, children }) => {
-    const currentFrame = useVideoEditorStore(
-      (state) => state.timeline.currentFrame,
-    );
     const isSelected = useVideoEditorStore((state) =>
       state.timeline.selectedTrackIds.includes(track.id),
     );
@@ -59,12 +56,16 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
 
     const hasMultipleSelected = selectedCount > 1;
 
-    const canSplit = useMemo(
-      () =>
-        currentFrame > track.startFrame &&
-        currentFrame < track.endFrame &&
+    // Derive the boolean INSIDE the selector rather than subscribing to
+    // currentFrame and comparing after. There is one of these menus per clip,
+    // and subscribing to the raw frame re-rendered every one of them on every
+    // playhead tick. The boolean only flips when the playhead crosses this
+    // clip's edges, so playback stops re-rendering the menus entirely.
+    const canSplit = useVideoEditorStore(
+      (state) =>
+        state.timeline.currentFrame > track.startFrame &&
+        state.timeline.currentFrame < track.endFrame &&
         !track.locked,
-      [currentFrame, track.startFrame, track.endFrame, track.locked],
     );
 
     const handleContextMenu = useCallback(
@@ -112,10 +113,15 @@ export const TrackContextMenu: React.FC<TrackContextMenuProps> = memo(
         e.preventDefault();
         e.stopPropagation();
         if (canSplit) {
-          storeActions.splitTrack(track.id, currentFrame);
+          // Read the playhead at click time. It is the live value by
+          // definition, and it keeps this menu out of the per-tick render path.
+          storeActions.splitTrack(
+            track.id,
+            useVideoEditorStore.getState().timeline.currentFrame,
+          );
         }
       },
-      [track.id, currentFrame, canSplit, storeActions],
+      [track.id, canSplit, storeActions],
     );
 
     const handleDeleteTrack = useCallback(

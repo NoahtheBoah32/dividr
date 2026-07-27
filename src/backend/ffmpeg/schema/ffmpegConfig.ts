@@ -27,7 +27,8 @@ export interface TrackInfo {
   duckingPrimary?: boolean; // This track triggers ducking on duckingEnabled tracks
   duckingSpeechIntervals?: { start: number; end: number }[]; // Explicit speech intervals (seconds) — overrides primary-track detection
   voiceIsolationEq?: string; // Precomputed ffmpeg EQ chain (bass/equalizer/treble) baking the voice-isolation separation curve. Empty/undefined = no effect.
-  voiceAgeChain?: string; // Precomputed ffmpeg chain (asetrate/atempo/bass/treble/…) baking the Voice Ager. Empty/undefined = no effect.
+  reverbAmount?: number; // Reverb Processor dial (-50..+50). Baked by a python pre-pass (reverb-process) that substitutes the audio source before ffmpeg runs. Undefined/0 = no effect.
+  stabilizeOffsetsPath?: string; // Stabilization sidecar JSON (per-frame [dx,dy,da] + constant auto-zoom). Baked by a python pre-pass (stabilize --mode bake) that substitutes the video source before ffmpeg runs. Undefined = no effect.
   trackType?: 'video' | 'audio' | 'image' | 'subtitle' | 'text' | 'both'; // Type of the track
   visible?: boolean; // Whether this track's video should be visible (if false, show black)
   gapType?: 'video' | 'audio' | 'both';
@@ -65,6 +66,36 @@ export interface TrackInfo {
    * live preview. Appended verbatim to this clip's video filter chain.
    */
   colorGradeFilter?: string;
+
+  /**
+   * Prebuilt speed-ramp `setpts` expression, generated renderer-side from the
+   * track's speedRamp with the same curve the live preview walks. Applied
+   * BEFORE setsar/concat so the retimed stream still normalises correctly.
+   */
+  speedRampFilter?: string;
+
+  /**
+   * Ken Burns push-in parameters. The BACKEND builds the zoompan chain from
+   * these (it alone knows the final target dimensions/fps); the math must
+   * mirror kenBurnsUtils.kenBurnsWindow exactly: easeInOutSine progress over
+   * the clip, zoom 1→endZoom, centre drifting 0.5→(cx,cy) clamped inside
+   * the frame.
+   */
+  kenBurns?: {
+    /** Scale reached at the end of the clip (1.03–1.5). */
+    endZoom: number;
+    /** Normalized focus centre of the end window. */
+    cx: number;
+    cy: number;
+    /** Timeline frames the move spans (the whole clip). */
+    frames: number;
+  };
+
+  /**
+   * Companion audio filter for the same ramp — either a mute over the ramped
+   * spans or an atempo chain, depending on the clip's audio ride-along setting.
+   */
+  speedRampAudioFilter?: string;
 
   /** PiP frame config — when set on the base layer (layer 0), renders it as a floating frame over B-roll */
   pipFrame?: {

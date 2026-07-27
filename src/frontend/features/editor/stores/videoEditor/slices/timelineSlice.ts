@@ -132,10 +132,20 @@ export const createTimelineSlice: StateCreator<
           ? Math.max(...state.tracks.map((track: any) => track.endFrame))
           : state.timeline.totalFrames;
 
+      const next = Math.max(0, Math.min(frame, effectiveEndFrame));
+
+      // The playback clock calls this from requestAnimationFrame, but the frame
+      // number it passes is floored to the timeline fps. On a 165Hz display
+      // that is ~161 calls a second carrying ~30 distinct values, and handing
+      // back a fresh `timeline` object for the other ~131 re-rendered every
+      // subscriber of `state.timeline` for nothing. Measured, that saturated
+      // the main thread and held the preview canvas to 13-40 repaints a second.
+      if (state.timeline.currentFrame === next) return state;
+
       return {
         timeline: {
           ...state.timeline,
-          currentFrame: Math.max(0, Math.min(frame, effectiveEndFrame)),
+          currentFrame: next,
         },
       };
     }),

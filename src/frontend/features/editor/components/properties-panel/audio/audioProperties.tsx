@@ -34,13 +34,18 @@ import {
 import { useVideoEditorStore } from '../../../stores/videoEditor/index';
 import { DEFAULT_AUDIO_METADATA } from '../../../stores/videoEditor/types/track.types';
 import {
+  clampFadeSeconds,
+  FADE_MAX_SECONDS,
+  FADE_MIN_SECONDS,
+} from '../../../stores/videoEditor/utils/audioFadeUtils';
+import {
   NoiseReductionEngine,
   NoiseReductionEngineModal,
 } from './NoiseReductionEngineModal';
 import { TranscriptEditor } from './TranscriptEditor';
 import { TranscriptHelpIcon } from './TranscriptHelpIcon';
 import { VoiceIsolationCurve } from './VoiceIsolationCurve';
-import { VoiceAgeControl } from './VoiceAgeControl';
+import { ReverbProcessorControl } from './ReverbProcessorControl';
 
 interface AudioPropertiesProps {
   selectedTrackIds: string[];
@@ -74,6 +79,7 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   const updateTrackAudio = useVideoEditorStore(
     (state) => state.updateTrackAudio,
   );
+  const updateTrack = useVideoEditorStore((state) => state.updateTrack);
   const updateTrackDucking = useVideoEditorStore(
     (state) => state.updateTrackDucking,
   );
@@ -267,6 +273,65 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
   const getSliderValue = useCallback((db: number) => {
     return db === -Infinity ? -60 : Math.max(-60, Math.min(12, db));
   }, []);
+
+  // ── Audio fade in/out (linear ramps at the clip edges) ──
+  const fadeInSeconds = selectedTrack.fadeInDuration ?? 0;
+  const fadeOutSeconds = selectedTrack.fadeOutDuration ?? 0;
+  const [fadeInInput, setFadeInInput] = React.useState(
+    fadeInSeconds.toFixed(1),
+  );
+  const [fadeOutInput, setFadeOutInput] = React.useState(
+    fadeOutSeconds.toFixed(1),
+  );
+  React.useEffect(() => {
+    setFadeInInput(fadeInSeconds.toFixed(1));
+  }, [selectedTrack.id, fadeInSeconds]);
+  React.useEffect(() => {
+    setFadeOutInput(fadeOutSeconds.toFixed(1));
+  }, [selectedTrack.id, fadeOutSeconds]);
+
+  const setFade = useCallback(
+    (which: 'in' | 'out', seconds: number) => {
+      const clamped = clampFadeSeconds(seconds);
+      selectedAudioTracks.forEach((t) =>
+        updateTrack(
+          t.id,
+          which === 'in'
+            ? { fadeInDuration: clamped }
+            : { fadeOutDuration: clamped },
+        ),
+      );
+    },
+    [selectedAudioTracks, updateTrack],
+  );
+
+  const commitFadeInput = useCallback(
+    (which: 'in' | 'out') => {
+      const raw = which === 'in' ? fadeInInput : fadeOutInput;
+      const parsed = parseFloat(raw);
+      const clamped = clampFadeSeconds(Number.isNaN(parsed) ? 0 : parsed);
+      beginAudioUpdate();
+      setFade(which, clamped);
+      endAudioUpdate();
+      (which === 'in' ? setFadeInInput : setFadeOutInput)(clamped.toFixed(1));
+    },
+    [fadeInInput, fadeOutInput, setFade, beginAudioUpdate, endAudioUpdate],
+  );
+
+  const handleFadeInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>, which: 'in' | 'out') => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        (e.target as HTMLInputElement).blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        (which === 'in' ? setFadeInInput : setFadeOutInput)(
+          (which === 'in' ? fadeInSeconds : fadeOutSeconds).toFixed(1),
+        );
+      }
+    },
+    [fadeInSeconds, fadeOutSeconds],
+  );
 
   // State for runtime download modal
   const [showRuntimeModal, setShowRuntimeModal] = useState(false);
@@ -662,6 +727,88 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
 
       <Separator />
 
+      {/* Audio Fade — smooth ramps at the clip edges instead of hard cuts */}
+      <div className="space-y-3" data-testid="audio-fade-section">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-semibold text-foreground">Fade</label>
+          {(fadeInSeconds > 0 || fadeOutSeconds > 0) && (
+            <div className="w-2 h-2 bg-green-500 rounded-full" />
+          )}
+        </div>
+
+        {/* Fade in */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-muted-foreground">Fade in</label>
+            <div className="flex items-center gap-1">
+              <Input
+                type="text"
+                data-testid="fade-in-input"
+                value={fadeInInput}
+                onChange={(e) => setFadeInInput(e.target.value)}
+                onBlur={() => commitFadeInput('in')}
+                onKeyDown={(e) => handleFadeInputKeyDown(e, 'in')}
+                className="w-14 h-7 text-xs text-center"
+                disabled={isMultipleSelected}
+              />
+              <span className="text-xs text-muted-foreground">s</span>
+            </div>
+          </div>
+          <Slider
+            data-testid="fade-in-slider"
+            value={[fadeInSeconds]}
+            onValueChange={([v]) => setFade('in', v)}
+            onPointerDown={handleVolumeSliderDragStart}
+            onValueCommit={handleVolumeSliderDragEnd}
+            min={FADE_MIN_SECONDS}
+            max={FADE_MAX_SECONDS}
+            step={0.1}
+            className="w-full"
+            disabled={isMultipleSelected}
+          />
+        </div>
+
+        {/* Fade out */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-muted-foreground">Fade out</label>
+            <div className="flex items-center gap-1">
+              <Input
+                type="text"
+                data-testid="fade-out-input"
+                value={fadeOutInput}
+                onChange={(e) => setFadeOutInput(e.target.value)}
+                onBlur={() => commitFadeInput('out')}
+                onKeyDown={(e) => handleFadeInputKeyDown(e, 'out')}
+                className="w-14 h-7 text-xs text-center"
+                disabled={isMultipleSelected}
+              />
+              <span className="text-xs text-muted-foreground">s</span>
+            </div>
+          </div>
+          <Slider
+            data-testid="fade-out-slider"
+            value={[fadeOutSeconds]}
+            onValueChange={([v]) => setFade('out', v)}
+            onPointerDown={handleVolumeSliderDragStart}
+            onValueCommit={handleVolumeSliderDragEnd}
+            min={FADE_MIN_SECONDS}
+            max={FADE_MAX_SECONDS}
+            step={0.1}
+            className="w-full"
+            disabled={isMultipleSelected}
+          />
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          {fadeInSeconds > 0 || fadeOutSeconds > 0
+            ? `Audio eases ${fadeInSeconds > 0 ? `in over ${fadeInSeconds.toFixed(1)}s` : ''}${fadeInSeconds > 0 && fadeOutSeconds > 0 ? ', ' : ''}${fadeOutSeconds > 0 ? `out over ${fadeOutSeconds.toFixed(1)}s` : ''}`
+            : 'Ease audio in and out instead of cutting hard'}
+        </p>
+      </div>
+
+      <Separator />
+
       {/* Noise Reduction */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -863,15 +1010,15 @@ const AudioPropertiesComponent: React.FC<AudioPropertiesProps> = ({
             <VoiceIsolationCurve track={selectedTrack} />
           </div>
 
-          {/* Voice Age slider — unlocked by EDITH's ageVoice op (Skill 3) */}
+          {/* Reverb Processor — bidirectional: left strips reverb, right adds it */}
           <Separator />
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="text-sm font-semibold text-foreground">
-                Voice Age
+                Reverb Processor
               </label>
             </div>
-            <VoiceAgeControl track={selectedTrack} />
+            <ReverbProcessorControl track={selectedTrack} />
           </div>
         </>
       )}

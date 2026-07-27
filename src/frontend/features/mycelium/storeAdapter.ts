@@ -29,7 +29,6 @@ import {
   LOOK_PRESETS,
   STINGER_CANDIDATES,
 } from './colorLooks';
-import { DEFAULT_AGE_YEARS } from '@/frontend/features/editor/preview/utils/voiceAgeParams';
 import {
   estimateLight,
   defaultLight,
@@ -49,6 +48,7 @@ import {
   matchPhraseInWords,
   wordToTimelineRange,
 } from '@/frontend/features/editor/components/properties-panel/audio/transcriptEditUtils';
+import { rippleDeleteOnce } from '@/frontend/features/editor/components/properties-panel/audio/TranscriptEditor';
 import {
   extractSubtitleSegments,
   generateSRTContent,
@@ -729,6 +729,82 @@ async function applyOp(op: Op): Promise<void> {
       const newName = result.filePath.replace(/\\/g, '/').split('/').pop() ?? track.name;
       store.updateTrack(op.clipId, { source: result.filePath, previewUrl: newPreviewUrl, name: newName });
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Silence removed' } }));
+      break;
+    }
+
+    case 'removeFillers': {
+      // {"type":"removeFillers"} | {"type":"removeFillers","clipName":"interview.mp4"}
+      // Transcript-driven: find every filler token (um/uh/erm/ahh/hmm families) in the
+      // clip's Whisper word timestamps and ripple-delete each word's frame range —
+      // the EXACT deletion the manual transcript editor performs, so the filler
+      // vanishes from the video, the linked audio, and the transcript (struck) at once.
+      const rfvClip = (op as any).clipId
+        ? store.tracks.find((t: any) => t.id === (op as any).clipId)
+        : (op as any).clipName ? findClipByName(store, (op as any).clipName) : findMainVideoTrack(store);
+      if (!rfvClip) throw new Error('removeFillers: target clip not found');
+      if (!rfvClip.source) throw new Error('removeFillers: clip has no source file');
+      const rfvSrc: string = (rfvClip as any).source;
+      const rfvMedia = (store.mediaLibrary as any[] | undefined)?.find(
+        (m: any) => m?.source === rfvSrc || m?.tempFilePath === rfvSrc,
+      );
+      const rfvTranscription = rfvMedia?.cachedKaraokeSubtitles?.transcriptionResult;
+      const rfvWords = flattenWords(rfvTranscription ?? null);
+      if (!rfvWords.length) {
+        throw new Error('removeFillers: this video has no transcript yet — transcribe it first');
+      }
+
+      // Filler families: um/umm/uhm…, uh/uhh…, er/erm, ah/ahh, hm/hmm. Tokens are
+      // matched whole after stripping punctuation, so "Um," matches but "under" never can.
+      const FILLER_RE = /^(u+h*m+|u+h+|e+r+m*|a+h+|h+m+)$/;
+      const extras: string[] = Array.isArray((op as any).extraWords)
+        ? (op as any).extraWords.map((w: any) => String(w).toLowerCase().trim()).filter(Boolean)
+        : [];
+      const isFiller = (text: string) => {
+        const tok = text.toLowerCase().replace(/[^a-z]/g, '');
+        return tok.length > 0 && (FILLER_RE.test(tok) || extras.includes(tok));
+      };
+      const rfvTargets = rfvWords.filter((w) => isFiller(w.text));
+      if (!rfvTargets.length) {
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'No filler words found in the transcript' } }));
+        break;
+      }
+
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `Removing ${rfvTargets.length} filler word${rfvTargets.length === 1 ? '' : 's'}…` },
+      }));
+
+      const rfvType: 'video' | 'audio' = rfvClip.type === 'audio' ? 'audio' : 'video';
+      const rfvFps: number = store.timeline?.fps ?? 30;
+      const liveCoverage = () => coverageClipsForSource(rfvSrc, rfvType);
+      let rfvRemoved = 0;
+      (store as any).beginGroup?.('Remove filler words');
+      try {
+        // Latest-first so earlier words' timeline mapping stays untouched until their turn.
+        const ordered = [...rfvTargets].sort((a, b) => b.start - a.start);
+        for (const w of ordered) {
+          // A word can appear on several coverage clips (duplicated scenes) — clear them all.
+          const cap = liveCoverage().length + 2;
+          let hit = false;
+          for (let i = 0; i < cap; i++) {
+            const range = wordToTimelineRange(w, liveCoverage(), rfvFps);
+            if (!range) break;
+            rippleDeleteOnce(range.fromFrame, range.toFrame, rfvType);
+            hit = true;
+          }
+          if (hit) rfvRemoved++;
+        }
+      } finally {
+        (store as any).endGroup?.();
+      }
+
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: {
+          text: rfvRemoved
+            ? `Removed ${rfvRemoved} filler word${rfvRemoved === 1 ? '' : 's'} — video tightened to match`
+            : 'Filler words were already outside the edited timeline',
+        },
+      }));
       break;
     }
 
@@ -2512,29 +2588,246 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
-    case 'ageVoice': {
-      // V2: {"type":"ageVoice"} | {"type":"ageVoice","years":50}
-      // Non-destructive real-time voice aging (pitch+formant shift + timbre morph).
-      // No bake needed in preview — the ager stage runs live in VoiceIsolationEngine;
-      // export bakes the same params via buildFfmpegAgeChain. Same audio-track
-      // resolution as isolateVoice (the preview ager taps audio elements only).
+    case 'setReverb': {
+      // V2: {"type":"setReverb","amount":-30} | {"type":"setReverb","amount":25,"clipName":"vo.mp3"}
+      // ONE dial: negative strips reverb (live STFT late-reverb suppression),
+      // positive adds genuine convolution reverb (live ConvolverNode, diffuse
+      // IR — never a discrete echo). LIVE like motion blur: this only sets the
+      // track amount; the preview engine hears it immediately and export bakes
+      // the identical DSP via the reverb-process pre-pass. amount 0 = reset.
+      const o = op as any;
+      const amt = Math.max(-50, Math.min(50, Math.round(o.amount ?? 0)));
       const main = findMainVideoTrack(store);
-      const target =
-        (store.tracks as any[]).find(
-          (t: any) => t.type === 'audio' && t.linkedTrackId === main?.id,
-        ) ?? (store.tracks as any[]).find((t: any) => t.type === 'audio');
-      if (!target)
-        throw new Error(
-          'ageVoice: no audio track to age — this clip has no separate audio track on the timeline',
-        );
-
-      const years = Math.max(20, Math.min(90, (op as any).years ?? DEFAULT_AGE_YEARS));
+      let target: any = o.clipName ? findClipByName(store, o.clipName) : null;
+      if (!target) {
+        target =
+          (store.tracks as any[]).find(
+            (t: any) => t.type === 'audio' && t.linkedTrackId === main?.id,
+          ) ?? (store.tracks as any[]).find((t: any) => t.type === 'audio');
+      }
+      if (!target || target.type !== 'audio')
+        throw new Error('setReverb: no audio track found — reverb runs on audio tracks only');
       store.updateTrack(target.id, {
-        voiceAge: { enabled: true, appliedByEdith: true, ageYears: years },
+        reverbProcessor: { ...(target.reverbProcessor ?? {}), amount: amt },
+      } as any);
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: {
+          text: amt === 0
+            ? 'Reverb reset to 0'
+            : amt < 0
+              ? `Stripping reverb live (${amt}) — audible now`
+              : `Adding reverb live (+${amt}) — audible now`,
+        },
+      }));
+      break;
+    }
+
+    case 'setStabilization': {
+      // {"type":"setStabilization"} | {"type":"setStabilization","enabled":false}
+      // | {"type":"setStabilization","clipName":"shaky.mp4"}
+      // Camera-shake compensation. First enable on a source runs a sub-second
+      // motion analysis (phase correlation, local python — no models, no cloud),
+      // then the preview counter-translates every drawn frame IMMEDIATELY and
+      // export bakes the identical offsets. No zoom, no crop, no resize — the
+      // frame rides the smoothed camera path at native resolution. Toggling
+      // after analysis is instant (offsets are cached per source file).
+      const o = op as any;
+      const stClip = o.clipId
+        ? store.tracks.find((t: any) => t.id === o.clipId)
+        : o.clipName ? findClipByName(store, o.clipName) : findMainVideoTrack(store);
+      if (!stClip) throw new Error('setStabilization: target clip not found');
+      if (stClip.type !== 'video' || !stClip.source)
+        throw new Error('setStabilization: stabilization runs on video clips only');
+      const stEnable = o.enabled !== false;
+      const stExisting = (stClip as any).stabilization;
+
+      if (!stEnable) {
+        store.updateTrack(stClip.id, {
+          stabilization: { ...(stExisting ?? {}), enabled: false },
+        } as any);
+        window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Stabilization off' } }));
+        break;
+      }
+
+      // Sidecars from older models (pre-"stab3_" prefix) are stale — fall
+      // through to a fresh analysis instead of reviving them.
+      const stCachedPathValid = stExisting?.offsetsPath &&
+        /stab3_[^\\/]*$/.test(stExisting.offsetsPath);
+      if (stCachedPathValid) {
+        // Analysis cached — flipping the toggle is instant.
+        const { ensureStabilizationLoaded } = await import(
+          '@/frontend/features/editor/preview/services/stabilizationCache'
+        );
+        ensureStabilizationLoaded(stExisting.offsetsPath);
+        store.updateTrack(stClip.id, {
+          stabilization: { ...stExisting, enabled: true, appliedByEdith: true },
+        } as any);
+        window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Stabilization on — live in preview' } }));
+        break;
+      }
+
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Measuring camera motion…' } }));
+      const stResult = await (window.electronAPI as any).invoke('media:stabilizeAnalyze', {
+        filePath: stClip.source,
       });
+      if (!stResult?.success || !stResult.offsetsPath) {
+        throw new Error(stResult?.error ?? 'Stabilization analysis failed');
+      }
+      // Seed the preview cache so the very next drawn frame is compensated.
+      const { setStabilizationOffsets } = await import(
+        '@/frontend/features/editor/preview/services/stabilizationCache'
+      );
+      setStabilizationOffsets(stResult.offsetsPath, stResult.offsets ?? [], stResult.fps ?? 30, stResult.zoom);
+      store.updateTrack(stClip.id, {
+        stabilization: {
+          enabled: true,
+          offsetsPath: stResult.offsetsPath,
+          sourceFps: stResult.fps ?? 30,
+          analyzedAt: Date.now(),
+          shakeBefore: stResult.shakeBefore,
+          shakeAfter: stResult.shakeAfter,
+          appliedByEdith: true,
+        },
+      } as any);
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+      const stPct = stResult.shakeBefore > 0
+        ? Math.round((1 - (stResult.shakeAfter ?? 0) / stResult.shakeBefore) * 100)
+        : 0;
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: stPct > 0 ? `Stabilized — ${stPct}% steadier, live in preview` : 'Stabilization on — live in preview' },
+      }));
+      break;
+    }
+
+    case 'kenBurns': {
+      // {"type":"kenBurns"} | {"type":"kenBurns","zoom":1.25}
+      // | {"type":"kenBurns","x":0.65,"y":0.35} | {"type":"kenBurns","enabled":false}
+      // The classic documentary push-in: a slow, eased zoom toward a focus
+      // point, spanning the whole clip. Non-destructive — an end zoom + focus
+      // centre stored on the track, drawn live by the compositor and baked at
+      // export. Applying it once unlocks the manual toggle in the panel.
+      const o = op as any;
+      const kbClip = o.clipId
+        ? store.tracks.find((t: any) => t.id === o.clipId)
+        : o.clipName
+          ? findClipByName(store, o.clipName)
+          : findMainVideoTrack(store);
+      if (!kbClip) throw new Error('kenBurns: target clip not found');
+      if (kbClip.type !== 'video')
+        throw new Error('kenBurns: the Ken Burns push-in runs on video clips only');
+
+      const kbExisting = (kbClip as any).kenBurns;
+
+      if (o.enabled === false) {
+        if (!kbExisting)
+          throw new Error('kenBurns: this clip has no Ken Burns to turn off');
+        store.updateTrack(kbClip.id, {
+          kenBurns: { ...kbExisting, enabled: false },
+        } as any);
+        window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+        window.dispatchEvent(
+          new CustomEvent('edith:status', { detail: { text: 'Ken Burns off' } }),
+        );
+        break;
+      }
+
+      const { kbClampZoom, KB_DEFAULT_ZOOM } = await import(
+        '@/frontend/features/editor/preview/utils/kenBurnsUtils'
+      );
+      const kbZoom = kbClampZoom(
+        o.zoom !== undefined ? Number(o.zoom) : (kbExisting?.endZoom ?? KB_DEFAULT_ZOOM),
+      );
+      const kbCx = Math.min(1, Math.max(0, Number(o.x ?? kbExisting?.endCenter?.x ?? 0.5)));
+      const kbCy = Math.min(1, Math.max(0, Number(o.y ?? kbExisting?.endCenter?.y ?? 0.5)));
+      store.updateTrack(kbClip.id, {
+        kenBurns: {
+          enabled: true,
+          endZoom: kbZoom,
+          endCenter: { x: kbCx, y: kbCy },
+          appliedByEdith: true,
+        },
+      } as any);
+      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
       window.dispatchEvent(
         new CustomEvent('edith:status', {
-          detail: { text: `Aging the voice to ~${years}…` },
+          detail: {
+            text: `Ken Burns on — slow push to ${Math.round(kbZoom * 100)}% across the clip`,
+          },
+        }),
+      );
+      break;
+    }
+
+    case 'jCut': {
+      // {"type":"jCut"} | {"type":"jCut","seconds":4}
+      // | {"type":"jCut","clipName":"Jesko"} | {"type":"jCut","enabled":false}
+      // Split edit: the incoming clip's audio slides ahead of its picture so
+      // the viewer hears the next scene before seeing it. Pure timeline
+      // surgery on the linked audio pair (see jCutUtils.ts) — previews and
+      // exports with zero engine changes, one undo entry. Applying it once
+      // unlocks the manual toggle + lead box in the panel.
+      const o = op as any;
+      let jcClip = o.clipId
+        ? store.tracks.find((t: any) => t.id === o.clipId)
+        : o.clipName
+          ? findClipByName(store, o.clipName)
+          : undefined;
+      if (!jcClip) {
+        // Default target: the SECOND clip on the main storyline — the J-cut
+        // leads the incoming clip's audio over the one before it.
+        const lane = (store.tracks as any[])
+          .filter((t) => t.type === 'video' && ((t.layer ?? 0) === 0))
+          .sort((a, b) => a.startFrame - b.startFrame);
+        const videos = lane.length >= 2
+          ? lane
+          : (store.tracks as any[])
+              .filter((t) => t.type === 'video')
+              .sort((a, b) => a.startFrame - b.startFrame);
+        if (videos.length < 2)
+          throw new Error(
+            'jCut: needs two clips on the timeline — it leads the second clip’s audio over the first',
+          );
+        jcClip = videos[1];
+      }
+      if (jcClip.type !== 'video')
+        throw new Error('jCut: the J-cut runs on video clips (their linked audio leads)');
+
+      const { setJCut, JCUT_DEFAULT_LEAD } = await import(
+        '@/frontend/features/editor/stores/videoEditor/utils/jCutUtils'
+      );
+
+      if (o.enabled === false) {
+        if (!(jcClip as any).jCut)
+          throw new Error('jCut: this clip has no J-cut to turn off');
+        const off = setJCut(store as any, jcClip.id, { enabled: false });
+        if (!off.ok) throw new Error(`jCut: ${off.error}`);
+        window.dispatchEvent(
+          new CustomEvent('edith:status', {
+            detail: { text: 'J-cut off — picture and sound cut together again' },
+          }),
+        );
+        break;
+      }
+
+      const jcSeconds =
+        o.seconds !== undefined
+          ? Number(o.seconds)
+          : o.leadSeconds !== undefined
+            ? Number(o.leadSeconds)
+            : ((jcClip as any).jCut?.leadSeconds ?? JCUT_DEFAULT_LEAD);
+      const res = setJCut(store as any, jcClip.id, {
+        enabled: true,
+        leadSeconds: jcSeconds,
+        markEdith: true,
+      });
+      if (!res.ok) throw new Error(`jCut: ${res.error}`);
+      window.dispatchEvent(
+        new CustomEvent('edith:status', {
+          detail: {
+            text: `J-cut on — "${jcClip.name}" audio now leads its picture by ${res.appliedSeconds.toFixed(1)}s`,
+          },
         }),
       );
       break;
@@ -2820,62 +3113,141 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
-    case 'selectiveFreeze': {
-      // {"type":"selectiveFreeze","clipName":"footage.mp4","startSeconds":2,"endSeconds":6,"mode":"world-frozen"}
-      // "Hold the world, let one thing move" — motion-key, no background remover. Re-bakes from
-      // the immutable originalSource so re-running never compounds the effect (spine).
-      const sfClip = (op as any).clipId
-        ? store.tracks.find((t: any) => t.id === (op as any).clipId)
-        : (op as any).clipName ? findClipByName(store, (op as any).clipName) : findMainVideoTrack(store);
-      if (!sfClip) throw new Error('selectiveFreeze: target clip not found');
-      if (!sfClip.source) throw new Error('selectiveFreeze: clip has no source file');
-      const sfBase = (sfClip as any).originalSource ?? sfClip.source;
-      const sfMode = ['subject-frozen', 'full', 'world-frozen'].includes((op as any).mode) ? (op as any).mode : 'world-frozen';
-      // Region box: an explicit polygon (lasso), a passthrough box, or a YOLO class.
-      let sfBox = (op as any).box ?? '';
-      if (Array.isArray((op as any).lasso) && (op as any).lasso.length >= 3) sfBox = `lasso:${JSON.stringify((op as any).lasso)}`;
-      else if ((op as any).subject) sfBox = `vision:${(op as any).subject}`;          // open-vocab Claude vision
-      else if ((op as any).subjectClass) sfBox = `vision:${(op as any).subjectClass}`; // back-compat: old class field, now vision too
-      const sfStatus = sfMode === 'subject-frozen'
-        ? 'Freezing the subject, world keeps moving…'
-        : sfMode === 'full' ? 'Freezing the frame…' : 'Freezing the world…';
-      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: sfStatus } }));
-      const sfResult = await (window.electronAPI as any).invoke('media:selectiveFreeze', {
-        filePath: sfBase,
-        startSeconds: (op as any).startSeconds,
-        endSeconds: (op as any).endSeconds,
-        mode: sfMode,
-        freezeAt: (op as any).freezeAt ?? -1,
-        box: sfBox,
-      });
-      if (!sfResult?.success || !sfResult.filePath) {
-        // Clean declines surface as a chat line; they are NOT thrown errors.
-        const reasonMsg: Record<string, string> = {
-          'camera-motion': "This clip's camera is moving, so I can't hold the world steady. Selective freeze needs a locked-off shot.",
-          'subject-absent': 'Cannot run selective freeze. Subject not present.',
-          'no-motion': "That subject isn't moving, so a selective freeze looks the same as a plain freeze.",
-        };
-        const msg = reasonMsg[sfResult?.reason as string];
-        if (msg) {
-          window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: msg } }));
-          break;
-        }
-        throw new Error(sfResult?.error ?? 'Selective freeze failed');
+    case 'speedRamp': {
+      // {"type":"speedRamp","speed":30,"startSeconds":6,"endSeconds":13}
+      // {"type":"speedRamp","enabled":false}
+      // Variable speed over time INSIDE a clip: eases 1x up to the target and
+      // back down again, so the change reads as a move rather than a cut.
+      // Non-destructive — the curve is stored on the track and resolved per
+      // frame by FrameResolver, so nothing is re-encoded and the ramp can be
+      // reshaped or removed with no generation loss. Unlike setSpeed, which
+      // rewrites the source at one constant rate, this NEVER touches the file.
+      // Applying it also unlocks the manual Speed Ramp editor in the Video panel.
+      const sr = op as any;
+      const srClip = sr.clipId
+        ? store.tracks.find((t: any) => t.id === sr.clipId)
+        : sr.clipName
+          ? findClipByName(store, sr.clipName)
+          : findMainVideoTrack(store);
+      if (!srClip) throw new Error('speedRamp: target clip not found');
+      if (srClip.type !== 'video')
+        throw new Error('speedRamp: speed ramps run on video clips only');
+
+      const srFps: number = (store as any).timeline?.fps ?? 30;
+      const srExisting = (srClip as any).speedRamp;
+
+      if (sr.enabled === false) {
+        if (!srExisting) throw new Error('speedRamp: this clip has no ramp to clear');
+        // Restoring the untouched length is what makes "take the ramp off"
+        // actually undo it — leaving the shortened span behind would strand a
+        // gap that the user never asked for.
+        store.updateTrack(srClip.id, {
+          speedRamp: { ...srExisting, enabled: false },
+          endFrame:
+            srClip.startFrame +
+            Math.max(1, Math.round((srExisting.sourceDuration ?? 0) * srFps)),
+        } as any);
+        window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+        window.dispatchEvent(
+          new CustomEvent('edith:status', { detail: { text: 'Speed ramp off' } }),
+        );
+        break;
       }
-      let sfPreview = sfResult.filePath;
-      try {
-        const p = await window.electronAPI.createPreviewUrl(sfResult.filePath);
-        if (p && typeof p === 'object' && (p as any).url) sfPreview = (p as any).url;
-        else if (typeof p === 'string') sfPreview = p;
-      } catch { /* use filePath */ }
-      store.updateTrack(sfClip.id, {
-        source: sfResult.filePath,
-        previewUrl: sfPreview,
-        originalSource: sfBase,
-        selectiveFreeze: { mode: sfMode, start: sfResult.regionStart, end: sfResult.regionEnd, appliedByEdith: true },
+
+      const {
+        makeRegion,
+        clampRegions,
+        buildProfile,
+        formatSpeed,
+        SPEED_MIN,
+        SPEED_MAX,
+        MIN_REGION,
+      } = await import(
+        '@/frontend/features/editor/preview/utils/speedRampCurve'
+      );
+
+      // The source span this clip currently shows. The ramp is authored against
+      // it, so a ramp survives a later trim without silently re-scaling.
+      const srSourceDur =
+        (srExisting?.enabled && srExisting?.sourceDuration) ||
+        (srClip.endFrame - srClip.startFrame) / srFps;
+      if (srSourceDur < MIN_REGION)
+        throw new Error(
+          `speedRamp: this clip is only ${srSourceDur.toFixed(1)}s — too short to ramp`,
+        );
+
+      const srSpeed = Number(sr.speed);
+      if (!Number.isFinite(srSpeed) || srSpeed <= 0)
+        throw new Error('speedRamp: speed must be a positive multiplier (e.g. 30 for 3000%)');
+      if (srSpeed < SPEED_MIN || srSpeed > SPEED_MAX)
+        throw new Error(
+          `speedRamp: ${srSpeed}x is outside the ${SPEED_MIN}x–${SPEED_MAX}x range`,
+        );
+
+      // Default to the middle 60% of the clip so an unqualified "ramp this up"
+      // still lands somewhere sensible with 1x on both sides to ease from.
+      let srA = Number.isFinite(sr.startSeconds)
+        ? Math.max(0, Number(sr.startSeconds))
+        : srSourceDur * 0.2;
+      let srB = Number.isFinite(sr.endSeconds)
+        ? Math.min(srSourceDur, Number(sr.endSeconds))
+        : srSourceDur * 0.8;
+      if (srB - srA < MIN_REGION) {
+        // Grow a too-narrow ask around its own centre rather than rejecting it.
+        const mid = (srA + srB) / 2;
+        srA = Math.max(0, mid - MIN_REGION / 2);
+        srB = Math.min(srSourceDur, srA + MIN_REGION);
+        srA = Math.max(0, srB - MIN_REGION);
+      }
+      if (srB - srA < MIN_REGION)
+        throw new Error('speedRamp: not enough room in this clip for a ramp');
+
+      const srShape = ['smooth', 'whip', 'snap', 'linear'].includes(sr.shape)
+        ? sr.shape
+        : 'smooth';
+
+      // A second ask adds a second ramp rather than replacing the first — the
+      // user asking to ramp another moment means both, not one.
+      const srPrior =
+        srExisting?.enabled && Array.isArray(srExisting.regions)
+          ? srExisting.regions
+          : [];
+      const srRegions = clampRegions(
+        [...srPrior, makeRegion(srA, srB, srSpeed, srShape as any)],
+        srSourceDur,
+      );
+
+      const srProfile = buildProfile(srRegions, srSourceDur);
+      const srOutFrames = Math.max(1, Math.round(srProfile.outDuration * srFps));
+
+      store.updateTrack(srClip.id, {
+        speedRamp: {
+          enabled: true,
+          appliedByEdith: true,
+          regions: srRegions,
+          sourceDuration: srSourceDur,
+          // Both directions need in-betweens, for opposite reasons. Under 1x the
+          // ramp asks for frames the source never shot, and holding them reads
+          // as judder — that wants synthesised frames (optical flow). Over 1x
+          // the frames exist but land far apart, and showing them raw reads as a
+          // strobe — that wants them blended together, which is the motion blur
+          // a fast drone shot is supposed to have.
+          blend:
+            srSpeed < 0.9 ? 'flow' : srSpeed > 1.25 ? 'blend' : 'off',
+          audio: sr.audio !== undefined ? !!sr.audio : (srExisting?.audio ?? false),
+          pitch: srExisting?.pitch ?? true,
+        },
+        endFrame: srClip.startFrame + srOutFrames,
       } as any);
+
       window.dispatchEvent(new CustomEvent('dividr:forceRender'));
-      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Selective freeze applied' } }));
+      window.dispatchEvent(
+        new CustomEvent('edith:status', {
+          detail: {
+            text: `Speed ramp applied — eases to ${formatSpeed(srSpeed)} between ${srA.toFixed(1)}s and ${srB.toFixed(1)}s. Reshape it in Video → Advanced.`,
+          },
+        }),
+      );
       break;
     }
 
@@ -2953,51 +3325,6 @@ async function applyOp(op: Op): Promise<void> {
       } as any);
       window.dispatchEvent(new CustomEvent('dividr:forceRender'));
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Rack focus applied' } }));
-      break;
-    }
-
-    case 'regionalSpeed': {
-      // {"type":"regionalSpeed","clipName":"footage.mp4","startSeconds":0,"endSeconds":5,"speed":0.35,"region":"0,0,0.5,1"}
-      // Speed that lives INSIDE the frame — region-locked, NO subject cut-out. Re-bakes from the
-      // immutable originalSource (spine). invert = slow everything EXCEPT the drawn region.
-      const rsClip = (op as any).clipId
-        ? store.tracks.find((t: any) => t.id === (op as any).clipId)
-        : (op as any).clipName ? findClipByName(store, (op as any).clipName) : findMainVideoTrack(store);
-      if (!rsClip) throw new Error('regionalSpeed: target clip not found');
-      if (!rsClip.source) throw new Error('regionalSpeed: clip has no source file');
-      const rsBase = (rsClip as any).originalSource ?? rsClip.source;
-      const rsSpeed = (op as any).speed ?? 0.5;
-      let rsRegion = (op as any).region ?? '0,0,1,1';
-      if (Array.isArray((op as any).lasso) && (op as any).lasso.length >= 3) rsRegion = `lasso:${JSON.stringify((op as any).lasso)}`;
-      else if ((op as any).subject) rsRegion = `vision:${(op as any).subject}`; // open-vocab Claude vision target
-      const rsInvert = !!(op as any).invert;
-      window.dispatchEvent(new CustomEvent('edith:status', {
-        detail: { text: `Retiming a region to ${rsSpeed < 1 ? `${Math.round(rsSpeed * 100)}%` : `${rsSpeed}x`}…` },
-      }));
-      const rsResult = await (window.electronAPI as any).invoke('media:regionalSpeed', {
-        filePath: rsBase,
-        startSeconds: (op as any).startSeconds,
-        endSeconds: (op as any).endSeconds,
-        speed: rsSpeed,
-        region: rsRegion,
-        feather: (op as any).feather ?? 24,
-        invert: rsInvert,
-      });
-      if (!rsResult?.success || !rsResult.filePath) throw new Error(rsResult?.error ?? 'Regional speed failed');
-      let rsPreview = rsResult.filePath;
-      try {
-        const p = await window.electronAPI.createPreviewUrl(rsResult.filePath);
-        if (p && typeof p === 'object' && (p as any).url) rsPreview = (p as any).url;
-        else if (typeof p === 'string') rsPreview = p;
-      } catch { /* use filePath */ }
-      store.updateTrack(rsClip.id, {
-        source: rsResult.filePath,
-        previewUrl: rsPreview,
-        originalSource: rsBase,
-        regionalSpeed: { speed: rsSpeed, region: rsRegion, start: rsResult.regionStart, end: rsResult.regionEnd, invert: rsInvert, appliedByEdith: true },
-      } as any);
-      window.dispatchEvent(new CustomEvent('dividr:forceRender'));
-      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Region retimed' } }));
       break;
     }
 
@@ -3785,19 +4112,35 @@ async function applyOp(op: Op): Promise<void> {
 
     case 'fadeIn': {
       // V2: {“type”:”fadeIn”,”clipName”:”footage.mp4”,”duration”:3.0}
-      const clip = findClipByName(store, (op as any).clipName);
+      const clip = findClipByName(store, (op as any).clipName) ?? findMainVideoTrack(store);
       if (!clip) throw new Error(`fadeIn: clip “${(op as any).clipName}” not found`);
+      // Fades live on the AUDIO track — a video clip's audible sound is its
+      // linked extracted-audio item, so redirect when EDITH names the video.
+      const fadeTarget =
+        clip.type === 'video' && clip.linkedTrackId
+          ? (store.tracks.find((t: any) => t.id === clip.linkedTrackId) ?? clip)
+          : clip;
       const duration = Math.min((op as any).duration ?? 3.0, 3.0);
-      store.updateTrack(clip.id, { fadeInDuration: duration });
+      store.updateTrack(fadeTarget.id, { fadeInDuration: duration });
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `Fade in ${duration.toFixed(1)}s — "${clip.name}" audio now eases in` },
+      }));
       break;
     }
 
     case 'fadeOut': {
       // V2: {“type”:”fadeOut”,”clipName”:”footage.mp4”,”duration”:3.0}
-      const clip = findClipByName(store, (op as any).clipName);
+      const clip = findClipByName(store, (op as any).clipName) ?? findMainVideoTrack(store);
       if (!clip) throw new Error(`fadeOut: clip “${(op as any).clipName}” not found`);
+      const fadeTarget =
+        clip.type === 'video' && clip.linkedTrackId
+          ? (store.tracks.find((t: any) => t.id === clip.linkedTrackId) ?? clip)
+          : clip;
       const duration = Math.min((op as any).duration ?? 3.0, 3.0);
-      store.updateTrack(clip.id, { fadeOutDuration: duration });
+      store.updateTrack(fadeTarget.id, { fadeOutDuration: duration });
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `Fade out ${duration.toFixed(1)}s — "${clip.name}" audio now eases out` },
+      }));
       break;
     }
 

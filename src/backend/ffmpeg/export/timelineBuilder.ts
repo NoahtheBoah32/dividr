@@ -81,7 +81,22 @@ export function buildSeparateTimelines(
     const layer =
       trackInfo.trackRowIndex ?? trackInfo.layerIndex ?? trackInfo.layer ?? 0;
 
-    if (FILE_EXTENSIONS.VIDEO.test(path)) {
+    // ROUTE BY TRACK TYPE FIRST, extension second. An extracted-audio track
+    // whose extraction hasn't finished (or failed) still points at the source
+    // .mp4 — by extension alone it lands in a VIDEO layer, the audio timeline
+    // comes out empty, `[audio]` is never built, and the `-map [audio]` the
+    // mapper adds unconditionally kills the whole render ("Output with label
+    // 'audio' does not exist"). The renderer always sets trackType; only plain
+    // string inputs fall back to the extension test.
+    const tType = trackInfo.trackType;
+    const isVideoInput =
+      tType === 'video' || (!tType && FILE_EXTENSIONS.VIDEO.test(path));
+    const isImageInput =
+      tType === 'image' || (!tType && FILE_EXTENSIONS.IMAGE.test(path));
+    const isAudioInput =
+      tType === 'audio' || (!tType && FILE_EXTENSIONS.AUDIO.test(path));
+
+    if (isVideoInput) {
       console.log(
         `📹 Adding video input ${originalIndex} to layer ${layer} (trackRowIndex: ${trackInfo.trackRowIndex ?? 'N/A'}): ${path}`,
       );
@@ -93,7 +108,7 @@ export function buildSeparateTimelines(
         return;
       }
       existing.push({ trackInfo, originalIndex });
-    } else if (FILE_EXTENSIONS.IMAGE.test(path)) {
+    } else if (isImageInput) {
       console.log(
         `🖼️ Adding image input ${originalIndex} to layer ${layer} (trackRowIndex: ${trackInfo.trackRowIndex ?? 'N/A'}): ${path} (timeline: ${trackInfo.timelineStartFrame}-${trackInfo.timelineEndFrame})`,
       );
@@ -105,7 +120,7 @@ export function buildSeparateTimelines(
         return;
       }
       existing.push({ trackInfo, originalIndex });
-    } else if (FILE_EXTENSIONS.AUDIO.test(path)) {
+    } else if (isAudioInput) {
       console.log(`🎵 Adding audio input ${originalIndex}: ${path}`);
       audioInputs.push({ trackInfo, originalIndex });
     }

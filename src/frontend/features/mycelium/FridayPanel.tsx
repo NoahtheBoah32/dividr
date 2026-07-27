@@ -473,7 +473,11 @@ export function FridayPanel({ className }: { className?: string }) {
   const seenDownloadThisTurnRef = useRef(false);
   const mediaLibrary = useVideoEditorStore((state) => state.mediaLibrary);
   const tracks = useVideoEditorStore((state) => state.tracks);
-  const timeline = useVideoEditorStore((state) => state.timeline);
+  // NOTE: do not subscribe to state.timeline here. Every field this panel reads
+  // off it (fps, currentFrame, totalFrames) is read through getState() inside
+  // callbacks, so the subscription was dead weight — but currentFrame lives
+  // inside that object, so it re-rendered this whole panel on every playhead
+  // tick during playback and starved the preview canvas.
   // Drag-a-clip-into-the-chat: while a timeline clip is mid-drag the input lights
   // up; releasing over it attaches the clip as a card (thumbnail + time range).
   // The [clip …] token EDITH targets is serialized only when the message sends.
@@ -1581,8 +1585,14 @@ export function FridayPanel({ className }: { className?: string }) {
   }, [mediaLibrary]);
 
   const buildTimelineSnapshot = useCallback((): TimelineSnapshot => {
+    // Read the timeline at CALL time rather than subscribing to it. The
+    // snapshot is built when a message is sent, so live state is the correct
+    // source anyway, and subscribing dragged this panel into every playhead
+    // tick. Matches how `preview` was already read on the next line.
+    const st = useVideoEditorStore.getState() as any;
+    const timeline = st.timeline;
     const fps = timeline?.fps || 30;
-    const { canvasWidth, canvasHeight } = useVideoEditorStore.getState().preview as any;
+    const { canvasWidth, canvasHeight } = st.preview as any;
     return {
       fps,
       currentFrame: timeline?.currentFrame ?? 0,
@@ -1607,7 +1617,7 @@ export function FridayPanel({ className }: { className?: string }) {
         captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
       })),
     };
-  }, [tracks, timeline]);
+  }, [tracks]);
 
   const addAttachment = (file: File) => {
     const isImage = file.type.startsWith('image/');

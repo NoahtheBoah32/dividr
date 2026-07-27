@@ -66,41 +66,6 @@ def main():
                     help='Process every Nth frame (default: 3)')
 
     # =========================================================================
-    # Selective-freeze subcommand — "hold the world, let one thing move"
-    # =========================================================================
-    sf = subparsers.add_parser('selective-freeze', help='Selective freeze (hold the world, one thing moves)')
-    sf.add_argument('--input',     required=True)
-    sf.add_argument('--output',    required=True)
-    sf.add_argument('--start',     type=float, required=True, help='Region start (seconds)')
-    sf.add_argument('--end',       type=float, required=True, help='Region end (seconds)')
-    sf.add_argument('--mode',      type=str, default='world-frozen',
-                    choices=['world-frozen', 'subject-frozen', 'full'])
-    sf.add_argument('--freeze-at', type=float, default=-1.0, dest='freeze_at',
-                    help='Source second to freeze the world at (default: region start)')
-    sf.add_argument('--click',     type=str, default='',
-                    help='Normalized "x,y" (0..1) to select ONE subject (freeze everyone but them)')
-    sf.add_argument('--feather',   type=int, default=3, help='Edge feather radius (px)')
-    sf.add_argument('--no-fill-world', action='store_true', dest='no_fill_world',
-                    help='subject-frozen: skip erasing the live subject from the moving world')
-
-    # =========================================================================
-    # Motion-freeze subcommand — "hold the world" rebuilt as a motion key (no matte)
-    # =========================================================================
-    mfz = subparsers.add_parser('motion-freeze', help='Motion-key selective freeze (no background remover)')
-    mfz.add_argument('--input',     required=True)
-    mfz.add_argument('--output',    required=True)
-    mfz.add_argument('--start',     type=float, required=True, help='Region start (seconds)')
-    mfz.add_argument('--end',       type=float, required=True, help='Region end (seconds)')
-    mfz.add_argument('--mode',      type=str, default='freezeWorld',
-                     choices=['freezeWorld', 'freezeSubject', 'freezeAll'])
-    mfz.add_argument('--freeze-at', type=float, default=-1.0, dest='freeze_at',
-                     help='Source second to hold at (default: region start)')
-    mfz.add_argument('--box',       type=str, default='',
-                     help='Region box: "" | rect:x,y,w,h | lasso:[[x,y],..] | yolo:<class> (normalized)')
-    mfz.add_argument('--hi',        type=float, default=22.0, help='Motion threshold high')
-    mfz.add_argument('--lo',        type=float, default=10.0, help='Motion threshold low')
-
-    # =========================================================================
     # Find-moment subcommand — "CTRL-F for video" (object/visual search)
     # =========================================================================
     fm = subparsers.add_parser('find-moment', help='Find a described moment in a clip (object/visual)')
@@ -121,23 +86,23 @@ def main():
                     help='Name pass only — skip the frame-reference vision pass')
 
     # =========================================================================
-    # Regional-speed subcommand — "speed that lives inside the clip"
-    # =========================================================================
-    rs = subparsers.add_parser('regional-speed', help='Per-region speed inside one frame')
-    rs.add_argument('--input',   required=True)
-    rs.add_argument('--output',  required=True)
-    rs.add_argument('--start',   type=float, required=True, help='Region start (seconds)')
-    rs.add_argument('--end',     type=float, required=True, help='Region end (seconds)')
-    rs.add_argument('--speed',   type=float, default=0.5, help='Speed for the brushed region (e.g. 0.25)')
-    rs.add_argument('--region',  type=str, required=True,
-                    help='Region as "x,y,w,h" | "ellipse:cx,cy,rx,ry" | "lasso:[[x,y],..]" normalized (0..1)')
-    rs.add_argument('--feather', type=int, default=24, help='Region edge feather (px)')
-    rs.add_argument('--invert',  action='store_true',
-                    help='Slow the COMPLEMENT of the region (keep the drawn subject real-time)')
-
-    # =========================================================================
     # Rack-focus subcommand — depth-plane focus pull (near↔far)
     # =========================================================================
+    # Stabilize subcommand — camera-shake compensation (no zoom, no crop)
+    # =========================================================================
+    st = subparsers.add_parser('stabilize', help='Video stabilization: analyze motion / bake offsets / measure shake')
+    st.add_argument('--mode',      dest='stab_mode', required=True, choices=['analyze', 'bake', 'measure'])
+    st.add_argument('--input',     required=True)
+    st.add_argument('--output',    default='', help='analyze: offsets JSON path; bake: output video path')
+    st.add_argument('--offsets',   default='', help='bake: offsets JSON from analyze')
+    st.add_argument('--smoothing', type=float, default=2.0, help='camera-path low-pass window in seconds')
+
+    # =========================================================================
+    rv = subparsers.add_parser('reverb-process', help='Reverb Processor — de-reverb (amount<0) or add convolution reverb (amount>0)')
+    rv.add_argument('--input',  required=True)
+    rv.add_argument('--output', required=True)
+    rv.add_argument('--amount', type=float, required=True, help='-50..+50, 0 = no-op')
+
     rf = subparsers.add_parser('rack-focus', help='Rack focus — focus travels between depth planes')
     rf.add_argument('--input',     required=True)
     rf.add_argument('--output',    required=True)
@@ -308,25 +273,21 @@ def main():
             from scripts import motionanalyze
             motionanalyze.handle_args(args)
 
-        elif args.command == "selective-freeze":
-            from scripts import selective_freeze
-            selective_freeze.handle_args(args)
-
-        elif args.command == "motion-freeze":
-            from scripts import motion_freeze
-            motion_freeze.handle_args(args)
-
         elif args.command == "find-moment":
             from scripts import find_moment
             find_moment.handle_args(args)
 
-        elif args.command == "regional-speed":
-            from scripts import regional_speed
-            regional_speed.handle_args(args)
-
         elif args.command == "rack-focus":
             from scripts import rack_focus
             rack_focus.handle_args(args)
+
+        elif args.command == "stabilize":
+            from scripts import stabilize
+            stabilize.handle_args(args)
+
+        elif args.command == "reverb-process":
+            from scripts import reverb_processor
+            reverb_processor.handle_args(args)
 
         elif args.command == "organize-media":
             from scripts import organize_media

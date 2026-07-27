@@ -118,8 +118,62 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       trackType: VideoTrack['type'];
     } | null>(null);
 
-    // Selectively subscribe to store to prevent unnecessary re-renders
-    const timeline = useVideoEditorStore((state) => state.timeline);
+    // Selectively subscribe to store to prevent unnecessary re-renders.
+    //
+    // `currentFrame` is deliberately NOT part of this object. It lives inside
+    // state.timeline, so subscribing to that object re-rendered this component
+    // — and with it every dialog, modal and context menu the timeline hosts —
+    // on every playhead tick. Measured, that was the single largest cost during
+    // playback and it starved the preview canvas. The two things that actually
+    // need the playhead (the playhead itself and the EDITH veil) subscribe to
+    // it on their own, below; everything else reads it via getState() at the
+    // moment it is needed.
+    const tlScrollX = useVideoEditorStore((state) => state.timeline.scrollX);
+    const tlZoom = useVideoEditorStore((state) => state.timeline.zoom);
+    const tlTotalFrames = useVideoEditorStore(
+      (state) => state.timeline.totalFrames,
+    );
+    const tlSelectedTrackIds = useVideoEditorStore(
+      (state) => state.timeline.selectedTrackIds,
+    );
+    const tlFps = useVideoEditorStore((state) => state.timeline.fps);
+    const tlVisibleTrackRows = useVideoEditorStore(
+      (state) => state.timeline.visibleTrackRows,
+    );
+    const tlPlayheadVisible = useVideoEditorStore(
+      (state) => state.timeline.playheadVisible,
+    );
+    const tlInPoint = useVideoEditorStore((state) => state.timeline.inPoint);
+    const tlOutPoint = useVideoEditorStore((state) => state.timeline.outPoint);
+    const tlIsSplitModeActive = useVideoEditorStore(
+      (state) => state.timeline.isSplitModeActive,
+    );
+    const timeline = useMemo(
+      () => ({
+        scrollX: tlScrollX,
+        zoom: tlZoom,
+        totalFrames: tlTotalFrames,
+        selectedTrackIds: tlSelectedTrackIds,
+        fps: tlFps,
+        visibleTrackRows: tlVisibleTrackRows,
+        playheadVisible: tlPlayheadVisible,
+        inPoint: tlInPoint,
+        outPoint: tlOutPoint,
+        isSplitModeActive: tlIsSplitModeActive,
+      }),
+      [
+        tlScrollX,
+        tlZoom,
+        tlTotalFrames,
+        tlSelectedTrackIds,
+        tlFps,
+        tlVisibleTrackRows,
+        tlPlayheadVisible,
+        tlInPoint,
+        tlOutPoint,
+        tlIsSplitModeActive,
+      ],
+    );
     const tracks = useVideoEditorStore((state) => state.tracks);
     const playback = useVideoEditorStore((state) => state.playback);
     const visibleTrackRows = useVideoEditorStore(
@@ -408,10 +462,17 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       tracks,
     ]);
 
-    // Sync lastFrameUpdateRef with actual currentFrame changes
-    useEffect(() => {
-      lastFrameUpdateRef.current = timeline.currentFrame;
-    }, [timeline.currentFrame]);
+    // Sync lastFrameUpdateRef with actual currentFrame changes.
+    // A store subscription rather than a render dependency: this only writes a
+    // ref, so making the component re-render 30 times a second to do it was
+    // pure cost.
+    useEffect(
+      () =>
+        useVideoEditorStore.subscribe((state) => {
+          lastFrameUpdateRef.current = state.timeline.currentFrame;
+        }),
+      [],
+    );
 
     // Centralized keyboard shortcuts
     const { ConfirmationDialog } = useGlobalShortcuts();
@@ -1148,7 +1209,10 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
       }
 
       const tracksElement = tracksRef.current;
-      const playheadPosition = timeline.currentFrame * frameWidth;
+      // Read the playhead at call time — this runs from a store subscription,
+      // not from a render.
+      const playheadPosition =
+        useVideoEditorStore.getState().timeline.currentFrame * frameWidth;
       const viewportWidth = tracksElement.clientWidth;
       const currentScrollX = tracksElement.scrollLeft;
 
@@ -1175,29 +1239,28 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         tracksElement.scrollLeft = finalScrollX;
         setScrollX(finalScrollX);
       }
-    }, [
-      timeline.currentFrame,
-      frameWidth,
-      playback.isPlaying,
-      autoFollowEnabled,
-      setScrollX,
-    ]);
+    }, [frameWidth, playback.isPlaying, autoFollowEnabled, setScrollX]);
 
-    // Auto-follow effect
+    // Auto-follow effect. Driven by a store subscription on currentFrame rather
+    // than a render dependency, so the playhead can scroll the timeline into
+    // view without re-rendering the timeline on every frame.
     useEffect(() => {
       if (!playback.isPlaying || !autoFollowEnabled) {
         return;
       }
-
-      const throttleTimeout = setTimeout(autoFollowPlayhead, 16);
-
-      return () => clearTimeout(throttleTimeout);
-    }, [
-      timeline.currentFrame,
-      autoFollowPlayhead,
-      playback.isPlaying,
-      autoFollowEnabled,
-    ]);
+      let throttleTimeout: ReturnType<typeof setTimeout> | null = null;
+      let lastFrame = useVideoEditorStore.getState().timeline.currentFrame;
+      const unsubscribe = useVideoEditorStore.subscribe((state) => {
+        if (state.timeline.currentFrame === lastFrame) return;
+        lastFrame = state.timeline.currentFrame;
+        if (throttleTimeout) clearTimeout(throttleTimeout);
+        throttleTimeout = setTimeout(autoFollowPlayhead, 16);
+      });
+      return () => {
+        if (throttleTimeout) clearTimeout(throttleTimeout);
+        unsubscribe();
+      };
+    }, [autoFollowPlayhead, playback.isPlaying, autoFollowEnabled]);
 
     // Re-enable auto-follow when playback starts, but only if not manually scrolling or dragging
     useEffect(() => {
@@ -1968,8 +2031,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                 </div>
 
                 {/* Global Playhead - spans across ruler and tracks */}
-                <TimelinePlayhead
-                  currentFrame={timeline.currentFrame}
+                <LivePlayhead
                   frameWidth={frameWidth}
                   scrollX={timeline.scrollX}
                   visible={timeline.playheadVisible}
@@ -1981,7 +2043,6 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
                 {/* EDITH editing veil — dark overlay right of playhead while EDITH is active */}
                 <EdithVeil
-                  currentFrame={timeline.currentFrame}
                   frameWidth={frameWidth}
                   scrollX={timeline.scrollX}
                 />
@@ -2289,15 +2350,35 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
   // Custom comparison was preventing re-renders when store state changed
 );
 
+/**
+ * TimelinePlayhead, but it reads the playhead out of the store itself.
+ *
+ * Passing currentFrame down as a prop meant the timeline had to re-render to
+ * move the playhead, and the timeline hosts every dialog, modal and context
+ * menu on the page. Subscribing here confines the per-frame render to the one
+ * element that actually moves.
+ */
+const LivePlayhead: React.FC<
+  Omit<React.ComponentProps<typeof TimelinePlayhead>, 'currentFrame'>
+> = (props) => {
+  const currentFrame = useVideoEditorStore(
+    (state) => state.timeline.currentFrame,
+  );
+  return <TimelinePlayhead {...props} currentFrame={currentFrame} />;
+};
+
+// Subscribes to the playhead itself rather than taking it as a prop, so the
+// timeline does not have to re-render to move the veil.
 function EdithVeil({
-  currentFrame,
   frameWidth,
   scrollX,
 }: {
-  currentFrame: number;
   frameWidth: number;
   scrollX: number;
 }) {
+  const currentFrame = useVideoEditorStore(
+    (state) => state.timeline.currentFrame,
+  );
   const isEditing = useEdithEditingStore((s) => s.isEditing);
   const isThinking = useEdithEditingStore((s) => s.isThinking);
   const currentOpLabel = useEdithEditingStore((s) => s.currentOpLabel);

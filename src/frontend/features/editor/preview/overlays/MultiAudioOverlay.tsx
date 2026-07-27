@@ -12,7 +12,6 @@ import { resolveAudioFrameRequests } from '../services/FrameResolver';
 import { NoiseReductionCache } from '../services/NoiseReductionCache';
 import { SeparationCache } from '../services/SeparationCache';
 import { VoiceIsolationEngine } from '../services/VoiceIsolationEngine';
-import { ageToParams, DEFAULT_AGE_YEARS } from '../utils/voiceAgeParams';
 import { USE_FRAME_DRIVEN_PLAYBACK } from './UnifiedOverlayRenderer';
 
 export interface MultiAudioPlayerProps {
@@ -326,6 +325,42 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
     stemAudioElementsRef.current.delete(sourceId);
   }, []);
 
+  // Test/debug probe — the audio elements never touch the DOM (new Audio()),
+  // so e2e tests read what is actually audible through this window hook.
+  // Reports both maps: legacy (per previewUrl) and frame-driven (per sourceId).
+  useEffect(() => {
+    (window as unknown as { __audioElsProbe?: unknown }).__audioElsProbe =
+      () => {
+        const rows: Record<string, unknown>[] = [];
+        audioElementsRef.current.forEach((s) => {
+          rows.push({
+            mode: 'legacy',
+            key: s.previewUrl,
+            trackId: s.trackId,
+            paused: s.element.paused,
+            currentTime: s.element.currentTime,
+            muted: s.element.muted,
+            volume: s.element.volume,
+          });
+        });
+        sourceAudioElementsRef.current.forEach((el, sourceId) => {
+          rows.push({
+            mode: 'source',
+            key: sourceId,
+            paused: el.paused,
+            currentTime: el.currentTime,
+            muted: el.muted,
+            volume: el.volume,
+          });
+        });
+        return rows;
+      };
+    return () => {
+      delete (window as unknown as { __audioElsProbe?: unknown })
+        .__audioElsProbe;
+    };
+  }, []);
+
   // Tolerance for detecting continuous playback (prevents unnecessary seeks)
   const CONTINUITY_TOLERANCE = 0.15; // 150ms - covers frame timing variance
   const PLAYBACK_SYNC_TOLERANCE = 0.3; // 300ms during playback
@@ -573,20 +608,17 @@ export const MultiAudioPlayer: React.FC<MultiAudioPlayerProps> = ({
         );
       }
 
-      // Voice Ager (Skill 3): real-time pitch+formant + timbre morph. Independent of
-      // isolation — shares the same owned element tap. Applied every frame so slider
-      // drags are heard live; transparent (and cheap) once tapped when disabled. Only
-      // taps when actually enabled, so a never-aged clip is never touched.
-      const va = (request.track as any).voiceAge as
-        | { enabled?: boolean; ageYears?: number }
+      // Reverb Processor: live bidirectional reverb (negative strips via the
+      // suppressor worklet, positive adds via a ConvolverNode). Applied every
+      // frame so slider drags are heard IMMEDIATELY — pure parameter changes,
+      // no bake, no reconnect. Only taps when actually non-zero; once the stage
+      // is attached we keep applying (transparent at 0) to avoid reconnect races.
+      const rp = (request.track as any).reverbProcessor as
+        | { amount?: number }
         | undefined;
-      if (va?.enabled || (va && VoiceIsolationEngine.isTapped(sourceId))) {
-        VoiceIsolationEngine.applyAge(
-          sourceId,
-          audio,
-          va?.enabled ? ageToParams(va.ageYears ?? DEFAULT_AGE_YEARS) : null,
-          !!va?.enabled,
-        );
+      const rpAmount = rp?.amount ?? 0;
+      if (rpAmount !== 0 || VoiceIsolationEngine.isReverbAttached(sourceId)) {
+        VoiceIsolationEngine.applyReverb(sourceId, audio, rpAmount, rpAmount !== 0);
       }
 
       const lastState = sourceAudioStateRef.current.get(sourceId);

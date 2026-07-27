@@ -30,22 +30,37 @@ import {
   EQ_BANDS,
 } from '../utils/voiceIsolationCurve';
 import { createRnnoiseNode } from './rnnoiseDenoiser';
-import { createFormantShiftNode, type FormantShiftNode } from './voiceAgerNode';
-import type { AgeParams } from '../utils/voiceAgeParams';
+import {
+  createReverbSuppressorNode,
+  generateReverbIR,
+  reverbAddParams,
+} from './reverbStageNode';
 
 /**
- * Voice Ager (Skill 3) nodes, spliced AFTER makeup: makeup -> input -> [formant]
- * -> body -> tilt -> brilliance -> throat -> comp -> analyser. Transparent (all
- * gains 0, ratio 1) when disabled, so toggling never causes a reconnect race.
+ * Reverb Processor stage, spliced at the very END of the chain (after makeup)
+ * so it hears the fully processed voice:
+ *
+ *   tail -> input -> [suppressor] -> core -> dry ────────────┐
+ *                                    core -> predelay ->      ├-> sum -> analyser
+ *                                    convolver -> wet ────────┘
+ *
+ * amount > 0: wet gain up (genuine convolution with a diffuse synthetic IR).
+ * amount < 0: suppressor strength up (live STFT late-reverb suppression), wet 0.
+ * amount = 0: wet 0 + strength 0 = transparent. All three states are pure
+ * parameter changes — dragging the slider never reconnects anything.
  */
-interface AgerNodes {
+interface ReverbNodes {
   input: GainNode;
-  formant: FormantShiftNode | null;
-  body: BiquadFilterNode;
-  tilt: BiquadFilterNode;
-  brilliance: BiquadFilterNode;
-  throat: BiquadFilterNode;
-  comp: DynamicsCompressorNode;
+  /** After the optional suppressor splice: input -> [suppressor] -> core. */
+  core: GainNode;
+  suppressor: AudioWorkletNode | null;
+  dry: GainNode;
+  predelay: DelayNode;
+  convolver: ConvolverNode;
+  wet: GainNode;
+  sum: GainNode;
+  /** Quantized amount the current IR was generated for (avoid per-frame regen). */
+  irKey: number;
 }
 
 interface SourceGraph {
@@ -70,8 +85,8 @@ interface SourceGraph {
   /** Makeup gain so the voice gets LOUDER, not only quieter. */
   makeup: GainNode;
   analyser: AnalyserNode;
-  /** Optional real-time aging stage, spliced makeup -> [ager] -> analyser. */
-  ager?: AgerNodes;
+  /** Optional real-time reverb stage, spliced at the chain tail. */
+  reverb?: ReverbNodes;
 }
 
 /**
@@ -116,10 +131,10 @@ class VoiceIsolationEngineImpl {
   private lastNodes = new Map<string, CurveNode[]>();
   /** Sources whose real-time RNNoise node is mid-load (avoid double-attaching). */
   private denoiserLoading = new Set<string>();
-  /** Last age params applied per source (null = disabled), so a late formant node catches up. */
-  private lastAge = new Map<string, AgeParams | null>();
-  /** Sources whose formant worklet is mid-load (avoid double-attaching). */
-  private agerLoading = new Set<string>();
+  /** Last reverb amount per source, so a late suppressor worklet catches up. */
+  private lastReverb = new Map<string, number>();
+  /** Sources whose suppressor worklet is mid-load (avoid double-attaching). */
+  private reverbLoading = new Set<string>();
 
   private ensureContext(): AudioContext | null {
     if (this.ctx) return this.ctx;
@@ -637,107 +652,110 @@ class VoiceIsolationEngineImpl {
     return this.graphs.has(sourceId) || this.stemGraphs.has(sourceId);
   }
 
-  // ── Voice Ager (Skill 3) ───────────────────────────────────────────────────
-  // A real-time pitch+formant shift + timbre morph spliced AFTER makeup, so it
-  // warps the FINAL voice. Built lazily and kept connected (transparent when off)
-  // so toggling never causes a reconnect race — the exact denoiser discipline.
+  // -------------------------------------------------------------------------
+  // Reverb Processor (live) — same lazy-splice discipline as the denoiser.
+  // -------------------------------------------------------------------------
 
-  private buildAgerNodes(ctx: AudioContext): AgerNodes {
-    const input = ctx.createGain();
-    const body = ctx.createBiquadFilter();
-    body.type = 'lowshelf'; body.frequency.value = 180; body.gain.value = 0;
-    const tilt = ctx.createBiquadFilter();
-    tilt.type = 'highshelf'; tilt.frequency.value = 6000; tilt.gain.value = 0;
-    const brilliance = ctx.createBiquadFilter();
-    brilliance.type = 'peaking'; brilliance.frequency.value = 8000; brilliance.Q.value = 1; brilliance.gain.value = 0;
-    const throat = ctx.createBiquadFilter();
-    throat.type = 'peaking'; throat.frequency.value = 2200; throat.Q.value = 1.4; throat.gain.value = 0;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = 0; comp.ratio.value = 1; comp.knee.value = 6; comp.attack.value = 0.006; comp.release.value = 0.25;
-    // input -> body -> tilt -> brilliance -> throat -> comp (formant splices before body)
-    input.connect(body);
-    body.connect(tilt);
-    tilt.connect(brilliance);
-    brilliance.connect(throat);
-    throat.connect(comp);
-    return { input, formant: null, body, tilt, brilliance, throat, comp };
-  }
-
-  /** Splice the ager between makeup and analyser (idempotent, never silences). */
-  private attachAger(graph: SourceGraph, ctx: AudioContext): void {
-    if (graph.ager) return;
-    const ager = this.buildAgerNodes(ctx);
+  /** Splice the reverb stage at the tail of the chain (after makeup). */
+  private attachReverb(graph: SourceGraph, ctx: AudioContext): void {
+    if (graph.reverb) return;
     try {
-      graph.makeup.disconnect();          // was makeup -> analyser
-      graph.makeup.connect(ager.input);
-      ager.comp.connect(graph.analyser);  // ... -> comp -> analyser -> destination
-      graph.ager = ager;
+      const input = ctx.createGain();
+      const core = ctx.createGain();
+      const dry = ctx.createGain();
+      dry.gain.value = 1;
+      const predelay = ctx.createDelay(0.12);
+      predelay.delayTime.value = 0.01;
+      const convolver = ctx.createConvolver();
+      // We energy-normalize the IR ourselves so wet loudness tracks the bake.
+      convolver.normalize = false;
+      const wet = ctx.createGain();
+      wet.gain.value = 0;
+      const sum = ctx.createGain();
+
+      input.connect(core); // suppressor splices between input and core later
+      core.connect(dry);
+      dry.connect(sum);
+      core.connect(predelay);
+      predelay.connect(convolver);
+      convolver.connect(wet);
+      wet.connect(sum);
+
+      const tail: AudioNode = graph.makeup;
+      tail.disconnect(); // was makeup -> analyser
+      tail.connect(input);
+      sum.connect(graph.analyser);
+
+      graph.reverb = { input, core, suppressor: null, dry, predelay, convolver, wet, sum, irKey: 0 };
     } catch (e) {
-      try { graph.makeup.disconnect(); graph.makeup.connect(graph.analyser); } catch { /* best effort */ }
-      console.warn('[VoiceAger] attach failed:', e);
+      try {
+        graph.makeup.disconnect();
+        graph.makeup.connect(graph.analyser);
+      } catch { /* best effort */ }
+      console.warn('[ReverbStage] attach failed:', e);
     }
   }
 
-  /** Splice the formant worklet in front of the ager EQ: input -> formant -> body. */
-  private ensureFormant(sourceId: string, ctx: AudioContext): void {
+  /** Splice the de-reverb worklet: input -> suppressor -> core (async load). */
+  private ensureSuppressor(sourceId: string, ctx: AudioContext): void {
     const graph = this.graphs.get(sourceId);
-    if (!graph?.ager || graph.ager.formant || this.agerLoading.has(sourceId)) return;
-    this.agerLoading.add(sourceId);
-    createFormantShiftNode(ctx)
+    if (!graph?.reverb || graph.reverb.suppressor || this.reverbLoading.has(sourceId)) return;
+    this.reverbLoading.add(sourceId);
+    createReverbSuppressorNode(ctx)
       .then((node) => {
-        this.agerLoading.delete(sourceId);
+        this.reverbLoading.delete(sourceId);
         const g = this.graphs.get(sourceId);
-        if (!node || !g?.ager || g.ager.formant) return;
+        if (!node || !g?.reverb || g.reverb.suppressor) return;
         try {
-          g.ager.input.disconnect();
-          g.ager.input.connect(node);
-          node.connect(g.ager.body);
-          g.ager.formant = node;
-          const p = this.lastAge.get(sourceId);
-          if (p) this.setFormantParams(ctx, node, p); // catch the worklet up
+          g.reverb.input.disconnect();
+          g.reverb.input.connect(node);
+          node.connect(g.reverb.core);
+          g.reverb.suppressor = node;
+          // catch the freshly loaded worklet up with the current amount
+          const amt = this.lastReverb.get(sourceId) ?? 0;
+          this.setReverbParams(ctx, g, amt);
         } catch (e) {
-          try { g.ager.input.disconnect(); g.ager.input.connect(g.ager.body); } catch { /* best effort */ }
-          console.warn('[VoiceAger] formant splice failed:', e);
+          console.warn('[ReverbStage] suppressor splice failed:', e);
         }
       })
-      .catch(() => this.agerLoading.delete(sourceId));
+      .catch(() => this.reverbLoading.delete(sourceId));
   }
 
-  private setFormantParams(ctx: AudioContext, node: FormantShiftNode, params: AgeParams | null): void {
-    const now = ctx.currentTime;
-    node.parameters.get('ratio')?.setTargetAtTime(params ? params.shiftRatio : 1, now, 0.03);
-    node.parameters.get('jitter')?.setTargetAtTime(params ? Math.min(0.1, params.jitterPct / 100) : 0, now, 0.05);
-  }
+  /** Apply the slider amount as pure parameter changes (safe every frame). */
+  private setReverbParams(ctx: AudioContext, graph: SourceGraph, amount: number): void {
+    const rev = graph.reverb;
+    if (!rev) return;
+    const t = ctx.currentTime;
+    const strengthParam = rev.suppressor?.parameters.get('strength');
 
-  private setAgerParams(ctx: AudioContext, graph: SourceGraph, params: AgeParams | null): void {
-    const ager = graph.ager;
-    if (!ager) return;
-    const now = ctx.currentTime;
-    const S = 0.03; // click-free while dragging
-    if (!params) {
-      ager.body.gain.setTargetAtTime(0, now, S);
-      ager.tilt.gain.setTargetAtTime(0, now, S);
-      ager.brilliance.gain.setTargetAtTime(0, now, S);
-      ager.throat.gain.setTargetAtTime(0, now, S);
-      ager.comp.threshold.setValueAtTime(0, now);
-      ager.comp.ratio.setValueAtTime(1, now);
+    if (amount > 0) {
+      const p = reverbAddParams(amount);
+      // IR regen only when the quantized room size changes (drag stays smooth:
+      // wet gain + predelay glide continuously, the IR steps in 5-unit buckets).
+      const irKey = Math.max(5, Math.round(amount / 5) * 5);
+      if (rev.irKey !== irKey) {
+        const q = reverbAddParams(irKey);
+        rev.convolver.buffer = generateReverbIR(ctx, q.rt60, q.tilt, 0);
+        rev.irKey = irKey;
+      }
+      rev.wet.gain.setTargetAtTime(p.wetGain, t, 0.03);
+      rev.predelay.delayTime.setTargetAtTime(p.predelayMs / 1000, t, 0.03);
+      strengthParam?.setValueAtTime(0, t);
+    } else if (amount < 0) {
+      rev.wet.gain.setTargetAtTime(0, t, 0.03);
+      strengthParam?.setValueAtTime(Math.min(1, -amount / 50), t);
     } else {
-      ager.body.gain.setTargetAtTime(params.bodyDb, now, S);
-      ager.tilt.gain.setTargetAtTime(params.tiltDb, now, S);
-      ager.brilliance.gain.setTargetAtTime(params.brillianceDb, now, S);
-      ager.throat.gain.setTargetAtTime(params.throatDb, now, S);
-      ager.comp.threshold.setValueAtTime(params.compThresholdDb, now);
-      ager.comp.ratio.setValueAtTime(params.compRatio, now);
+      rev.wet.gain.setTargetAtTime(0, t, 0.03);
+      strengthParam?.setValueAtTime(0, t);
     }
-    if (ager.formant) this.setFormantParams(ctx, ager.formant, params);
   }
 
   /**
-   * Real-time Voice Ager. Ensures the source is tapped + the ager is spliced, then
-   * applies `params` (or transparent when disabled). Idempotent — safe every frame.
-   * Works whether or not voice isolation is on: both share this one owned tap.
+   * Real-time Reverb Processor. Ensures the source is tapped + the stage is
+   * spliced, then applies `amount` (-50..+50, 0 = transparent). Idempotent —
+   * safe every frame. Shares the one owned element tap with isolation.
    */
-  applyAge(sourceId: string, element: HTMLMediaElement, params: AgeParams | null, enabled: boolean): void {
+  applyReverb(sourceId: string, element: HTMLMediaElement, amount: number, enabled: boolean): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
     let graph = this.graphs.get(sourceId);
@@ -748,35 +766,58 @@ class VoiceIsolationEngineImpl {
       this.graphs.set(sourceId, graph);
     }
     this.resume();
-    this.attachAger(graph, ctx);
-    const eff = enabled ? params : null;
-    this.lastAge.set(sourceId, eff);
-    this.setAgerParams(ctx, graph, eff);
-    if (enabled) this.ensureFormant(sourceId, ctx);
+    this.attachReverb(graph, ctx);
+    const eff = enabled ? Math.max(-50, Math.min(50, Math.round(amount))) : 0;
+    this.lastReverb.set(sourceId, eff);
+    this.setReverbParams(ctx, graph, eff);
+    if (eff < 0) this.ensureSuppressor(sourceId, ctx);
   }
 
-  /** Zero-latency drag path — update the ager on an already-tapped source. */
-  updateAge(sourceId: string, params: AgeParams | null, enabled: boolean): void {
-    const eff = enabled ? params : null;
-    this.lastAge.set(sourceId, eff);
-    const ctx = this.ctx;
-    if (!ctx) return;
-    const graph = this.graphs.get(sourceId);
-    if (graph?.ager) this.setAgerParams(ctx, graph, eff);
+  /** True once the reverb stage is spliced for this source. */
+  isReverbAttached(sourceId: string): boolean {
+    return !!this.graphs.get(sourceId)?.reverb;
   }
 
-  /** DEV/test read-back: the live ager params actually on the graph. Null if none. */
-  debugAgerState(
-    sourceId: string,
-  ): { bodyDb: number; tiltDb: number; brillianceDb: number; ratio: number | null } | null {
-    const ager = this.graphs.get(sourceId)?.ager;
-    if (!ager) return null;
+  /** DEV/test read-back: live reverb node state. Null if the stage isn't spliced. */
+  debugReverbState(sourceId: string): {
+    wetGain: number;
+    strength: number | null;
+    suppressorAttached: boolean;
+    irSeconds: number | null;
+    predelayMs: number;
+  } | null {
+    const rev = this.graphs.get(sourceId)?.reverb;
+    if (!rev) return null;
     return {
-      bodyDb: ager.body.gain.value,
-      tiltDb: ager.tilt.gain.value,
-      brillianceDb: ager.brilliance.gain.value,
-      ratio: ager.formant ? ager.formant.parameters.get('ratio')?.value ?? null : null,
+      wetGain: rev.wet.gain.value,
+      strength: rev.suppressor?.parameters.get('strength')?.value ?? null,
+      suppressorAttached: !!rev.suppressor,
+      irSeconds: rev.convolver.buffer ? rev.convolver.buffer.duration : null,
+      predelayMs: rev.predelay.delayTime.value * 1000,
     };
+  }
+
+  /**
+   * DEV/test: record the live graph OUTPUT (post-reverb) for `ms` milliseconds
+   * and return mono PCM. Proves what's audibly reaching the speakers.
+   */
+  async debugCaptureOutput(sourceId: string, ms: number): Promise<Float32Array | null> {
+    const ctx = this.ctx;
+    const graph = this.graphs.get(sourceId);
+    if (!ctx || !graph) return null;
+    const tapFrom = graph.reverb ? graph.reverb.sum : graph.makeup;
+    const dest = ctx.createMediaStreamDestination();
+    tapFrom.connect(dest);
+    const rec = new MediaRecorder(dest.stream);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.start();
+    await new Promise((r) => setTimeout(r, ms));
+    await new Promise<void>((r) => { rec.onstop = () => r(); rec.stop(); });
+    try { tapFrom.disconnect(dest); } catch { /* fine */ }
+    const buf = await new Blob(chunks).arrayBuffer();
+    const decoded = await ctx.decodeAudioData(buf.slice(0));
+    return decoded.getChannelData(0);
   }
 
   /**
@@ -803,21 +844,22 @@ class VoiceIsolationEngineImpl {
       graph.presence.disconnect();
       graph.compressor.disconnect();
       graph.makeup.disconnect();
-      graph.ager?.input.disconnect();
-      graph.ager?.formant?.disconnect();
-      graph.ager?.body.disconnect();
-      graph.ager?.tilt.disconnect();
-      graph.ager?.brilliance.disconnect();
-      graph.ager?.throat.disconnect();
-      graph.ager?.comp.disconnect();
+      graph.reverb?.input.disconnect();
+      graph.reverb?.suppressor?.disconnect();
+      graph.reverb?.core.disconnect();
+      graph.reverb?.dry.disconnect();
+      graph.reverb?.predelay.disconnect();
+      graph.reverb?.convolver.disconnect();
+      graph.reverb?.wet.disconnect();
+      graph.reverb?.sum.disconnect();
       graph.analyser.disconnect();
     } catch {
       /* already gone */
     }
     this.graphs.delete(sourceId);
     this.denoiserLoading.delete(sourceId);
-    this.agerLoading.delete(sourceId);
-    this.lastAge.delete(sourceId);
+    this.lastReverb.delete(sourceId);
+    this.reverbLoading.delete(sourceId);
   }
 }
 

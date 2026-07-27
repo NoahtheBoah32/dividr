@@ -336,18 +336,21 @@ export interface VideoTrack {
     appliedByEdith?: boolean;
   };
   /**
-   * Voice Ager (Skill 3) state for this track. Non-destructive: stored as a single
-   * ageYears dial, applied live in preview via the VoiceIsolationEngine ager stage
-   * (pitch+formant shift + timbre morph) and baked at export via buildFfmpegAgeChain.
-   * Gated: the manual age slider stays locked until EDITH runs `ageVoice` once.
+   * Reverb Processor — one bidirectional dial: negative strips reverb
+   * (spectral late-reverb suppression), positive adds genuine convolution
+   * reverb (diffuse synthetic IR — no discrete echo taps). 0 = untouched.
+   * Processing bakes a wav into app storage and swaps the track source;
+   * originalSource always holds the pristine input so re-processing and
+   * reset never stack effects.
    */
-  voiceAge?: {
-    /** Master on/off for the effect on this track. */
-    enabled: boolean;
-    /** The single user-facing dial, 20..90 (≈30 = neutral). */
-    ageYears: number;
-    /** Set true once EDITH has applied it — unlocks the manual slider. */
-    appliedByEdith?: boolean;
+  reverbProcessor?: {
+    /** The single user-facing dial, -50..+50 (0 = off). */
+    amount: number;
+    /** Pristine pre-reverb source — every (re)process starts from this. */
+    originalSource?: string;
+    /** Blind tail-decay metrics (ms) reported by the last bake. */
+    tailBeforeMs?: number;
+    tailAfterMs?: number;
   };
   /**
    * Light Brush (Skill 4) — the dominant light EDITH detected in this shot (direction
@@ -631,21 +634,96 @@ export interface VideoTrack {
   /** Per-frame pose landmark data from analyzeMotion. [x, y, visibility] per landmark (33 points). */
   poseLandmarks?: Array<{ frame: number; lm: [number, number, number][] }>;
 
-  /** "Hold the world" — motion-key selective freeze. `appliedByEdith` gates the manual panel. */
-  selectiveFreeze?: {
-    mode: 'world-frozen' | 'subject-frozen' | 'full';
-    start: number;
-    end: number;
+  /**
+   * Video stabilization — camera-shake compensation. Offsets live in a sidecar
+   * JSON (offsetsPath) computed once per source; `enabled` toggles the live
+   * preview compensation and the export bake. No zoom, no crop: frames are
+   * counter-translated only, at native resolution.
+   */
+  stabilization?: {
+    enabled: boolean;
+    offsetsPath?: string;    // sidecar JSON: { fps, frames, offsets: [[dx,dy],...] } in source px
+    sourceFps?: number;      // fps the offsets were sampled at
+    analyzedAt?: number;
+    shakeBefore?: number;    // mean inter-frame motion (px) before correction
+    shakeAfter?: number;     // predicted residual after correction
     appliedByEdith?: boolean;
   };
 
-  /** "Speed that lives inside the clip" — per-region time-remap. `appliedByEdith` gates refinement. */
-  regionalSpeed?: {
-    speed: number;
-    region: string;
-    start: number;
-    end: number;
-    invert?: boolean;
+  /**
+   * Speed ramp — variable playback speed over time within this clip.
+   *
+   * Non-destructive: stored as a curve and resolved per frame by FrameResolver,
+   * exactly like `reversed`. The source file is never re-encoded, so a ramp can
+   * be reshaped or removed with no generation loss.
+   *
+   * Regions are expressed in CLIP-LOCAL SOURCE SECONDS (0 = sourceStartTime),
+   * and `sourceDuration` records the source span the curve was authored
+   * against so the mapping survives a later trim.
+   *
+   * Gated: the manual curve editor stays locked until EDITH runs `speedRamp`
+   * once (which sets `appliedByEdith`).
+   */
+  speedRamp?: {
+    /** Master on/off. When false the clip plays at 1x and the curve is kept. */
+    enabled: boolean;
+    /** Ramp regions — see speedRampCurve.ts for the shape. */
+    regions: {
+      a: number;
+      b: number;
+      shape: 'smooth' | 'whip' | 'snap' | 'linear';
+      dir: 'forward' | 'reverse';
+      segs: number[];
+      bounds: { t0: number; t1: number }[];
+    }[];
+    /** Source span (seconds) the regions were authored against. */
+    sourceDuration: number;
+    /** How frames are synthesised when speeding up. */
+    blend: 'off' | 'blend' | 'flow';
+    /** Time-stretch the audio along with the picture. */
+    audio: boolean;
+    /** Preserve pitch while stretching. Ignored when `audio` is false. */
+    pitch: boolean;
+    /** Set true once EDITH has applied it — unlocks the manual editor. */
+    appliedByEdith?: boolean;
+  };
+
+  /**
+   * Ken Burns — a slow, eased push-in toward a focus point, spanning the
+   * whole clip.
+   *
+   * Non-destructive: stored as an end zoom + focus centre and resolved per
+   * frame (kenBurnsUtils.kenBurnsWindow). The preview draws the animated
+   * source window on the GPU; export bakes the identical move with zoompan.
+   *
+   * Gated: the manual toggle stays out of the properties panel until EDITH
+   * runs `kenBurns` once (which sets `appliedByEdith`).
+   */
+  kenBurns?: {
+    /** Master on/off. When false the move is kept but not applied. */
+    enabled: boolean;
+    /** Scale reached at the end of the clip (1.03–1.5; classic is ~1.14). */
+    endZoom: number;
+    /** Normalized focus centre of the end window in the source frame. */
+    endCenter: { x: number; y: number };
+    /** Set true once EDITH has applied it — unlocks the manual toggle. */
+    appliedByEdith?: boolean;
+  };
+  /**
+   * J-cut (audio lead) — this clip's linked audio slides ahead of its picture
+   * so the viewer hears the next scene before seeing it. Lives on the VIDEO
+   * track of the incoming clip; the surgery itself is plain timeline fields
+   * (see jCutUtils.ts), this object just makes it togglable and invertible.
+   */
+  jCut?: {
+    enabled: boolean;
+    /** User's lead preference in seconds — survives toggling off. */
+    leadSeconds: number;
+    /** Exact frames currently carved into the timeline (0 = off). */
+    appliedLeadFrames: number;
+    /** Audio lane bump currently applied (restored on revert). */
+    appliedRowDelta?: number;
+    /** Set true once EDITH has applied it — unlocks the manual controls. */
     appliedByEdith?: boolean;
   };
 }

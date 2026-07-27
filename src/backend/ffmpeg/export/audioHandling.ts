@@ -376,15 +376,59 @@ export function processAudioTimeline(
         console.log(`🎙️ Applied voice isolation EQ to audio segment ${segmentIndex}`);
       }
 
-      // Voice Ager (Skill 3): bake the same pitch/formant + timbre chain the live
-      // preview applies, so exported audio ages identically. Applied after isolation.
-      if (trackInfo.voiceAgeChain && trackInfo.voiceAgeChain.length > 0) {
-        const voiceAgeRef = `[a${segmentIndex}_voiceage]`;
+      // Speed ramp companion — either mutes the ramped spans or stretches the
+      // clip to the ramp's new length, depending on the audio ride-along
+      // setting. Applied before the timeline delay so the delay still places
+      // the (possibly retimed) audio at the right spot.
+      if (trackInfo.speedRampAudioFilter) {
+        const srAudioRef = `[a${segmentIndex}_sramp]`;
         audioFilters.push(
-          `${currentAudioRef}${trackInfo.voiceAgeChain}${voiceAgeRef}`,
+          `${currentAudioRef}${trackInfo.speedRampAudioFilter}${srAudioRef}`,
         );
-        currentAudioRef = voiceAgeRef;
-        console.log(`👴 Applied voice aging to audio segment ${segmentIndex}`);
+        currentAudioRef = srAudioRef;
+        console.log(`⏩ Applied speed-ramp audio to segment ${segmentIndex}`);
+      }
+
+      // Apply fades BEFORE the timeline delay: on this stream t=0 is the
+      // clip's own head, so the ramps land on the audio. After adelay the
+      // stream gains leading silence and a fade-in at st=0 would ramp the
+      // silence instead of the clip for any segment placed later than 0:00.
+      const segmentDuration = segment.duration;
+      if (
+        trackInfo.fadeInDuration !== undefined &&
+        trackInfo.fadeInDuration > 0
+      ) {
+        const fadeInRef = `[a${segmentIndex}_fadein]`;
+        audioFilters.push(
+          applyFadeFilter(
+            currentAudioRef,
+            fadeInRef,
+            'in',
+            0,
+            trackInfo.fadeInDuration,
+          ),
+        );
+        currentAudioRef = fadeInRef;
+      }
+
+      // Fade out starts at (segment duration - fadeOutDuration) in clip-local time
+      if (
+        trackInfo.fadeOutDuration !== undefined &&
+        trackInfo.fadeOutDuration > 0 &&
+        segmentDuration > trackInfo.fadeOutDuration
+      ) {
+        const fadeOutStartTime = segmentDuration - trackInfo.fadeOutDuration;
+        const fadeOutRef = `[a${segmentIndex}_fadeout]`;
+        audioFilters.push(
+          applyFadeFilter(
+            currentAudioRef,
+            fadeOutRef,
+            'out',
+            fadeOutStartTime,
+            trackInfo.fadeOutDuration,
+          ),
+        );
+        currentAudioRef = fadeOutRef;
       }
 
       // Add delay to position audio at correct timeline position
@@ -403,47 +447,6 @@ export function processAudioTimeline(
         audioFilters.push(`${currentAudioRef}acopy${delayedRef}`);
       }
 
-      // Apply fade in if specified (at the start of the audio segment)
-      let fadedRef = delayedRef;
-      if (
-        trackInfo.fadeInDuration !== undefined &&
-        trackInfo.fadeInDuration > 0
-      ) {
-        const fadeInRef = `[a${segmentIndex}_fadein]`;
-        audioFilters.push(
-          applyFadeFilter(
-            delayedRef,
-            fadeInRef,
-            'in',
-            0,
-            trackInfo.fadeInDuration,
-          ),
-        );
-        fadedRef = fadeInRef;
-      }
-
-      // Apply fade out if specified (at the end of the audio segment)
-      // Fade out starts at (segment duration - fadeOutDuration) relative to the segment start
-      const segmentDuration = segment.duration;
-      if (
-        trackInfo.fadeOutDuration !== undefined &&
-        trackInfo.fadeOutDuration > 0 &&
-        segmentDuration > trackInfo.fadeOutDuration
-      ) {
-        const fadeOutStartTime = segmentDuration - trackInfo.fadeOutDuration;
-        const fadeOutRef = `[a${segmentIndex}_fadeout]`;
-        audioFilters.push(
-          applyFadeFilter(
-            fadedRef,
-            fadeOutRef,
-            'out',
-            fadeOutStartTime,
-            trackInfo.fadeOutDuration,
-          ),
-        );
-        fadedRef = fadeOutRef;
-      }
-
       // Trim audio streams to their actual duration (no pre-padding)
       // The amix filter will handle timing via adelay and pad automatically to match the longest stream
       // This is RAM-efficient as we don't create full-duration buffers for each stream
@@ -455,14 +458,14 @@ export function processAudioTimeline(
       if (segmentEndTime > totalVideoDuration) {
         const trimDuration = totalVideoDuration - segment.startTime;
         audioFilters.push(
-          `${fadedRef}atrim=duration=${trimDuration.toFixed(6)}${finalRef}`,
+          `${delayedRef}atrim=duration=${trimDuration.toFixed(6)}${finalRef}`,
         );
         console.log(
           `🎵 Trimmed audio stream ${segmentIndex} to ${trimDuration.toFixed(3)}s (would exceed video duration)`,
         );
       } else {
         // No trimming needed, just copy
-        audioFilters.push(`${fadedRef}acopy${finalRef}`);
+        audioFilters.push(`${delayedRef}acopy${finalRef}`);
         console.log(
           `🎵 Audio stream ${segmentIndex} kept at natural duration ${segment.duration.toFixed(3)}s (RAM-efficient, no padding)`,
         );

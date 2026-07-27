@@ -67,6 +67,7 @@ export type Op =
       isStockFootage?: boolean; // triggers watermark + talking-to-camera checks
     }
   | { type: 'cutSilence'; clipId: string; noiseDb?: number; minDuration?: number }
+  | { type: 'removeFillers'; clipId?: string; clipName?: string; extraWords?: string[] }
   | { type: 'runWhisper'; clipId: string; streamCaptions?: boolean }
   | { type: 'analyzeReference'; clipId: string }
   | {
@@ -165,7 +166,24 @@ export type Op =
   | { type: 'unduck'; musicClipName: string }
   | { type: 'isolateVoice'; preset?: 'studio' | 'podcast' | 'ambiance' | 'light' }
   | { type: 'separateStems' }
-  | { type: 'ageVoice'; years?: number }
+  | { type: 'setReverb'; amount: number; clipName?: string }
+  | { type: 'setStabilization'; enabled?: boolean; clipId?: string; clipName?: string }
+  | {
+      type: 'kenBurns';
+      enabled?: boolean; // false turns the push-in off (params kept)
+      zoom?: number; // end zoom 1.03–1.5, default 1.14
+      x?: number; // normalized focus centre 0..1, default 0.5
+      y?: number;
+      clipId?: string;
+      clipName?: string;
+    }
+  | {
+      type: 'jCut';
+      enabled?: boolean; // false reverts the lead (preference kept)
+      seconds?: number; // audio lead in seconds, 0.5–10, default 3
+      clipId?: string; // the INCOMING clip (whose audio leads)
+      clipName?: string;
+    }
   | { type: 'detectLight' }
   | {
       type: 'paintLight';
@@ -189,6 +207,17 @@ export type Op =
       endSeconds?: number;
     }
   | {
+      type: 'speedRamp';
+      clipId?: string;
+      clipName?: string;
+      speed: number;           // the speed held at the peak of the ramp
+      startSeconds?: number;   // working window start (default: whole clip)
+      endSeconds?: number;     // working window end
+      shape?: 'smooth' | 'whip' | 'snap' | 'linear';
+      audio?: boolean;         // stretch the audio along with the picture
+      enabled?: boolean;       // false clears the ramp
+    }
+  | {
       type: 'zoomToFace';
       clipId: string;
       startSeconds: number;    // when to start the zoom
@@ -203,32 +232,6 @@ export type Op =
       detect?: string;        // comma-separated: 'punch,jump,energy,speaker' — default all
       autoIsolate?: boolean;  // if true, delete original and insert isolated segments after analysis
       windowSeconds?: number; // seconds of context around each event (default 1.5)
-    }
-  | {
-      // "Hold the world, let one thing move" — motion-key selective freeze (no matte).
-      type: 'selectiveFreeze';
-      clipId?: string;
-      clipName?: string;
-      startSeconds: number;
-      endSeconds: number;
-      mode?: 'world-frozen' | 'subject-frozen' | 'full'; // world-frozen = subject keeps moving (default); full = plain freeze-frame
-      freezeAt?: number;          // source second to hold the world at (default: region start)
-      box?: string;               // region box: "rect:x,y,w,h" | "yolo:<class>" (normalized)
-      lasso?: [number, number][]; // closed polygon (normalized) to constrain the live region
-      subjectClass?: string;      // YOLO class to localize the moving subject (car, person, dog…)
-    }
-  | {
-      // "Speed that lives inside the clip" — region-locked time-remap (no cut-out).
-      type: 'regionalSpeed';
-      clipId?: string;
-      clipName?: string;
-      startSeconds: number;
-      endSeconds: number;
-      speed?: number;      // region speed (0.35 = slow, 2 = fast)
-      region?: string;     // "x,y,w,h" | "ellipse:cx,cy,rx,ry" | "lasso:[[x,y],..]" normalized
-      lasso?: [number, number][]; // closed polygon (normalized); becomes region "lasso:..."
-      invert?: boolean;    // slow everything EXCEPT the region (keep the drawn subject real-time)
-      feather?: number;
     }
   | {
       // "Find me the moment" — CTRL-F for video. Jumps the playhead.
@@ -296,6 +299,18 @@ export type Op =
       sensitivity?: number; // 1 (loose) .. 10 (strict), default 3
       minGapSec?: number;  // minimum spacing between beats, default 0.25
       maxMarkers?: number; // cap, default 60
+    }
+  | {
+      // AI Auto-Edit (One-Tap) — point at raw footage, get a first cut.
+      // Chains: transcribe → detectScenes → applyLook → isolateVoice → beatSync (if music)
+      //         → duck (if music) → buildCaptions. Emits `edith:autoEditComplete` at the end.
+      type: 'autoEdit';
+      clipId?: string;
+      clipName?: string;         // target video; omit = main video
+      targetLook?: string;       // color look, default 'warm-film'
+      skipCaptions?: boolean;    // default false — captions on by default
+      skipScenes?: boolean;      // default false — scene detection on by default
+      skipAudio?: boolean;       // default false — voice isolation + duck on by default
     }
   | {
       // Rack focus — focus travels from one depth plane to another mid-shot.

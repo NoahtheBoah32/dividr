@@ -2,6 +2,9 @@ import { Button } from '@/frontend/components/ui/button';
 import { Input } from '@/frontend/components/ui/input';
 import { Separator } from '@/frontend/components/ui/separator';
 import { Slider } from '@/frontend/components/ui/slider';
+import { Switch } from '@/frontend/components/ui/switch';
+import { operationEngine } from '@/frontend/features/mycelium/operationEngine';
+import { ensureStabilizationLoaded } from '@/frontend/features/editor/preview/services/stabilizationCache';
 import {
   Tabs,
   TabsContent,
@@ -15,10 +18,22 @@ import {
 } from '@/frontend/components/ui/tooltip';
 import { cn } from '@/frontend/utils/utils';
 import { Loader2, RotateCcw } from 'lucide-react';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVideoEditorStore } from '../../../stores/videoEditor/index';
 import { AudioProperties } from '../audio/audioProperties';
 import { ColorGradePanel } from './colorGradePanel';
+import { SpeedRampCurve } from './SpeedRampCurve';
+import { buildProfile } from '@/frontend/features/editor/preview/utils/speedRampCurve';
+import {
+  kbClampZoom,
+  KB_MIN_ZOOM,
+  KB_MAX_ZOOM,
+} from '@/frontend/features/editor/preview/utils/kenBurnsUtils';
+import {
+  setJCut,
+  JCUT_MIN_LEAD,
+  JCUT_MAX_LEAD,
+} from '@/frontend/features/editor/stores/videoEditor/utils/jCutUtils';
 import { VideoFramePanel } from './videoFramePanel';
 import { NuancedEffectsPanel } from '../effects/nuancedEffectsPanel';
 
@@ -40,6 +55,9 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
 }) => {
   const tracks = useVideoEditorStore((state) => state.tracks);
   const updateTrack = useVideoEditorStore((state) => state.updateTrack);
+  const timelineFps = useVideoEditorStore(
+    (state) => (state as any).timeline?.fps ?? 30,
+  );
   const updateTrackProperty = useVideoEditorStore(
     (state) => state.updateTrackProperty,
   );
@@ -103,6 +121,57 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
   // Remove Background processing state
   const [isRemovingBackground, setIsRemovingBackground] = useState(false);
 
+  // Stabilization state — the toggle enqueues the SAME setStabilization op EDITH
+  // emits, so the manual and AI paths run identical code. `isStabilizing` covers
+  // the one-time motion analysis on first enable; toggling after that is instant.
+  const [isStabilizing, setIsStabilizing] = useState(false);
+  const stabState = (selectedTrack as any)?.stabilization as
+    | { enabled: boolean; offsetsPath?: string; shakeBefore?: number; shakeAfter?: number }
+    | undefined;
+  useEffect(() => {
+    if (!isStabilizing) return;
+    const onStatus = (e: any) => {
+      const t: string = e.detail?.text ?? '';
+      if (/Stabilized|Stabilization (on|off)|analysis failed|failed/i.test(t)) setIsStabilizing(false);
+    };
+    window.addEventListener('edith:status', onStatus);
+    return () => window.removeEventListener('edith:status', onStatus);
+  }, [isStabilizing]);
+  const handleStabilizationToggle = useCallback(
+    (checked: boolean) => {
+      if (!selectedTrack) return;
+      const st = (selectedTrack as any).stabilization;
+      // Sidecars from older models (pre-"stab3_") are stale — enabling with
+      // one must re-analyze, not revive the retired curve.
+      const cachedValid = st?.offsetsPath && /stab3_[^\\/]*$/.test(st.offsetsPath);
+      // Off, or on with cached offsets → direct store write, instant like the
+      // motion-blur slider (the compositor picks it up on the next drawn frame).
+      if (!checked || cachedValid) {
+        if (checked && cachedValid) ensureStabilizationLoaded(st.offsetsPath);
+        updateTrack(selectedTrack.id, {
+          stabilization: { ...(st ?? {}), enabled: checked },
+        } as any);
+        window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+        return;
+      }
+      // First enable on this source → run the one-time motion analysis through
+      // the SAME setStabilization op EDITH emits.
+      setIsStabilizing(true);
+      operationEngine.enqueue({
+        type: 'setStabilization',
+        clipId: selectedTrack.id,
+        enabled: true,
+      } as any);
+    },
+    [selectedTrack, updateTrack],
+  );
+  const stabPct =
+    stabState?.shakeBefore && stabState.shakeBefore > 0
+      ? Math.round(
+          (1 - (stabState.shakeAfter ?? 0) / stabState.shakeBefore) * 100,
+        )
+      : null;
+
   // Tab state management - persist while same track is selected
   const [activeTab, setActiveTab] = React.useState(
     hasAudio ? 'video' : 'basic',
@@ -114,6 +183,58 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
     setActiveTab(hasAudio ? 'video' : 'basic');
     setVideoSubTab('basic');
   }, [selectedTrack.id, hasAudio]);
+
+  // A ramp EDITH just applied lives under Advanced. Surface it the moment it
+  // appears on THIS clip — otherwise the panel looks unchanged while the curve
+  // sits one tab away. Only on the false→true edge, so re-selecting a ramped
+  // clip later still opens on Basic like everything else.
+  const rampSeenRef = React.useRef('');
+  const rampApplied = !!(selectedTrack as any)?.speedRamp?.appliedByEdith;
+  React.useEffect(() => {
+    const id = selectedTrack.id;
+    if (rampApplied && rampSeenRef.current === `${id}:false`) {
+      if (hasAudio) {
+        setActiveTab('video');
+        setVideoSubTab('advanced');
+      } else {
+        setActiveTab('advanced');
+      }
+    }
+    rampSeenRef.current = `${id}:${rampApplied}`;
+  }, [rampApplied, selectedTrack.id, hasAudio]);
+
+  // Ken Burns EDITH just applied lives under Basic. Surface it the moment it
+  // appears on THIS clip, same edge-only rule as the ramp above.
+  const kbSeenRef = React.useRef('');
+  const kbApplied = !!(selectedTrack as any)?.kenBurns?.appliedByEdith;
+  React.useEffect(() => {
+    const id = selectedTrack.id;
+    if (kbApplied && kbSeenRef.current === `${id}:false`) {
+      if (hasAudio) {
+        setActiveTab('video');
+        setVideoSubTab('basic');
+      } else {
+        setActiveTab('basic');
+      }
+    }
+    kbSeenRef.current = `${id}:${kbApplied}`;
+  }, [kbApplied, selectedTrack.id, hasAudio]);
+
+  // J-cut EDITH just applied lives under Basic too — same edge-only rule.
+  const jcSeenRef = React.useRef('');
+  const jcApplied = !!(selectedTrack as any)?.jCut?.appliedByEdith;
+  React.useEffect(() => {
+    const id = selectedTrack.id;
+    if (jcApplied && jcSeenRef.current === `${id}:false`) {
+      if (hasAudio) {
+        setActiveTab('video');
+        setVideoSubTab('basic');
+      } else {
+        setActiveTab('basic');
+      }
+    }
+    jcSeenRef.current = `${id}:${jcApplied}`;
+  }, [jcApplied, selectedTrack.id, hasAudio]);
 
   // Determine which track ID to use for audio tab
   const audioTrackId = useMemo(() => {
@@ -484,6 +605,241 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
   const backgroundRemovalEnabled =
     !!(selectedTrack as any).backgroundRemoval?.enabled;
 
+  /**
+   * Speed Ramp — unlocked by EDITH's speedRamp op. It lives under Advanced in
+   * both panel layouts (with and without an audio tab), so it is built once
+   * here rather than duplicated into each.
+   */
+  const rampEnabled = !!(selectedTrack as any).speedRamp?.enabled;
+  const rampReady = !!(selectedTrack as any).speedRamp?.appliedByEdith;
+
+  const speedRampSection = (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-semibold text-foreground">
+            Speed Ramp
+          </label>
+          {rampEnabled && (
+            <div className="w-2 h-2 bg-green-500 rounded-full" />
+          )}
+        </div>
+        <Switch
+          checked={!!(selectedTrack as any).speedRamp?.enabled}
+          onCheckedChange={(v) => {
+            const sr = (selectedTrack as any).speedRamp;
+            if (!sr) return;
+            // Turning the ramp off restores the clip's untouched length;
+            // turning it back on re-applies the curve's.
+            const outFrames = v
+              ? Math.max(
+                  1,
+                  Math.round(
+                    buildProfile(
+                      sr.regions ?? [],
+                      Math.max(0.1, sr.sourceDuration ?? 0),
+                    ).outDuration * timelineFps,
+                  ),
+                )
+              : Math.max(
+                  1,
+                  Math.round((sr.sourceDuration ?? 0) * timelineFps),
+                );
+            updateTrack(selectedTrack.id, {
+              speedRamp: { ...sr, enabled: v },
+              endFrame: selectedTrack.startFrame + outFrames,
+            } as any);
+            window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+          }}
+          className="h-4 w-7"
+          thumbClassName="size-3.5"
+          disabled={isMultipleSelected || !rampReady}
+        />
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        {rampEnabled
+          ? 'Speed follows the curve inside each ramp region'
+          : rampReady
+            ? 'Turn on to re-apply the curve to this clip'
+            : 'Ask EDITH to speed ramp part of this clip'}
+      </p>
+
+      {/* Collapsed when off, the same way Audio Ducking behaves — the editor
+          disappears entirely rather than sitting there greyed out. */}
+      {rampEnabled && !isMultipleSelected && (
+        <SpeedRampCurve track={selectedTrack} />
+      )}
+    </div>
+  );
+
+  /**
+   * Ken Burns — unlocked by EDITH's kenBurns op. Until then the section is
+   * ABSENT from the panel entirely (not greyed out) — asking EDITH is what
+   * reveals it. It lives under Basic in both panel layouts, so it is built
+   * once here. The toggle applies instantly (pure store write, no analysis).
+   */
+  const kbState = (selectedTrack as any).kenBurns as
+    | {
+        enabled: boolean;
+        endZoom: number;
+        endCenter: { x: number; y: number };
+        appliedByEdith?: boolean;
+      }
+    | undefined;
+  const kenBurnsSection = kbState?.appliedByEdith ? (
+    <>
+      <Separator />
+      <div className="space-y-3" data-testid="ken-burns-section">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-foreground">
+              Ken Burns
+            </label>
+            {kbState.enabled && (
+              <div className="w-2 h-2 bg-green-500 rounded-full" />
+            )}
+          </div>
+          <Switch
+            checked={!!kbState.enabled}
+            data-testid="ken-burns-toggle"
+            onCheckedChange={(v) => {
+              updateTrack(selectedTrack.id, {
+                kenBurns: { ...kbState, enabled: v },
+              } as any);
+              window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+            }}
+            className="h-4 w-7"
+            thumbClassName="size-3.5"
+            disabled={isMultipleSelected}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {kbState.enabled
+            ? 'Slow push-in toward the focus point — drag the red End box in the preview'
+            : 'Turn on to re-apply the push-in to this clip'}
+        </p>
+        {kbState.enabled && !isMultipleSelected && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-muted-foreground">End zoom</label>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {Math.round(kbClampZoom(kbState.endZoom) * 100)}%
+              </span>
+            </div>
+            <Slider
+              value={[Math.round(kbClampZoom(kbState.endZoom) * 100)]}
+              onValueChange={([v]) => {
+                updateTrack(selectedTrack.id, {
+                  kenBurns: { ...kbState, endZoom: v / 100 },
+                } as any);
+                window.dispatchEvent(new CustomEvent('dividr:forceRender'));
+              }}
+              min={Math.round(KB_MIN_ZOOM * 100)}
+              max={Math.round(KB_MAX_ZOOM * 100)}
+              step={1}
+              className="flex-1"
+              data-testid="ken-burns-zoom-slider"
+            />
+            <p className="text-xs text-muted-foreground">
+              Eases in and out across the whole clip — baked on export
+            </p>
+          </div>
+        )}
+      </div>
+    </>
+  ) : null;
+
+  /**
+   * J-Cut — unlocked by EDITH's jCut op, same rule as Ken Burns: absent from
+   * the panel until she has applied it once. A simple toggle plus a seconds
+   * box; the surgery itself lives in jCutUtils.setJCut (one undo entry).
+   */
+  const jcState = (selectedTrack as any).jCut as
+    | {
+        enabled: boolean;
+        leadSeconds: number;
+        appliedLeadFrames: number;
+        appliedByEdith?: boolean;
+      }
+    | undefined;
+  const jCutSection = jcState?.appliedByEdith ? (
+    <>
+      <Separator />
+      <div className="space-y-3" data-testid="j-cut-section">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-foreground">
+              J-Cut
+            </label>
+            {jcState.enabled && (
+              <div className="w-2 h-2 bg-green-500 rounded-full" />
+            )}
+          </div>
+          <Switch
+            checked={!!jcState.enabled}
+            data-testid="j-cut-toggle"
+            onCheckedChange={(v) => {
+              const res = setJCut(
+                useVideoEditorStore.getState() as any,
+                selectedTrack.id,
+                { enabled: v },
+              );
+              if (!res.ok) console.warn(`J-cut: ${res.error}`);
+            }}
+            className="h-4 w-7"
+            thumbClassName="size-3.5"
+            disabled={isMultipleSelected}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {jcState.enabled
+            ? `This clip's audio starts ${(
+                jcState.appliedLeadFrames / timelineFps
+              ).toFixed(1)}s before its picture cuts in`
+            : 'Turn on to slide this clip’s audio back over the previous clip'}
+        </p>
+        {jcState.enabled && !isMultipleSelected && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-xs text-muted-foreground">
+                Audio lead (s)
+              </label>
+              <Input
+                type="number"
+                min={JCUT_MIN_LEAD}
+                max={JCUT_MAX_LEAD}
+                step={0.5}
+                defaultValue={Number(
+                  (jcState.appliedLeadFrames / timelineFps).toFixed(1),
+                )}
+                key={`${selectedTrack.id}:${jcState.appliedLeadFrames}`}
+                data-testid="j-cut-lead-input"
+                className="h-7 w-20 text-right text-xs tabular-nums"
+                onBlur={(e) => {
+                  const v = parseFloat(e.currentTarget.value);
+                  if (!Number.isFinite(v)) return;
+                  const res = setJCut(
+                    useVideoEditorStore.getState() as any,
+                    selectedTrack.id,
+                    { enabled: true, leadSeconds: v },
+                  );
+                  if (!res.ok) console.warn(`J-cut: ${res.error}`);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+                }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              You hear this clip before you see it — its audio leads the cut
+            </p>
+          </div>
+        )}
+      </div>
+    </>
+  ) : null;
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <Tabs
@@ -513,7 +869,7 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                 <TabsTrigger value="basic" variant="underline">
                   Basic
                 </TabsTrigger>
-                <TabsTrigger value="advanced" disabled variant="underline">
+                <TabsTrigger value="advanced" variant="underline">
                   Advanced
                 </TabsTrigger>
               </>
@@ -543,7 +899,7 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                   <TabsTrigger value="basic" variant="underline">
                     Basic
                   </TabsTrigger>
-                  <TabsTrigger value="advanced" disabled variant="underline">
+                  <TabsTrigger value="advanced" variant="underline">
                     Advanced
                   </TabsTrigger>
                 </TabsList>
@@ -677,6 +1033,46 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                     />
                     <p className="text-xs text-muted-foreground">Baked as frame blending on export</p>
                   </div>
+
+                  <Separator />
+
+                  {/* Stabilization */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-semibold text-foreground">
+                          Stabilization
+                        </label>
+                        {isStabilizing && (
+                          <Loader2 className="size-4 animate-spin text-primary" />
+                        )}
+                        {stabState?.enabled && !isStabilizing && stabPct !== null && (
+                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/15 border border-green-500/30">
+                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                            <span className="text-xs text-green-600 dark:text-green-400 font-medium">
+                              {stabPct}% steadier
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <Switch
+                        checked={!!stabState?.enabled}
+                        onCheckedChange={handleStabilizationToggle}
+                        className="h-4 w-7"
+                        thumbClassName="size-3.5"
+                        disabled={isMultipleSelected || isStabilizing}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {isStabilizing
+                        ? 'Measuring camera motion…'
+                        : 'Removes camera shake — a slight smart zoom hides the edges, same resolution'}
+                    </p>
+                  </div>
+
+                  {kenBurnsSection}
+
+                  {jCutSection}
 
                   <Separator />
 
@@ -839,8 +1235,13 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                   <h4 className="text-sm font-semibold text-foreground">
                     Advanced
                   </h4>
+
+                  {speedRampSection}
+
+                  <Separator />
+
                   <p className="text-xs text-muted-foreground">
-                    Advanced video controls coming soon. This section will
+                    More advanced video controls coming soon. This section will
                     include effects, filters, and more transform options.
                   </p>
                 </div>
@@ -1092,6 +1493,10 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                 </div>
               </div>
 
+              {kenBurnsSection}
+
+              {jCutSection}
+
               {isMultipleSelected && (
                 <div className="pt-4">
                   <p className="text-xs text-muted-foreground text-center">
@@ -1110,9 +1515,14 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
                 <h4 className="text-sm font-semibold text-foreground">
                   Advanced
                 </h4>
+
+                {speedRampSection}
+
+                <Separator />
+
                 <p className="text-xs text-muted-foreground">
-                  Advanced video controls coming soon. This section will include
-                  effects, filters, and more transform options.
+                  More advanced video controls coming soon. This section will
+                  include effects, filters, and more transform options.
                 </p>
               </div>
             </TabsContent>
@@ -1142,7 +1552,7 @@ const VideoPropertiesComponent: React.FC<VideoPropertiesProps> = ({
           <VideoFramePanel selectedTrackIds={selectedTrackIds} />
         </TabsContent>
 
-        {/* Effects Tab — nuanced AI skills: Hold the World, In-Frame Speed, Find a Moment */}
+        {/* Effects Tab — nuanced AI skills: Transform, Light */}
         <TabsContent value="effects" className="flex-1 overflow-y-auto">
           <NuancedEffectsPanel selectedTrackIds={selectedTrackIds} />
         </TabsContent>

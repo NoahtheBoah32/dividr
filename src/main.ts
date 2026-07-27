@@ -2867,6 +2867,74 @@ ipcMain.handle('ffmpegRun', async (event, job: VideoEditJob) => {
     let tempSubtitlePath: string | null = null;
 
     try {
+      // Reverb Processor pre-pass: for audio inputs with a non-zero dial, bake
+      // the reverb with the python script (the SAME DSP the live preview stage
+      // runs) and substitute the audio source, so export matches what the user
+      // heard. ffmpeg has no algorithmic reverb filter — this pre-pass is the
+      // filter. Cached per (source, amount) for the lifetime of the baked dir.
+      if (Array.isArray(job.inputs)) {
+        for (const input of job.inputs as any[]) {
+          const amt = Math.max(-50, Math.min(50, Math.round(input?.reverbAmount ?? 0)));
+          if (!amt) continue;
+          const srcPath: string | undefined = input.audioPath || input.path;
+          if (!srcPath || !fs.existsSync(srcPath)) continue;
+          try {
+            const cacheName = `reverbexport_${amt}_${path.basename(srcPath).replace(/[^a-zA-Z0-9._-]/g, '_')}_${fs.statSync(srcPath).size}.wav`;
+            const outputFile = path.join(getBakedDir(), cacheName);
+            if (!fs.existsSync(outputFile)) {
+              console.log(`🎛️ Reverb pre-pass (${amt}) on ${srcPath}`);
+              const result = await runPythonSkill(
+                'reverb-process',
+                ['--input', srcPath, '--output', outputFile, '--amount', String(amt)],
+                'reverbExport',
+              );
+              if (!result?.success) {
+                console.warn('Reverb pre-pass failed, exporting unprocessed:', result?.error);
+                continue;
+              }
+            }
+            if (input.audioPath) input.audioPath = outputFile;
+            else input.path = outputFile;
+          } catch (e) {
+            console.warn('Reverb pre-pass error, exporting unprocessed:', e);
+          }
+        }
+      }
+
+      // Stabilization pre-pass: for video inputs whose track has stabilization
+      // enabled, bake the SAME per-frame corrections the live preview applies
+      // (warpAffine rotate-about-center + translate, edges replicated — no zoom,
+      // no crop, native resolution) and substitute the video source.
+      if (Array.isArray(job.inputs)) {
+        for (const input of job.inputs as any[]) {
+          const offsetsPath: string | undefined = input?.stabilizeOffsetsPath;
+          if (!offsetsPath || !fs.existsSync(offsetsPath)) continue;
+          const srcPath: string | undefined = input.path;
+          if (!srcPath || !fs.existsSync(srcPath)) continue;
+          try {
+            // Keyed on the offsets file as well as the source: a re-analysis
+            // (new sidecar) must invalidate any previously baked export.
+            const cacheName = `stabexport3_${path.basename(srcPath).replace(/[^a-zA-Z0-9._-]/g, '_')}_${fs.statSync(srcPath).size}_${fs.statSync(offsetsPath).size}.mp4`;
+            const outputFile = path.join(getBakedDir(), cacheName);
+            if (!fs.existsSync(outputFile)) {
+              console.log(`🎥 Stabilization pre-pass on ${srcPath}`);
+              const result = await runPythonSkill(
+                'stabilize',
+                ['--mode', 'bake', '--input', srcPath, '--offsets', offsetsPath, '--output', outputFile],
+                'stabilizeExport',
+              );
+              if (!result?.success) {
+                console.warn('Stabilization pre-pass failed, exporting unprocessed:', result?.error);
+                continue;
+              }
+            }
+            input.path = outputFile;
+          } catch (e) {
+            console.warn('Stabilization pre-pass error, exporting unprocessed:', e);
+          }
+        }
+      }
+
       // Create temporary subtitle file if subtitle content is provided
       if (job.subtitleContent && job.operations.subtitles) {
         tempSubtitlePath = path.join(absoluteLocation, 'temp_subtitles.ass');
@@ -6557,68 +6625,6 @@ const runPythonSkill = async (
   });
 };
 
-// media:selectiveFreeze — "hold the world, let one thing move" (seamless selective freeze)
-ipcMain.handle(
-  'media:selectiveFreeze',
-  async (
-    _event,
-    { filePath, startSeconds, endSeconds, mode = 'world-frozen', freezeAt = -1, box = '' }:
-    { filePath: string; startSeconds: number; endSeconds: number; mode?: string; freezeAt?: number; box?: string },
-  ): Promise<{ success: boolean; filePath?: string; mode?: string; duration?: number; reason?: string; error?: string }> => {
-    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
-    try {
-      // Map the op's mode vocabulary to the motion-key script's enum.
-      const modeMap: Record<string, string> = {
-        'world-frozen': 'freezeWorld', 'subject-frozen': 'freezeSubject', 'full': 'freezeAll',
-        freezeWorld: 'freezeWorld', freezeSubject: 'freezeSubject', freezeAll: 'freezeAll',
-      };
-      const pyMode = modeMap[mode] ?? 'freezeWorld';
-      const ext = path.extname(filePath) || '.mp4';
-      const outputFile = path.join(getBakedDir(), `mfreeze_${Date.now()}${ext}`);
-      const flags = [
-        '--input', filePath, '--output', outputFile,
-        '--start', String(startSeconds), '--end', String(endSeconds),
-        '--mode', pyMode, '--freeze-at', String(freezeAt),
-      ];
-      if (box) flags.push('--box', box);
-      const result = await runPythonSkill('motion-freeze', flags, 'selectiveFreeze');
-      if (!result?.success) return { success: false, error: result?.error ?? 'Selective freeze failed', reason: result?.reason };
-      return result;
-    } catch (err: any) {
-      console.error('media:selectiveFreeze error:', err);
-      return { success: false, error: err.message ?? String(err) };
-    }
-  },
-);
-
-// media:regionalSpeed — "speed that lives inside the clip" (per-region time-remap)
-ipcMain.handle(
-  'media:regionalSpeed',
-  async (
-    _event,
-    { filePath, startSeconds, endSeconds, speed = 0.5, region = '0,0,1,1', feather = 24, invert = false }:
-    { filePath: string; startSeconds: number; endSeconds: number; speed?: number; region?: string; feather?: number; invert?: boolean },
-  ): Promise<{ success: boolean; filePath?: string; speed?: number; duration?: number; error?: string }> => {
-    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
-    try {
-      const ext = path.extname(filePath) || '.mp4';
-      const outputFile = path.join(getBakedDir(), `regionspeed_${Date.now()}${ext}`);
-      const flags = [
-        '--input', filePath, '--output', outputFile,
-        '--start', String(startSeconds), '--end', String(endSeconds),
-        '--speed', String(speed), '--region', region, '--feather', String(feather),
-      ];
-      if (invert) flags.push('--invert');
-      const result = await runPythonSkill('regional-speed', flags, 'regionalSpeed');
-      if (!result?.success) return { success: false, error: result?.error ?? 'Regional speed failed' };
-      return result;
-    } catch (err: any) {
-      console.error('media:regionalSpeed error:', err);
-      return { success: false, error: err.message ?? String(err) };
-    }
-  },
-);
-
 // media:rackFocus — depth-plane focus pull (near↔far), MiDaS depth + animated defocus
 ipcMain.handle(
   'media:rackFocus',
@@ -6644,6 +6650,93 @@ ipcMain.handle(
       return result;
     } catch (err: any) {
       console.error('media:rackFocus error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:reverbProcess — Reverb Processor: amount<0 strips reverb (spectral late-reverb
+// suppression), amount>0 adds genuine convolution reverb (diffuse synthetic IR).
+// Output is a wav in app storage (baked dir) — NEVER next to the source.
+ipcMain.handle(
+  'media:reverbProcess',
+  async (
+    _event,
+    { filePath, amount }: { filePath: string; amount: number },
+  ): Promise<{ success: boolean; filePath?: string; mode?: string; amount?: number; tailDecayBeforeMs?: number; tailDecayAfterMs?: number; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    const amt = Math.max(-50, Math.min(50, Math.round(amount ?? 0)));
+    if (amt === 0) return { success: false, error: 'amount 0 = nothing to do' };
+    try {
+      const outputFile = path.join(getBakedDir(), `reverb_${Date.now()}.wav`);
+      const result = await runPythonSkill(
+        'reverb-process',
+        ['--input', filePath, '--output', outputFile, '--amount', String(amt)],
+        'reverbProcess',
+      );
+      if (!result?.success) return { success: false, error: result?.error ?? 'Reverb processing failed' };
+      return result;
+    } catch (err: any) {
+      console.error('media:reverbProcess error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:stabilizeAnalyze — measure camera shake and compute per-frame counter-offsets
+// (phase correlation + low-pass camera path). Writes a sidecar offsets JSON in the
+// baked dir (cached per source file) and returns the offsets inline so the preview
+// can start compensating immediately. No zoom, no crop — translation only.
+ipcMain.handle(
+  'media:stabilizeAnalyze',
+  async (
+    _event,
+    { filePath }: { filePath: string },
+  ): Promise<{ success: boolean; offsetsPath?: string; offsets?: number[][]; fps?: number; frames?: number; zoom?: number; shakeBefore?: number; shakeAfter?: number; error?: string }> => {
+    if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+    try {
+      // stab3_ = v3 sidecars ([dx, dy, da] similarity model + constant auto-zoom).
+      // The prefix bump orphans older curves so they can never be served again.
+      const cacheName = `stab3_${path.basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '_')}_${fs.statSync(filePath).size}.json`;
+      const offsetsPath = path.join(getBakedDir(), cacheName);
+      if (!fs.existsSync(offsetsPath)) {
+        const result = await runPythonSkill(
+          'stabilize',
+          ['--mode', 'analyze', '--input', filePath, '--output', offsetsPath],
+          'stabilizeAnalyze',
+        );
+        if (!result?.success) return { success: false, error: result?.error ?? 'Stabilization analysis failed' };
+      }
+      const data = JSON.parse(fs.readFileSync(offsetsPath, 'utf8'));
+      return {
+        success: true,
+        offsetsPath,
+        offsets: data.offsets,
+        fps: data.fps,
+        frames: data.frames,
+        zoom: data.zoom,
+        shakeBefore: data.shakeBefore,
+        shakeAfter: data.shakeAfter,
+      };
+    } catch (err: any) {
+      console.error('media:stabilizeAnalyze error:', err);
+      return { success: false, error: err.message ?? String(err) };
+    }
+  },
+);
+
+// media:stabilizeLoadOffsets — re-read an existing offsets sidecar (project reload path).
+ipcMain.handle(
+  'media:stabilizeLoadOffsets',
+  async (
+    _event,
+    { offsetsPath }: { offsetsPath: string },
+  ): Promise<{ success: boolean; offsets?: number[][]; fps?: number; zoom?: number; error?: string }> => {
+    try {
+      if (!offsetsPath || !fs.existsSync(offsetsPath)) return { success: false, error: 'offsets file missing' };
+      const data = JSON.parse(fs.readFileSync(offsetsPath, 'utf8'));
+      return { success: true, offsets: data.offsets, fps: data.fps, zoom: data.zoom };
+    } catch (err: any) {
       return { success: false, error: err.message ?? String(err) };
     }
   },

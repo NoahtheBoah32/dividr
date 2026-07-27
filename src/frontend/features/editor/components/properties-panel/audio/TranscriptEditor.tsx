@@ -127,8 +127,10 @@ function resolveTranscription(
  * owns the group). A no-animation clone of the proven delete-segment flow: split
  * the base clip at both edges, remove the middle (cascades to linked audio), then
  * re-time overlays/subtitles with the ripple transform and close the base-row gap.
+ * Exported so EDITH's removeFillers op runs the exact same deletion the manual
+ * transcript editor uses.
  */
-function rippleDeleteOnce(
+export function rippleDeleteOnce(
   fromFrame: number,
   toFrame: number,
   subjectType: 'video' | 'audio',

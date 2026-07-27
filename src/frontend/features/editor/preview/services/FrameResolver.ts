@@ -13,6 +13,9 @@ import {
   type ClipTransitionFx,
   type DipOverlayFx,
 } from '@/shared/transitions';
+import { isRampActive, rampSourceSeconds } from './speedRampCache';
+import { effectiveRamp } from './speedRampLive';
+import { audioFadeGain } from '../../stores/videoEditor/utils/audioFadeUtils';
 
 /**
  * Convert decibels to linear gain.
@@ -158,14 +161,37 @@ export const calculateSourceFrame = (
   return clip.inFrame + relativeFrame;
 };
 
+/**
+ * Source time for a timeline frame, in seconds.
+ *
+ * A speed ramp lives here rather than in calculateSourceFrame because the warp
+ * is continuous: at 30x a single output frame advances a whole second of source,
+ * and at 0.2x twenty output frames share one source frame. Rounding to integer
+ * source frames first would quantise the curve into visible steps, which is the
+ * exact artefact the ramp exists to avoid — so the warp is applied in seconds
+ * and only the element seek quantises, at native source precision.
+ *
+ * Clips without a ramp take the original 1:1 path untouched.
+ */
 export const calculateSourceTime = (
   timelineFrame: number,
   clip: ClipMetadata,
   fps: number,
 ): number => {
+  const ramp = effectiveRamp(clip.track);
+  if (isRampActive(ramp) && !clip.track?.reversed) {
+    const relativeFrame = timelineFrame - clip.timelineStartFrame;
+    const outSeconds = relativeFrame / fps;
+    const local = rampSourceSeconds(ramp!, outSeconds);
+    return (clip.track?.sourceStartTime || 0) + local;
+  }
   const sourceFrame = calculateSourceFrame(timelineFrame, clip);
   return sourceFrame / fps;
 };
+
+/** Whether this clip's picture is being time-warped right now. */
+export const clipHasActiveRamp = (clip: ClipMetadata): boolean =>
+  isRampActive(effectiveRamp(clip.track)) && !clip.track?.reversed;
 
 export const isClipVisibleAtFrame = (
   timelineFrame: number,
@@ -210,8 +236,10 @@ export const resolveFrameRequests = (
     if (!clip) continue;
     if (!isClipVisibleAtFrame(timelineFrame, clip)) continue;
 
-    const sourceFrame = calculateSourceFrame(timelineFrame, clip);
-    const sourceTime = sourceFrame / fps;
+    // sourceTime is the authority — on a ramped clip it is a continuous warp,
+    // and sourceFrame is only its rounded index for cache/debug purposes.
+    const sourceTime = calculateSourceTime(timelineFrame, clip, fps);
+    const sourceFrame = Math.round(sourceTime * fps);
 
     requests.push({
       clipId: clip.clipId,
@@ -376,6 +404,19 @@ export const resolveAudioFrameRequests = (
         }
       }
       linearVolume = gain;
+    }
+
+    // Audio fade in/out: linear gain ramp at the clip edges. Same curve the
+    // export bakes with afade, so preview and export sound identical.
+    if ((track.fadeInDuration ?? 0) > 0 || (track.fadeOutDuration ?? 0) > 0) {
+      linearVolume *= audioFadeGain(
+        timelineFrame,
+        track.startFrame,
+        track.endFrame,
+        fps,
+        track.fadeInDuration,
+        track.fadeOutDuration,
+      );
     }
 
     requests.push({

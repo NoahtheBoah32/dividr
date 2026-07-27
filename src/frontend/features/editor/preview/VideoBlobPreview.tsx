@@ -28,6 +28,7 @@ import {
 } from './hooks';
 import { CanvasOverlay, UnifiedOverlayRenderer } from './overlays';
 import { GradeSplitOverlay } from './overlays/GradeSplitOverlay';
+import { KenBurnsOverlay } from './overlays/KenBurnsOverlay';
 import { MatchCutGhostOverlay } from './overlays/MatchCutGhostOverlay';
 import { LassoOverlay } from './overlays/LassoOverlay';
 import { LightCompositeOverlay } from './overlays/LightCompositeOverlay';
@@ -1044,6 +1045,17 @@ export const VideoBlobPreview: React.FC<VideoBlobPreviewProps> = ({
             actualHeight={actualHeight}
             panX={preview.panX}
             panY={preview.panY}
+          />
+
+          {/* Ken Burns setup boxes (Start/End + focus cross) — paused only */}
+          <KenBurnsOverlay
+            actualWidth={actualWidth}
+            actualHeight={actualHeight}
+            panX={preview.panX}
+            panY={preview.panY}
+            baseVideoWidth={baseVideoWidth}
+            baseVideoHeight={baseVideoHeight}
+            isPlaying={playback.isPlaying}
           />
 
           {/* Match-cut ghost alignment overlay (self-contained, paused video). */}

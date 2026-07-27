@@ -146,10 +146,24 @@ function categorizeInputs(inputs: (string | TrackInfo)[]): CategorizedInputs {
     const trackInfo = getTrackInfo(input);
     const isGap = isGapInput(path);
 
+    // CLASSIFY BY TRACK TYPE FIRST, extension second — and keep this in
+    // lockstep with timelineBuilder's routing AND handleFileInputs' `-i`
+    // accounting. An audio track still backed by its source .mp4 (extraction
+    // pending/failed) classified "video" here starves the audio timeline of
+    // file indices; an extension in NEITHER list (.m4a is in neither) gets an
+    // `-i` from handleFileInputs but no fileIndex here, silently shifting every
+    // later input's index. trackType is always set by the renderer; extension
+    // is the fallback for plain string inputs only.
+    const tType = trackInfo.trackType;
     const isVideo =
       !isGap &&
-      (FILE_EXTENSIONS.VIDEO.test(path) || FILE_EXTENSIONS.IMAGE.test(path));
-    const isAudio = !isGap && FILE_EXTENSIONS.AUDIO.test(path);
+      (tType === 'video' ||
+        tType === 'image' ||
+        (!tType &&
+          (FILE_EXTENSIONS.VIDEO.test(path) ||
+            FILE_EXTENSIONS.IMAGE.test(path))));
+    const isAudio =
+      !isGap && (tType === 'audio' || (!tType && FILE_EXTENSIONS.AUDIO.test(path)));
 
     if (isVideo) {
       let fileIndex = -1;

@@ -421,6 +421,45 @@ function createBlackBackgroundWithOverlay(
  * OPTIMIZED: Only trim clips and generate gaps before concat
  * FPS, setsar, overlay are applied AFTER concat
  */
+/**
+ * Ken Burns bake — a zoompan whose z/x/y walk the IDENTICAL eased window the
+ * preview draws (kenBurnsUtils.kenBurnsWindow): easeInOutSine progress across
+ * the clip, zoom 1→endZoom, centre drifting 0.5→(cx,cy), window clamped
+ * inside the frame.
+ *
+ * The stream is supersampled ×2 (bounded to ≤4096px) before the zoompan:
+ * zoompan's crop grid is integer input pixels, and on a 1:1 grid a slow push
+ * steps visibly — the classic zoompan judder. Sampling on a doubled grid
+ * halves the step to sub-pixel. `frameOffset` shifts progress when a clip is
+ * split across segments so the move stays continuous, and a trailing setsar=1
+ * keeps the stream concat-compatible.
+ */
+function buildKenBurnsChain(
+  kb: { endZoom: number; cx: number; cy: number; frames: number },
+  outW: number,
+  outH: number,
+  fps: number,
+  frameOffset: number,
+): string {
+  const clamp = (v: number, lo: number, hi: number) =>
+    Math.min(hi, Math.max(lo, v));
+  const Z = clamp(Number.isFinite(kb.endZoom) ? kb.endZoom : 1.14, 1.03, 1.5);
+  const cx = clamp(Number.isFinite(kb.cx) ? kb.cx : 0.5, 0, 1);
+  const cy = clamp(Number.isFinite(kb.cy) ? kb.cy : 0.5, 0, 1);
+  const lastFrame = Math.max(1, Math.round(kb.frames) - 1);
+  const useSS = outW * 2 <= 4096 && outH * 2 <= 4096;
+  const w = useSS ? outW * 2 : outW;
+  const h = useSS ? outH * 2 : outH;
+  const p = `(0.5-0.5*cos(PI*min((on+${frameOffset})/${lastFrame},1)))`;
+  const z = `1+${(Z - 1).toFixed(5)}*${p}`;
+  const x = `max(0,min(iw*(0.5+${(cx - 0.5).toFixed(5)}*${p})-iw/zoom/2,iw-iw/zoom))`;
+  const y = `max(0,min(ih*(0.5+${(cy - 0.5).toFixed(5)}*${p})-ih/zoom/2,ih-ih/zoom))`;
+  const zp = `zoompan=z='${z}':x='${x}':y='${y}':d=1:s=${w}x${h}:fps=${fps}`;
+  return useSS
+    ? `scale=${w}:${h},${zp},scale=${outW}:${outH},setsar=1`
+    : `${zp},setsar=1`;
+}
+
 export function processLayerSegments(
   timeline: ProcessedTimeline,
   layerIndex: number,
@@ -776,6 +815,16 @@ export function processLayerSegments(
         // Note: Aspect ratio cropping is now applied to the final output video
         // after all compositing is complete, not per-segment
 
+        // Speed ramp — rewrites each frame's timestamp along the ramp curve.
+        // It goes ahead of motion blur so tmix blends frames that are already
+        // in their retimed positions, which is what makes a fast ramp smear
+        // rather than strobe.
+        if (trackInfo.speedRampFilter) {
+          const srRef = `[${uniqueIndex}_sr]`;
+          videoFilters.push(`${videoStreamRef}${trackInfo.speedRampFilter}${srRef}`);
+          videoStreamRef = srRef;
+        }
+
         // Motion blur — tmix frame blending (non-destructive, baked at export)
         const mb = trackInfo.motionBlur ?? 0;
         if (mb > 0) {
@@ -795,6 +844,40 @@ export function processLayerSegments(
           const cgRef = `[${uniqueIndex}_cg]`;
           videoFilters.push(`${videoStreamRef}${trackInfo.colorGradeFilter}${cgRef}`);
           videoStreamRef = cgRef;
+        }
+
+        // Ken Burns push-in — baked as a supersampled zoompan walking the same
+        // eased window the preview draws (see buildKenBurnsChain). Bottom layer
+        // only, after scale/pad: the stream is at target dimensions there,
+        // which zoompan must know exactly. A clip split across segments keeps
+        // its move continuous via the frame offset.
+        if (trackInfo.kenBurns && isBottomLayer) {
+          const kbScale = trackInfo.videoTransform?.scale ?? 1;
+          if (Math.abs(kbScale - 1) > 0.001) {
+            console.warn(
+              `⚠️ Ken Burns skipped for segment ${segmentIndex}: transform scale ${kbScale} changes the stream size`,
+            );
+          } else {
+            const kbOffset = Math.max(
+              0,
+              Math.round(segment.startTime * targetFps) -
+                (trackInfo.timelineStartFrame ?? 0),
+            );
+            const kbRef = `[${uniqueIndex}_kb]`;
+            videoFilters.push(
+              `${videoStreamRef}${buildKenBurnsChain(
+                trackInfo.kenBurns,
+                targetDimensions.width,
+                targetDimensions.height,
+                targetFps,
+                kbOffset,
+              )}${kbRef}`,
+            );
+            videoStreamRef = kbRef;
+            console.log(
+              `🎥 Layer ${layerIndex}: Ken Burns push to ${Math.round((trackInfo.kenBurns.endZoom ?? 1.14) * 100)}% over ${trackInfo.kenBurns.frames} frames (offset ${kbOffset})`,
+            );
+          }
         }
 
         concatInputs.push(videoStreamRef);
@@ -831,7 +914,13 @@ function determineTargetDimensions(
       `📐 Checking input: ${path}, isVideo: ${FILE_EXTENSIONS.VIDEO.test(path)}, width: ${trackInfo.width}, height: ${trackInfo.height}`,
     );
 
-    if (!isGapInput(path) && FILE_EXTENSIONS.VIDEO.test(path)) {
+    // trackType guard: an audio track backed by its source .mp4 (extraction
+    // pending) matches the VIDEO extension but must not decide picture size.
+    if (
+      !isGapInput(path) &&
+      trackInfo.trackType !== 'audio' &&
+      FILE_EXTENSIONS.VIDEO.test(path)
+    ) {
       // Found a video file - check if it has explicit dimensions
       if (trackInfo.width && trackInfo.height) {
         console.log(
@@ -991,6 +1080,7 @@ export function buildSeparateTimelineFilterComplex(
       const path = getInputPath(input);
       if (
         !isGapInput(path) &&
+        trackInfo.trackType !== 'audio' &&
         FILE_EXTENSIONS.VIDEO.test(path) &&
         trackInfo.aspectRatio
       ) {
@@ -2448,7 +2538,23 @@ export function handleFilterComplex(
     const hasVideoInputs = videoLayers.size > 0 || imageLayers.size > 0;
     const hasAudioInputs = audioTimeline.segments.length > 0;
     const isAudioOnlyExport = !hasVideoInputs && hasAudioInputs;
-    const shouldMapAudio = hasVideoInputs || isAudioOnlyExport;
+    // NEVER map a label the graph does not define. `-map [audio]` against a
+    // graph with no `[audio]` output is a hard ffmpeg parse error ("Output
+    // with label 'audio' does not exist") that kills the whole render — a
+    // silent video is strictly better than no video, and the warning below
+    // makes the drop findable. The graph is the ground truth, not the input
+    // counts: any segment dropped between counting and filter-building (file
+    // index not found, misrouted track) breaks the two apart.
+    const graphDefinesAudio = /\[audio\]/.test(filterComplex);
+    const shouldMapAudio =
+      (hasVideoInputs || isAudioOnlyExport) && graphDefinesAudio;
+    if ((hasVideoInputs || isAudioOnlyExport) && !graphDefinesAudio) {
+      console.warn(
+        '⚠️ AUDIO DROPPED FROM EXPORT: the filter graph produced no [audio] ' +
+          'output (all audio segments were dropped or misrouted). Exporting ' +
+          'video without an audio stream instead of failing the render.',
+      );
+    }
 
     // Add hardware upload filter for VAAPI if needed
     if (hwAccel?.type === 'vaapi') {

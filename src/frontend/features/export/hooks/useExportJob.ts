@@ -6,8 +6,11 @@ import { TrackInfo, VideoEditJob } from '@/backend/ffmpeg/schema/ffmpegConfig';
 import { useCallback } from 'react';
 import { NoiseReductionCache } from '../../editor/preview/services/NoiseReductionCache';
 import { buildFfmpegVoiceChain } from '../../editor/preview/utils/voiceIsolationCurve';
-import { buildFfmpegAgeChain, ageToParams } from '../../editor/preview/utils/voiceAgeParams';
 import { buildFfmpegGradeFilter } from '../../editor/preview/utils/colorGradeUtils';
+import {
+  buildRampVideoGraph,
+  buildSpeedRampAudioFilter,
+} from '../../editor/preview/utils/speedRampFilter';
 import { resolveExportPreset, fitPresetDimensions } from '../utils/exportPresets';
 import {
   useVideoEditorStore,
@@ -583,11 +586,21 @@ function convertTracksToFFmpegInputs(
         (track as any).voiceIsolation?.nodes?.length
           ? buildFfmpegVoiceChain((track as any).voiceIsolation.nodes)
           : undefined,
-      // Bake the Voice Ager (Skill 3) so export matches the live preview: the same
-      // ageYears → pitch/formant + timbre chain the ager stage runs in real time.
-      voiceAgeChain:
-        track.type === 'audio' && (track as any).voiceAge?.enabled
-          ? buildFfmpegAgeChain(ageToParams((track as any).voiceAge.ageYears ?? 65)) || undefined
+      // Reverb Processor: the live preview stage is baked at export by a python
+      // pre-pass in the main process (scripts/reverb_processor.py — the same
+      // DSP the preview convolver/suppressor runs). We only ship the amount.
+      reverbAmount:
+        track.type === 'audio' && (track as any).reverbProcessor?.amount
+          ? (track as any).reverbProcessor.amount
+          : undefined,
+      // Stabilization: the live preview counter-translates each frame by the
+      // analyzed offsets; export bakes the identical offsets in the main-process
+      // pre-pass (scripts/stabilize.py --mode bake). We only ship the sidecar path.
+      stabilizeOffsetsPath:
+        track.type === 'video' &&
+        (track as any).stabilization?.enabled &&
+        (track as any).stabilization?.offsetsPath
+          ? (track as any).stabilization.offsetsPath
           : undefined,
       trackType: track.type,
       visible: track.visible,
@@ -609,6 +622,29 @@ function convertTracksToFFmpegInputs(
       colorGradeFilter:
         track.type === 'video'
           ? buildFfmpegGradeFilter((track as any).colorGrade) ?? undefined
+          : undefined,
+      // Bake the speed ramp so the exported file walks the same curve the
+      // preview does, rather than snapping back to constant speed.
+      speedRampFilter:
+        track.type === 'video'
+          ? (buildRampVideoGraph((track as any).speedRamp, {
+              id: track.id,
+              fps: timelineFps,
+            }) ?? undefined)
+          : undefined,
+      speedRampAudioFilter:
+        buildSpeedRampAudioFilter((track as any).speedRamp) ?? undefined,
+      // Bake the Ken Burns push-in so the exported picture walks the same
+      // eased window the preview draws. The backend builds the zoompan chain
+      // (it knows the final export dimensions); we ship the parameters only.
+      kenBurns:
+        track.type === 'video' && (track as any).kenBurns?.enabled
+          ? {
+              endZoom: (track as any).kenBurns.endZoom,
+              cx: (track as any).kenBurns.endCenter?.x ?? 0.5,
+              cy: (track as any).kenBurns.endCenter?.y ?? 0.5,
+              frames: Math.max(2, track.endFrame - track.startFrame),
+            }
           : undefined,
     };
 

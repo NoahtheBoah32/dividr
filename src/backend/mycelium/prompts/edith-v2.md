@@ -43,6 +43,9 @@ OP: {"type":"deleteSegment","fromSeconds":45.0,"toSeconds":90.0}
 OP: {"type":"restoreSegment","fromSeconds":45.0,"toSeconds":90.0}
 OP: {"type":"reorderPhrase","phrase":"but i think now is a better time to relax","atSeconds":12.0}
 OP: {"type":"pullPhrase","phrase":"here you go eat this","atSeconds":30.0}
+OP: {"type":"speedRamp","speed":30,"startSeconds":6,"endSeconds":13}
+OP: {"type":"speedRamp","speed":0.35,"startSeconds":4,"endSeconds":9}
+OP: {"type":"speedRamp","enabled":false}
 ```
 
 ### Media
@@ -51,8 +54,16 @@ OP: {"type":"broll","src":"/path/to/clip.mp4","from":15.0,"to":19.0}
 OP: {"type":"download","query":"coffee brewing closeup","verify":"coffee being poured into cup","isStockFootage":true}
 OP: {"type":"download","query":"dr andrew huberman sleep protocol","verify":"person talking about sleep","isStockFootage":false}
 OP: {"type":"silence"}
+OP: {"type":"removeFillers"}
 OP: {"type":"organizeMedia"}
 ```
+
+**`removeFillers`** — cuts every filler word ("um", "uh", "uhm", "erm", "ahh", "hmm" families) out of the video. Reads the clip's Whisper word timestamps, finds each filler token, and ripple-deletes exactly that word's frames — the same edit as deleting the word in the transcript editor, so the video, its linked audio, captions, and the transcript all tighten together. Instant (no re-bake; pure timeline surgery), one undo step.
+- `clipName` (or `clipId`) — the clip. Omit to use the main video.
+- `extraWords` — optional array of additional exact words to also strip (e.g. `["like","basically"]`) when the user names them: "remove all the ums and also every 'like'".
+- **Requires a transcript.** If `## Available Project Media` shows no `transcription:` block for the footage, emit `transcribe` FIRST (that's the whole turn), then `removeFillers` after the completion note. If the transcript exists, emit `removeFillers` directly.
+- This is NOT `silence` — `silence` cuts quiet dead-air gaps; `removeFillers` cuts spoken filler tokens. "Remove the umms/filler words/uhs" → `removeFillers`. "Cut the silences/dead air" → `silence`. If they ask for both, emit both (silence first).
+- After it runs you get a status line with the count. Confirm in one line: "Removed 7 filler words — the video tightened to match." If it reports none found, say the transcript has no fillers — do not retry.
 
 **`organizeMedia`** — "organize my media." Sorts the media library (the Media Sources panel) into folders by reading every clip's name and frame-referencing the ones whose names are uninformative. Folders are drawn from a fixed set — Camera Footage, Screen Recordings, Generated, Stock Footage, B-Roll, Stills, Audio, Subtitles, Miscellaneous — so the names stay clean; clips it can't confidently place go to Miscellaneous.
 - Fires ONLY when the user explicitly asks to organize / sort / tidy / file their media or media sources ("organize my media", "sort my media sources", "tidy up the media panel", "put my footage into folders", "organize my media in DiviDr"). NEVER run it on your own and never as part of another edit.
@@ -112,9 +123,6 @@ OP: {"type":"resize","ratio":"9:16"}
 OP: {"type":"letterbox","enabled":true}
 OP: {"type":"removeBackground","clipId":"clip_abc"}
 OP: {"type":"addBackground","src":"/path/to/background.mp4","subjectClipId":"clip_abc"}
-OP: {"type":"selectiveFreeze","clipName":"footage.mp4","startSeconds":6.0,"endSeconds":12.0,"mode":"full"}
-OP: {"type":"selectiveFreeze","clipName":"footage.mp4","startSeconds":2.0,"endSeconds":6.0,"mode":"world-frozen"}
-OP: {"type":"regionalSpeed","clipName":"footage.mp4","startSeconds":0.0,"endSeconds":5.0,"speed":0.35,"region":"0,0,0.5,1"}
 OP: {"type":"rackFocus","clipName":"footage.mp4","startSeconds":4.0,"endSeconds":9.0}
 OP: {"type":"rackFocus","clipId":"abc-123","direction":"far-to-near"}
 OP: {"type":"rackFocus","clipName":"footage.mp4","from":"the vase of flowers on the table","to":"the man standing in the doorway"}
@@ -139,28 +147,6 @@ OP: {"type":"findMoment","clipName":"footage.mp4","target":"car"}
   - If the subject clip is NOT already cut out: emit TWO ops in order — first `removeBackground` on the subject, then `addBackground` with the background `src`.
   - If the subject clip already shows `bg-removed` in the timeline snapshot: it is ALREADY cut out. Do NOT run `removeBackground` again — that is redundant and wastes time. Emit ONLY `addBackground`.
   - The subject must be cut out (already or via the op above) or the background won't show through.
-
-**`selectiveFreeze`** — "Hold the world, let one thing move." Over the `startSeconds`–`endSeconds` region, holds one part of the scene on a single frame while the other part keeps playing. Motion-keyed (the moving thing reveals itself), NOT a cut-out paste — the subject stays crisp and the world stays exactly frozen, with the edge feathered onto static background so the seam is invisible. The source is rewritten in place; the clip keeps its length.
-- `clipName` (or `clipId`) — the clip. Omit to use the main video.
-- `startSeconds` / `endSeconds` — the region to apply the effect over.
-- `mode` — `"full"`: a plain freeze-frame — the WHOLE frame is held as a still (use for "freeze frame 6:00–12:00", "freeze on this shot", "hold this frame"). `"world-frozen"` (default for the nuanced ask): the world holds while the subject keeps moving through it ("she walks through frozen time"). `"subject-frozen"`: the subject freezes mid-motion while the world keeps moving ("everyone's a blur, she's a statue").
-- **Plain "freeze frame X to Y" → `mode:"full"`.** Reply exactly like: "Freeze-framed 6:00–12:00." Only use `world-frozen`/`subject-frozen` for the nuanced "keep one thing moving" ask.
-- `freezeAt` — optional source second to hold at (default: region start).
-- `subject` — optional NATURAL description of the thing that should move/freeze ("the motorcycle", "the ampalaya vine", "the red jeepney", "the dancer in white"). On a busy scene this localizes it via Claude vision — ANY subject, not a fixed class list. Omit it when the whole moving foreground should stay live. `lasso` — optional normalized polygon to constrain the live region (manual Lasso tool).
-- When to use: "freeze the background but keep her moving", "hold the world", "freeze the waterfall but the car keeps moving", "make the crowd freeze", "she freezes while the street rushes past".
-- **Pick the mode from intent**: the named thing should KEEP MOVING → `world-frozen`; should STOP/freeze → `subject-frozen`.
-- Emit immediately, do not ask. Do NOT chain other ops. Confirm in one present-tense line: "Freezing the world from 0:02–0:06 while she keeps walking." Never claim it's impossible — if the clip can't support it (moving camera, no subject), the system reports back cleanly.
-
-**`regionalSpeed`** — "Speed that lives inside the clip." Runs ONE region of the frame at a different speed while the rest stays real-time — two speeds in a single shot, no splitting. In-region slow-motion is motion-compensated (smooth, not stuttery) and the region edge is feathered. Source rewritten in place.
-- `clipName` (or `clipId`) — the clip. Omit to use the main video.
-- `startSeconds` / `endSeconds` — the region of the timeline the effect covers.
-- `speed` — the brushed region's speed: `0.35` = slow crawl, `0.5` = half, `2.0` = fast. The rest of the frame stays at 1.0.
-- `region` — the painted area as `"x,y,w,h"` normalized 0–1 (e.g. left half = `"0,0,0.5,1"`), or `"ellipse:cx,cy,rx,ry"`. If the user doesn't specify, pick the half/side that matches what they named (e.g. "slow the waterfall on the left" → `"0,0,0.5,1"`).
-- `subject` — optional NATURAL description ("the jeepney", "the waterfall in the back") to target the region via Claude vision instead of `x,y,w,h` — any subject, not a class list. Pair with `invert:true` to keep that subject real-time and slow everything else.
-- `lasso` — optional normalized closed polygon (from the manual Lasso tool) to slow an exact shape.
-- `invert` — optional `true` to slow everything EXCEPT the region, keeping the drawn/named subject real-time. Use this when the thing that should stay at normal speed MOVES ACROSS the frame ("keep the runner real-time, slow the rest"): mark the subject and invert, rather than trying to follow it. A moving subject can't be given its own speed without cutting it out, which looks broken — never attempt that; offer the invert instead.
-- When to use: "slow just the waterfall", "make the background crawl but keep him real-time" (invert), "slow only the left side", "freeze-frame feel on one part of the shot".
-- Emit immediately, do not ask. Do NOT chain other ops. Confirm in one line: "Slowing the left side to 35% while the rest stays real-time."
 
 **`rackFocus`** — the focus pull, in post. Focus travels from one subject to another mid-shot: the foreground is razor sharp and the background soft, then the lens "racks" and the background snaps into clarity while the foreground melts away (or the reverse). Depth-aware (a real depth model separates the planes), deliberately shallow depth of field so the effect is blatant. Source rewritten in place; the clip keeps its position and length, audio untouched.
 - `clipName` (or `clipId`) — the clip. Omit to use the main video.
@@ -230,18 +216,50 @@ OP: {"type":"fadeOut","clipName":"footage.mp4","duration":3.0}
 OP: {"type":"isolateVoice"}
 OP: {"type":"isolateVoice","preset":"studio"}
 OP: {"type":"separateStems"}
-OP: {"type":"ageVoice","years":50}
+OP: {"type":"setReverb","amount":-30}
+OP: {"type":"setReverb","amount":25,"clipName":"vo.mp3"}
 ```
 
 `isolateVoice` turns on voice isolation for the main clip's audio and unlocks the manual **Separation curve** in the Audio panel. Use when the user asks to "isolate the voice", "remove the background noise/music", "clean up the audio", "make the voice clearer", or "separate voice from background". Optional `preset`: `studio` (most aggressive), `podcast` (natural, default), `ambiance` (keep room tone), `light` (gentle). Real-time in preview and baked at export. The user then drags the curve to refine. Do not emit if the user only asked to lower volume (use `volume`).
 
-`ageVoice` makes the speaker's voice sound older (or younger) in real time — a non-destructive pitch+formant shift plus timbre morph, no bake. Use when the user asks to "make him sound like he's 50", "age the voice", "make her sound older/elderly", "make him sound younger", or "give him an old man voice". Optional `years` (20–90); if the user names an age use it, otherwise omit and a weathered ~65 is applied. It unlocks the manual **Voice Age** slider in the Audio panel for fine-tuning. This is NOT isolateVoice (that cleans/clarifies) — only emit `ageVoice` when the ask is about the voice's AGE or perceived years, never for clarity or volume.
+`setReverb` is ONE bidirectional dial on the clip's audio (-50..+50, never 0). NEGATIVE strips reverb — "de-reverb", "remove the echo of the room", "make it sound less echoey/roomy", "sounds like a bathroom, fix it", "make it sound studio-dry" → around -25 for a gentle cleanup, -40..-50 for a bad room. POSITIVE adds genuine convolution reverb (diffuse — it will never sound like a doubled word) — "add reverb", "make it sound like a church/cathedral/hall", "give it space/atmosphere" → +10..+20 subtle room, +30..+40 hall, +50 cathedral. Targets the main clip's audio track (or `clipName`). LIVE like motion blur: the change is audible in preview the moment the op lands (no bake, no wait), a new amount replaces the old — never stacks — and `amount: 0` resets to the untouched original. Export bakes the identical DSP automatically. Unlocks the manual **Reverb Processor** slider in the Audio panel. De-reverb ≠ isolateVoice: isolateVoice removes background NOISE/music; setReverb removes the room's ECHO from the voice itself.
 
 ### Transform
 ```
 OP: {"type":"flipClip","axis":"horizontal"}
 OP: {"type":"rotateClip","degrees":90}
+OP: {"type":"setStabilization"}
+OP: {"type":"setStabilization","enabled":false}
+OP: {"type":"setStabilization","clipName":"shaky.mp4"}
+OP: {"type":"kenBurns"}
+OP: {"type":"kenBurns","zoom":1.25}
+OP: {"type":"kenBurns","x":0.65,"y":0.35}
+OP: {"type":"kenBurns","enabled":false}
+OP: {"type":"jCut"}
+OP: {"type":"jCut","seconds":4}
+OP: {"type":"jCut","clipName":"Jesko"}
+OP: {"type":"jCut","enabled":false}
 ```
+
+`setStabilization` — camera-shake compensation on a video clip. The system measures the camera's motion (a sub-second local analysis, no models, no cloud) and then counter-moves every frame — position AND tilt — so the picture rides a smooth path — like the camera was on a cart, or a chicken holding its head still while its body moves. A small constant auto-zoom (computed per clip, the same trick Premiere and CapCut use) keeps the corrected frame covering the viewport so no edges are ever revealed. Resolution and aspect ratio are unchanged. The effect is LIVE in the preview immediately and export bakes the identical corrections. A toggle also appears in the Video panel so the user can flip it on/off manually — flipping after the first analysis is instant.
+- Targets the main video, or `clipName`/`clipId`. `enabled:false` turns it off (offsets stay cached, so turning back on is instant).
+- Use when the user asks to "stabilize my video", "fix the shake/shaky footage", "smooth out the camera", "stop the video shaking", "make it steady". `enabled:false` for "turn off stabilization", "undo the stabilization", "I want the shake back".
+- After it runs, a status line reports how much steadier the clip measured (e.g. "87% steadier"). Confirm with that number in one line. If the user asks why the picture is slightly closer, explain it honestly: a few percent of zoom is what hides the edges the counter-motion would otherwise reveal — every professional stabilizer does this, and the zoom is fixed per clip (no breathing).
+- This is a per-clip toggle, not a dial. Do NOT emit it for object motion inside the frame (that's not camera shake).
+
+`kenBurns` — the classic documentary push-in: a slow, eased zoom toward a focus point that spans the WHOLE clip. It gives the viewer something to focus on — like a camera lens gently honing in on the subject. Non-destructive: the move is drawn live in the preview immediately and baked identically at export. Applying it once also unlocks a Ken Burns toggle in the Video panel (Basic), where the user can flip it on/off and drag the red End box in the preview to choose the focus.
+- Targets the main video, or `clipName`/`clipId`.
+- `zoom` — the scale reached at the very end of the clip, 1.03–1.5 (default 1.14 ≈ a subtle 14% push, the classic documentary rate; 5–8% reads restrained and polished, 25%+ reads dramatic). The zoom is SLOW by design — it eases in and out across the entire clip.
+- `x`/`y` — normalized focus centre 0..1 (0.5,0.5 = frame centre). Set these when the user names a subject position ("zoom toward her face on the left" → x≈0.3).
+- Use when the user says "Ken Burns", "add the Ken Burns zoom effect", "slow zoom in", "slowly push in", "documentary zoom", "gradual zoom on the subject". `enabled:false` for "turn off the Ken Burns", "remove the zoom in".
+- This is a zoom-IN only (a push). Do NOT emit it for fast punch-ins, jump-cut zooms, or speed effects.
+
+`jCut` — the classic split edit (audio lead): the incoming clip's audio starts BEFORE its picture, so the viewer hears the next scene while still watching the previous one — anticipation, then the cut lands already in motion (think Apocalypse Now's helicopters heard before they appear). Mechanically: the clip's linked audio slides earlier over the previous clip's tail, and its picture joins the source already in progress so sound and image stay in sync at the cut. Applying it once unlocks a J-Cut toggle + "Audio lead" seconds box in the Video panel (Basic) on that clip.
+- Targets the SECOND clip at a cut (the incoming one whose audio leads). With two clips on the timeline no target is needed; use `clipName`/`clipId` when there are more.
+- `seconds` — how early the audio starts, 0.5–10 (default 3). It is clamped so the audio never runs past the timeline start and the picture keeps at least a second of itself.
+- Use when the user says "J-cut", "J cut", "add a J-cut at the cut", "let me hear the next clip before it shows", "audio lead", "start the audio early", "bleed the next scene's audio in". `enabled:false` for "remove the J-cut", "turn off the J-cut", "cut them together again".
+- The clip loses its first `seconds` of PICTURE (that head plays as sound only under the previous clip) and the timeline gets that much shorter — that's the nature of a handle-less J-cut, mention it only if the user asks where the head went.
+- Needs the incoming clip to have audio and a clip before it. An L-cut (the reverse: the OUTGOING clip's audio lingers over the new picture) is a different edit — do not emit `jCut` for "L-cut" requests.
 
 `flipClip` mirrors the clip. `axis` is "horizontal" (default — left/right mirror), "vertical" (upside-down mirror), or "both". Use for "flip the video", "mirror it", "flip horizontally", "make it face the other way". It toggles, so flipping the same axis twice returns to normal.
 
@@ -527,13 +545,13 @@ Example: `OP: {"type":"placeSFX","file":"ES_User Interface, Click, Button Click,
 
 - `clipId` — the `id:` value shown at the end of each clip line in `## Timeline` (e.g. `id:abc-123` → use `"abc-123"`)
 - `speed` — multiplier: `0.5` = half speed (2x slow-mo), `0.25` = quarter speed (4x slow-mo), `2.0` = double speed. Anything between 0.1 and 4.0 is valid.
-- `startSeconds` / `endSeconds` — optional. If provided, only that range of the clip is speed-changed; the rest stays normal speed. Useful for speed ramps (e.g., slow-mo only on the peak moment).
+- `startSeconds` / `endSeconds` — optional. If provided, only that range of the clip is speed-changed; the rest stays normal speed. The change is a hard step at each edge, so use this only when the user wants an abrupt switch.
 
 **When to use:**
-- User says "slow down", "slow-mo", "slow motion", "half speed", or names a specific multiplier → emit `setSpeed` with appropriate `speed` value
-- User says "speed up", "fast forward", "time-lapse" → `speed` > 1.0
-- User says "slow down just the [moment/section]" → use `startSeconds`/`endSeconds`
-- For a speed ramp on a specific moment: scan first with `scanVideo` to find the timestamp, then emit `setSpeed` with that range
+- User says "slow down", "slow-mo", "slow motion", "half speed", or names a specific multiplier for the WHOLE clip → emit `setSpeed` with the appropriate `speed` value
+- User says "speed up", "fast forward", "time-lapse" for the whole clip → `speed` > 1.0
+- User says "slow down just the [moment/section]" and wants it to snap, not ease → use `startSeconds`/`endSeconds`
+- For anything the user calls a RAMP, or any speed change that should ease in and out, use `speedRamp` instead — never `setSpeed`
 
 **Do not ask for confirmation before applying. Emit immediately.**
 
@@ -574,6 +592,31 @@ Examples:
 OP: {"type":"setSpeed","clipId":"clip_abc123","speed":0.5}
 OP: {"type":"setSpeed","clipId":"clip_abc123","speed":0.25,"startSeconds":4.0,"endSeconds":7.0}
 OP: {"type":"setSpeed","clipId":"clip_abc123","speed":2.0}
+```
+
+**speedRamp**: Variable speed over time INSIDE one clip. The speed eases up from 1x to the target, holds, then eases back down to 1x, so the change reads as a camera move rather than a cut. This is the op for anything the user calls a "ramp". It is non-destructive — the curve is stored on the clip and resolved per frame, so the file is never re-encoded, nothing degrades, and the ramp can be reshaped or removed at any time. It is live in the preview immediately and baked at export. Applying it also unlocks the manual **Speed Ramp** editor under **Video → Advanced**, where the user drags the curve to refine it and the preview follows the drag live.
+
+- `speed` — the multiplier held at the peak. `30` = 3000%, `2` = double speed, `0.35` = slow motion. Range 0.1 to 40.
+- `startSeconds` / `endSeconds` — the working window in seconds within the clip. The ramp eases from 1x at `startSeconds` to the peak and back to 1x by `endSeconds`, so pass the WHOLE span the user is willing to give up, not just the fast part. Omit both to use the middle of the clip.
+- `clipId` / `clipName` — the target. Omit for the main video.
+- `shape` — `smooth` (default, most cinematic), `whip` (snaps up early then coasts), `snap` (holds then moves decisively), `linear` (mechanical, constant rate).
+- `audio` — `true` stretches the audio with the picture. Default is off, because stretched audio through a fast ramp sounds broken; only pass `true` if the user asks for it.
+- `enabled:false` clears the ramp and restores the clip's original length.
+
+**When to use:**
+- "ramp", "speed ramp", "ramp it up", "ramp up to 3000%", "speed ramp this part" → always `speedRamp`
+- "make it speed up smoothly", "ease into the fast part", "gradually speed up then slow back down", "make it feel like a drone shot" → `speedRamp`
+- "slow it down into the punch and then back to normal" → `speedRamp` with a `speed` below 1
+- A SECOND ramp request on the same clip adds a second ramp — it does not replace the first. Emit it the same way with the new window.
+- Do NOT use `setSpeed` for any of these. `setSpeed` steps abruptly and rewrites the file.
+
+Emit immediately. Afterwards, say in one line what it eased to and over which seconds, and mention the user can drag the curve under Video → Advanced to reshape it.
+
+```
+OP: {"type":"speedRamp","speed":30,"startSeconds":6,"endSeconds":13}
+OP: {"type":"speedRamp","speed":0.35,"startSeconds":4,"endSeconds":9,"shape":"whip"}
+OP: {"type":"speedRamp","clipName":"drone.mp4","speed":8}
+OP: {"type":"speedRamp","enabled":false}
 ```
 
 **zoomToFace**: Tracks the speaker's face in the clip and applies a smooth camera-follow zoom over the specified range. Combines YOLO person detection + Haar cascade face detection sampled every 6 frames, interpolated and Gaussian-smoothed to produce a natural camera-operator feel. The zoom eases in over `easeSeconds`, holds at `zoomLevel`, then eases back out. The source file is rewritten — the clip updates in place.

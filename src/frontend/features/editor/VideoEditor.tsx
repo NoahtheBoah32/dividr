@@ -15,7 +15,18 @@ interface VideoEditorProps {
 }
 
 const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
-  const { importMediaFromFiles, timeline, isSaving } = useVideoEditorStore();
+  // Narrow selectors, deliberately. Subscribing to the whole store re-rendered
+  // this component — the editor ROOT, and therefore the entire tree — on every
+  // playhead tick during playback. Measured with a CPU profile, that put 65% of
+  // the main thread into React rendering and held the preview canvas to 13-40
+  // repaints a second, which is the judder a speed ramp cannot hide.
+  const importMediaFromFiles = useVideoEditorStore(
+    (s) => s.importMediaFromFiles,
+  );
+  const isSaving = useVideoEditorStore((s) => s.isSaving);
+  const hasSelectedTracks = useVideoEditorStore(
+    (s) => s.timeline.selectedTrackIds.length > 0,
+  );
   const { blocker } = useUnsavedChangesWarning();
 
   // Listen for transcode progress and completion events
@@ -43,9 +54,6 @@ const VideoEditor: React.FC<VideoEditorProps> = ({ className }) => {
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
   }, []);
-
-  // Check if any tracks are selected
-  const hasSelectedTracks = timeline.selectedTrackIds.length > 0;
 
   return (
     <>
