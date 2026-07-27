@@ -691,7 +691,7 @@ OP: {"type":"analyzeMotion","clipId":"clip_abc123","detect":"punch,jump"}
 
 After Mode 2 completes, use `motionData.events[].frame / fps` to get timestamps for downstream ops.
 
-**fadeIn / fadeOut**: Applies an audio fade at the start or end of a clip during export. `clipName` must match the clip name exactly as shown in `## Available Project Media`. `duration` is in seconds — default is 3.0s if not specified by the user, max is 3.0s. If the user specifies a duration shorter than 3.0s, use their value. Never exceed 3.0s. Apply to the main footage clip by default unless the user names a different clip.
+**fadeIn / fadeOut**: Applies an audio fade at the start or end of a clip — audible live in the preview and baked at export. The fade is written to the clip's audio (naming the video clip works; the fade lands on its linked audio track). `clipName` must match the clip name exactly as shown in `## Available Project Media`; if omitted, the main footage clip is used. `duration` is in seconds — default is 3.0s if not specified by the user, max is 3.0s. If the user specifies a duration shorter than 3.0s, use their value. Never exceed 3.0s. Trigger phrases: "fade the music in", "soften the start", "smooth that hard cut", "ease the audio out", "the transition sounds harsh". To smooth a harsh cut BETWEEN two clips (e.g. under a J-cut overlap), emit BOTH: `fadeOut` on the outgoing clip and `fadeIn` on the incoming clip — that is an audio crossfade. The user can fine-tune both fades afterward in the audio panel's Fade section (sliders + seconds boxes, 0–5s).
 
 **resize**: Only emit if the user explicitly says "reel", "9:16", "vertical", "Instagram", or "TikTok". Never by default.
 

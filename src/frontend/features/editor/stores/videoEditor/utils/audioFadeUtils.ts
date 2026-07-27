@@ -15,7 +15,7 @@ export const FADE_MAX_SECONDS = 5;
 
 /** Clamp a user-entered fade length to the allowed range (0 disables). */
 export function clampFadeSeconds(seconds: number): number {
-  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  if (Number.isNaN(seconds) || seconds <= 0) return 0;
   return Math.min(FADE_MAX_SECONDS, Math.max(FADE_MIN_SECONDS, seconds));
 }
 
