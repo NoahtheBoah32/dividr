@@ -26,6 +26,7 @@ const GATE = [
   'tests/edith/media-card-probe.mjs',        // #85 fetched-media chat cards + preview overlay
   'tests/edith/verify-selection-tool.mjs',   // #88 chat selection tool (arm → click clip → card)
   'tests/edith/verify-send-to-edith-ops.mjs', // #91+#92 audio gate + hand-off + filler pipeline (op level)
+  'tests/release/export-smoke.mjs',          // real export UI → MP4 with video+audio that decodes to the end
 ];
 
 // Slow / live-EDITH end-to-end turns. Real API spend + minutes each. Run with --deep.
@@ -43,12 +44,22 @@ const DEEP_GATE = [
                                              // frames) until the app restarts.
 ];
 
-const PER_SCRIPT_TIMEOUT_MS = 8 * 60 * 1000;
+const PER_SCRIPT_TIMEOUT_MS = 12 * 60 * 1000; // above every script's own wait window
 // Every deep script starts from a fresh EDITH conversation — shared history from
 // earlier scripts makes live turns slow and non-deterministic.
 const deepEntries = DEEP_GATE.map((e) =>
   typeof e === 'string' ? { script: e, clearFirst: true } : { ...e, clearFirst: true });
-const scripts = process.argv.includes('--deep') ? [...GATE, ...deepEntries] : GATE;
+let scripts = process.argv.includes('--deep') ? [...GATE, ...deepEntries] : GATE;
+// --only a,b,c — run just the scripts whose path contains one of the substrings
+// (searches BOTH lists). For triaging a red gate without rerunning everything.
+const onlyArg = process.argv.find((a) => a.startsWith('--only'));
+if (onlyArg) {
+  const needles = (onlyArg.includes('=') ? onlyArg.split('=')[1] : process.argv[process.argv.indexOf(onlyArg) + 1] ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  scripts = [...GATE, ...deepEntries].filter((e) =>
+    needles.some((n) => (typeof e === 'string' ? e : e.script).includes(n)));
+  if (!scripts.length) { console.error(`--only matched nothing: ${needles.join(', ')}`); process.exit(2); }
+}
 
 // Pre-flight: is the app up with CDP?
 try {

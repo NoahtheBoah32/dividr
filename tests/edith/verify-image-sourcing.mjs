@@ -8,6 +8,15 @@ import os from 'node:os';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dlDir = path.join(os.homedir(), 'Dividr Downloads');
+// Remove this test's leftovers from previous runs — an existing copy makes the
+// downloader short-circuit and "new image landed" can never be satisfied.
+if (fs.existsSync(dlDir)) {
+  for (const f of fs.readdirSync(dlDir)) {
+    if (/fender|stratocaster/i.test(f) && /\.(jpe?g|png|webp|gif|avif)$/i.test(f)) {
+      fs.rmSync(path.join(dlDir, f), { force: true });
+    }
+  }
+}
 const before = new Set(fs.existsSync(dlDir) ? fs.readdirSync(dlDir) : []);
 const IMG_EXT = /\.(jpe?g|png|webp)$/i;
 

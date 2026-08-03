@@ -57,6 +57,11 @@ npm install
 npm start
 ```
 
+**One instance at a time.** Never run two copies of DiviDr — they share the same
+profile (projects database, recordings, settings) and will silently fight over
+project state. If the app behaves strangely, first check Task Manager for a
+second DiviDr/Electron instance left over from an earlier session.
+
 ## Tester update flow (every release)
 
 ```bash
