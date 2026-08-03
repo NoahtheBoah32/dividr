@@ -66,7 +66,8 @@ def _vision_find(args):
     except ImportError:
         import frame_reference                        # when run directly from the scripts/ dir
     return frame_reference.find_moment_vision(
-        args.input, args.target, start=args.start, end=getattr(args, "end", -1) or -1)
+        args.input, args.target, start=args.start, end=getattr(args, "end", -1) or -1,
+        dense=bool(getattr(args, "dense", False)))
 
 
 def handle_args(args):

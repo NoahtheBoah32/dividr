@@ -10,6 +10,7 @@ import { FridayPanel } from '@/frontend/features/mycelium/FridayPanel';
 import { initStoreAdapter } from '@/frontend/features/mycelium/storeAdapter';
 import { registerPanelComponent } from './panelRegistry';
 import { ReferencesPanel } from './components/referencesPanel';
+import { RecordPanel } from '@/frontend/features/recorder/RecordPanel';
 
 // Register all panel components
 export const initializePanelRegistry = () => {
@@ -22,6 +23,7 @@ export const initializePanelRegistry = () => {
   registerPanelComponent('captions', CaptionsPanel);
   registerPanelComponent('friday', FridayPanel);
   registerPanelComponent('references', ReferencesPanel);
+  registerPanelComponent('record', RecordPanel);
   // Wire OperationEngine to Dividr's store
   initStoreAdapter();
 };

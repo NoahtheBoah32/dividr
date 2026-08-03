@@ -35,7 +35,7 @@ await page.waitForTimeout(1500);
 const sendChat = async (msg) => {
   const ok = await page.evaluate((text) => {
     const ta = Array.from(document.querySelectorAll('textarea'))
-      .find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+      .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
     if (!ta) return false;
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
     setter.call(ta, text);
@@ -45,7 +45,7 @@ const sendChat = async (msg) => {
   if (!ok) return false;
   await page.waitForTimeout(400);
   // send = the enter key on the textarea (the app's primary path)
-  const ta = page.locator('textarea[placeholder*="reels" i]');
+  const ta = page.locator('textarea[placeholder*="edith" i]');
   await ta.press('Enter');
   return true;
 };

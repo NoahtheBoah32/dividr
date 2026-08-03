@@ -47,10 +47,14 @@ export function generateSubtitleContent(
     );
   }
 
-  // Extract subtitle segments from subtitle tracks with frame-based timing
+  // Extract subtitle segments from subtitle tracks with frame-based timing.
+  // A track may be a single legacy phrase (subtitleText) OR a merged caption
+  // stream (subtitleSegments, one entry per karaoke word) — the stream must be
+  // expanded here or the export burns the fallback text for the whole span.
+  let subtitleEntrySeq = 0;
   const subtitleSegments =
     subtitleTracks.length > 0
-      ? subtitleTracks.map((track, index) => {
+      ? subtitleTracks.flatMap((track, index) => {
           // Calculate timing relative to export start frame
           const relativeStartFrame = Math.max(
             0,
@@ -205,14 +209,94 @@ export function generateSubtitleContent(
             );
           }
 
-          return {
+          // Merged caption stream: group consecutive word-segments that share the
+          // same phrase text into ONE burned entry per phrase (the per-word gold
+          // highlight is a live-preview feature; export shows the phrase timing).
+          if (track.subtitleSegments?.length) {
+            const groups: Array<{ text: string; startFrame: number; endFrame: number; highlightWordIndex?: number }> = [];
+            for (const seg of track.subtitleSegments) {
+              const last = groups[groups.length - 1];
+              if (last && last.text === seg.text) {
+                last.endFrame = Math.max(last.endFrame, seg.endFrame);
+              } else {
+                groups.push({
+                  text: seg.text,
+                  startFrame: seg.startFrame,
+                  endFrame: seg.endFrame,
+                  highlightWordIndex: (seg as any).highlightWordIndex,
+                });
+              }
+            }
+            // Kinetic-typography emphasis: bake the highlighted word bigger (and
+            // accent-colored) via inline ASS override tags. Only fires when the
+            // track opts in with subtitleStyle.highlightScale — normal caption
+            // tracks are untouched. \fscx/\fscy are percentages of the style's
+            // font size, so this is resolution-independent; {\r} resets to the
+            // Dialogue's base style for the words that follow.
+            const ktScale = (trackStyle as any)?.highlightScale as number | undefined;
+            const ktAccent = (trackStyle as any)?.highlightColor as string | undefined;
+            const emphasize = (text: string, wordIdx: number | undefined): string => {
+              if (!ktScale || wordIdx === undefined || wordIdx < 0) return text;
+              const pct = Math.round(ktScale * 100);
+              const hex = /^#([0-9a-fA-F]{6})$/.exec(ktAccent ?? '');
+              const colorTag = hex
+                ? `\\c&H${(hex[1].slice(4, 6) + hex[1].slice(2, 4) + hex[1].slice(0, 2)).toUpperCase()}&`
+                : '';
+              let wordCount = 0;
+              return text
+                .split(/(\s+)/)
+                .map((token) => {
+                  if (/^\s*$/.test(token)) return token;
+                  return wordCount++ === wordIdx
+                    ? `{\\fscx${pct}\\fscy${pct}${colorTag}}${token}{\\r}`
+                    : token;
+                })
+                .join('');
+            };
+            return groups.map((g) => {
+              const gStart = Math.max(0, g.startFrame - (timelineStartFrame || 0)) / timeline.fps;
+              const gEnd = Math.max(0, g.endFrame - (timelineStartFrame || 0)) / timeline.fps;
+              const gText = applyTextWrapping(
+                g.text || '',
+                subtitleWidth,
+                fontSize,
+                fontFamily,
+                fontWeight,
+                fontStyle,
+                letterSpacing,
+                scale,
+                {
+                  lineHeight: trackStyle?.lineHeight,
+                  textTransform: trackStyle?.textTransform,
+                  textAlign: trackStyle?.textAlign,
+                  paddingX: SUBTITLE_PADDING_HORIZONTAL,
+                  paddingY: SUBTITLE_PADDING_VERTICAL,
+                  scaleLetterSpacing: true,
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word',
+                  whiteSpace: 'pre-wrap',
+                },
+              );
+              return {
+                startTime: gStart,
+                endTime: gEnd,
+                // Tag injection AFTER wrapping so the tags never skew width measurement
+                text: emphasize(gText, g.highlightWordIndex),
+                index: ++subtitleEntrySeq,
+                style,
+                position,
+              };
+            });
+          }
+
+          return [{
             startTime,
             endTime,
             text: cleanText,
-            index: index + 1,
+            index: ++subtitleEntrySeq,
             style,
             position, // Include position data for ASS positioning
-          };
+          }];
         })
       : [];
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { BasePanel } from '../../../components/panels/basePanel';
 import { CustomPanelProps } from '../../../components/panels/panelRegistry';
+import { SfxLibrarySection } from './SfxLibrarySection';
 
 export const AudioToolsPanel: React.FC<CustomPanelProps> = ({ className }) => {
   return (
@@ -10,11 +11,9 @@ export const AudioToolsPanel: React.FC<CustomPanelProps> = ({ className }) => {
       className={className}
     >
       <div className="space-y-4">
-        <div className="text-center text-muted-foreground">
-          <p className="text-sm">Coming soon</p>
-          <p className="text-xs mt-2">
-            Audio editing tools will be available in the next update.
-          </p>
+        <SfxLibrarySection />
+        <div className="text-center text-muted-foreground border-t border-neutral-800 pt-3">
+          <p className="text-xs">More audio tools coming soon.</p>
         </div>
       </div>
     </BasePanel>

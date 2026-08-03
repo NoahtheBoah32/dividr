@@ -525,7 +525,12 @@ function convertTracksToFFmpegInputs(
   },
 ): TrackInfo[] {
   return tracks.map((track) => {
-    const trackDurationSeconds = track.duration / timelineFps;
+    // Some ops create clips without a duration field — fall back to the frame
+    // span so the atrim filter never receives NaN (which kills the whole export).
+    const durationFrames = Number.isFinite(track.duration)
+      ? track.duration
+      : track.endFrame - track.startFrame;
+    const trackDurationSeconds = durationFrames / timelineFps;
     const sourceStartTime = track.sourceStartTime || 0;
 
     const audioInfo =

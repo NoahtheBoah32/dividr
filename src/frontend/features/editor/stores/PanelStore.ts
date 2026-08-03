@@ -11,6 +11,7 @@ export type PanelType =
   | 'captions' // Captions (custom component)
   | 'friday' // F.R.I.D.A.Y agent panel (custom component)
   | 'references' // Reference footage panel (custom component)
+  | 'record' // Record & create — in-app screen/camera/audio recorder (custom component)
   | null; // No panel shown
 
 // Metadata for panels
@@ -113,6 +114,13 @@ const panelMetadata: Record<Exclude<PanelType, null>, PanelMetadata> = {
     title: 'References',
     description: 'Style sources for EDITH',
     icon: '🎬',
+    hasCustomComponent: true,
+    width: 'w-80',
+  },
+  record: {
+    title: 'Record & create',
+    description: 'Record your screen, camera, or audio',
+    icon: '📹',
     hasCustomComponent: true,
     width: 'w-80',
   },

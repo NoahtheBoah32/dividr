@@ -25,7 +25,9 @@ interface DownloadApprovalState {
   resetForProjectSwitch: () => void;
 }
 
-async function importFileIntoLibrary(item: PendingDownload): Promise<void> {
+// Exported: the References panel reuses this exact import recipe for URL downloads.
+// Returns the new media library id so callers can reference the imported item.
+export async function importFileIntoLibrary(item: PendingDownload): Promise<string> {
   const store = useVideoEditorStore.getState() as any;
 
   const mimeTypes: Record<string, string> = {
@@ -76,6 +78,7 @@ async function importFileIntoLibrary(item: PendingDownload): Promise<void> {
   if (item.fileType === 'video' && duration <= 300) {
     (store as any).generateSpriteSheetForMedia(mediaId).catch(() => {});
   }
+  return mediaId;
 }
 
 export const useDownloadApprovalStore = create<DownloadApprovalState>((set, get) => ({
@@ -88,13 +91,18 @@ export const useDownloadApprovalStore = create<DownloadApprovalState>((set, get)
     const item = get().pending.find((p) => p.id === id);
     if (!item) return;
     set((s) => ({ pending: s.pending.filter((p) => p.id !== id) }));
+    let mediaId: string;
     try {
-      await importFileIntoLibrary(item);
+      mediaId = await importFileIntoLibrary(item);
     } catch (err) {
       console.error('[downloadApprovalStore] import failed:', err);
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `Import failed: ${err instanceof Error ? err.message : String(err)}` } }));
       return;
     }
+    // The chat renders EDITH's own fetches as playable cards — tell it what landed.
+    window.dispatchEvent(new CustomEvent('edith:mediaFetched', {
+      detail: { mediaId, name: item.title ?? item.fileName, mediaType: item.fileType },
+    }));
     window.dispatchEvent(new CustomEvent('edith:downloadImported', {
       detail: { id, remaining: get().pending.length, triggerContinue },
     }));

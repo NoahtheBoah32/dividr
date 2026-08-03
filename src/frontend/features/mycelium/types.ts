@@ -66,6 +66,23 @@ export type Op =
       topic?: string;        // content topic for relevance check (e.g. "permaculture food forest")
       isStockFootage?: boolean; // triggers watermark + talking-to-camera checks
     }
+  | {
+      // YouTube candidate search (yt-dlp ytsearchN) — returns titles/durations/views/channels
+      // as a result note so EDITH reasons over sources before emitting a download.
+      type: 'searchMedia';
+      query: string;
+      count?: number; // candidates to fetch, default 6, max 12
+    }
+  | {
+      // Remove filler words from a MEDIA FILE (not a timeline clip): transcribes the
+      // file itself, cuts every um/uh/erm/ahh/hmm, writes "Filler removed <name>" and
+      // imports it into the media panel. For recordings sent from the Record studio
+      // and any library media the user asks to clean. Timeline clips use removeFillers.
+      type: 'removeFillersFromMedia';
+      mediaPath?: string; // absolute path, e.g. from an [Attached: …] token
+      mediaName?: string; // or resolve by media-library name
+      extraWords?: string[]; // additional exact words to cut ("like", "you know")
+    }
   | { type: 'cutSilence'; clipId: string; noiseDb?: number; minDuration?: number }
   | { type: 'removeFillers'; clipId?: string; clipName?: string; extraWords?: string[] }
   | { type: 'runWhisper'; clipId: string; streamCaptions?: boolean }
@@ -355,12 +372,31 @@ export interface AgentPlan {
   open: boolean;       // dropdown expanded state
 }
 
+// Live reasoning feed — one stage per pipeline step EDITH is actually running
+// (shot detection, transcription, frame reads…). Mirrors internal progress to the UI.
+export interface ReasoningStage {
+  stage: string;            // e.g. "Breaking down the narrative structure"
+  detail?: string;          // e.g. "34 cuts across 3:20"
+  status: 'active' | 'done' | 'failed';
+}
+
+export interface AgentReasoning {
+  title: string;            // e.g. 'Watching "LEMMiNO — The Search for D.B. Cooper"'
+  stages: ReasoningStage[];
+  running: boolean;
+  failed?: boolean;
+  open: boolean;            // expanded state (auto-open while running, collapses on finish)
+  startedAt: number;
+  elapsedMs?: number;
+}
+
 export interface AgentMessage {
   id: string;
   role: 'user' | 'friday' | 'arthur' | 'edith' | 'system';
   text: string;
   timestamp: number;
   plan?: AgentPlan;         // present when this message is an editing plan
+  reasoning?: AgentReasoning; // present when this message is a live reasoning card
   imagePreviews?: string[]; // base64 data URLs for images attached by the user
   // Timeline clips the user attached by dragging into the chat — rendered as
   // Gemini-style cards on the sent bubble. thumbnail is only present on the
@@ -368,6 +404,11 @@ export interface AgentMessage {
   clipAttachments?: Array<{
     trackId: string; name: string; startSec: number; endSec: number; thumbnail?: string;
   }>;
+  // Media EDITH fetched herself (b-roll download, image sourcing) — rendered as a
+  // playable card on her side of the chat. Everything visual (thumbnail, preview
+  // URL, duration) is re-resolved from the media library by id at render time, so
+  // the card survives reloads and source swaps.
+  mediaCard?: { mediaId: string; name: string; mediaType: 'video' | 'audio' | 'image' };
 }
 
 export interface MycelliumState {

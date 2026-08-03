@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-var-requires */
 import { spawn, spawnSync } from 'child_process';
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, shell } from 'electron';
 import started from 'electron-squirrel-startup';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -5152,6 +5152,59 @@ async function verifyBrollQuality(
     }
   }
 }
+async function extractFrameAtSec(filePath: string, ffmpegBin: string, atSec: number): Promise<string | null> {
+  const tmp = path.join(os.tmpdir(), `dividr_verify_${Date.now()}.jpg`);
+  await new Promise<void>((resolve) => {
+    const p = spawn(ffmpegBin, ['-ss', String(Math.max(0, atSec)), '-i', filePath, '-frames:v', '1', '-q:v', '3', '-y', tmp], { shell: false });
+    p.on('close', () => resolve());
+    p.on('error', () => resolve());
+  });
+  try {
+    if (fs.existsSync(tmp)) {
+      const b64 = fs.readFileSync(tmp).toString('base64');
+      fs.unlinkSync(tmp);
+      return b64;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// Contact-sheet verification of a downloaded clip — the same batch-panel pipeline the
+// findMoment op uses (timestamped frames tiled into sheets, temp JPEGs deleted the
+// moment they're sent). A found timestamp doubles as proof AND tells EDITH where the
+// wanted scene lives inside the clip. Returns null on infrastructure failure (python
+// venv / claude CLI unavailable) so the caller can fall back to the discrete-frame
+// Haiku check instead of rubber-stamping the download.
+async function verifyClipByContactSheets(
+  filePath: string,
+  verify: string,
+  sendMsg: (text: string) => void,
+): Promise<{ passed: boolean; reason: string; foundAtSec: number | null; frameBase64: string | null } | null> {
+  sendMsg('Frame-verifying the clip against: "' + verify + '"...');
+  let res: any;
+  try {
+    res = await runPythonSkill('find-moment', ['--input', filePath, '--target', verify, '--interval', '0.5', '--start', '0', '--dense'], 'verifyDownload');
+  } catch {
+    return null;
+  }
+  // find_moment reports vision-infrastructure failures as a "clean miss" with an
+  // error field — that is NOT a scanned-and-absent verdict. Fall back, don't reject.
+  if (res?.error || res?.success === false) return null;
+  const foundAtSec = typeof res?.foundAtSec === 'number' ? res.foundAtSec : null;
+  if (foundAtSec === null) {
+    return { passed: false, reason: `no frame in the clip shows "${verify}"`, foundAtSec: null, frameBase64: null };
+  }
+  const mm = Math.floor(foundAtSec / 60);
+  const ss = Math.floor(foundAtSec % 60).toString().padStart(2, '0');
+  const frameBase64 = ffmpegPath ? await extractFrameAtSec(filePath, ffmpegPath, foundAtSec) : null;
+  return {
+    passed: true,
+    reason: `"${verify}" confirmed at ${mm}:${ss} (${res?.confidence ?? 'medium'} confidence)`,
+    foundAtSec,
+    frameBase64,
+  };
+}
+
 async function getVideoDuration(filePath: string, ffmpegBin: string): Promise<number> {
   return new Promise<number>((resolve) => {
     // Try ffprobe first (more reliable), fall back to ffmpeg -i stderr parsing
@@ -5483,6 +5536,162 @@ ipcMain.handle(
       return { success: true, filePath: chosenFile, fileType: 'video', title: pixabayTitle };
     }
 
+    // â”€â”€ IMAGE DOWNLOADS (direct file URLs + product/pin pages) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // EDITH sources still images. Two shapes:
+    //  1. A direct image file URL (Wikimedia, i.pinimg.com, i.ebayimg.com) — plain fetch.
+    //  2. An eBay listing / Pinterest pin PAGE URL — those sites 403 every non-browser
+    //     fetcher (incl. EDITH's WebFetch), but this app IS Chromium: load the page in a
+    //     hidden window, lift the high-res image URL from the DOM, then fetch that.
+    const saveImageToDisk = async (imgUrl: string, label: string) => {
+      const imgRes = await fetch(imgUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/*,*/*',
+          'Referer': new URL(imgUrl).origin + '/',
+        },
+      });
+      if (!imgRes.ok) return { success: false as const, error: `Image fetch failed (${imgRes.status})` };
+      const imgCtype = imgRes.headers.get('content-type') ?? '';
+      if (!imgCtype.startsWith('image/')) {
+        return { success: false as const, error: `URL did not return an image (content-type: ${imgCtype.slice(0, 60)})` };
+      }
+      const imgExt = (imgUrl.match(/\.(jpe?g|png|gif|webp|bmp)/i)?.[1] ?? 'jpg').toLowerCase();
+      const imgLabel = (label || 'image')
+        .toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'image';
+      const imgBasePath = path.join(dlDir, `${imgLabel}.${imgExt}`);
+      const imgPath = fs.existsSync(imgBasePath) ? path.join(dlDir, `${imgLabel}-${Date.now()}.${imgExt}`) : imgBasePath;
+      fs.writeFileSync(imgPath, Buffer.from(await imgRes.arrayBuffer()));
+      return { success: true as const, filePath: imgPath };
+    };
+
+    // â”€â”€ IMAGE SEARCH (DuckDuckGo Images JSON) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // `imagesearch:<query>` — real image search with structured results (direct image
+    // URL + true dimensions + hosting page). Supports `site:ebay.com`-style filters,
+    // skips watermark-heavy stock domains, prefers high resolution.
+    if (url.startsWith('imagesearch:')) {
+      const imgQuery = url.slice('imagesearch:'.length).trim();
+      if (!imgQuery) return { success: false, error: 'imagesearch: empty query' };
+      const WATERMARK_DOMAINS = /shutterstock|alamy|istockphoto|gettyimages|dreamstime|123rf|depositphotos|freepik|vecteezy|stock\.adobe/i;
+      const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+      sendMsg(`â†³ Searching images for: ${imgQuery}`);
+      try {
+        const htmlRes = await fetch(
+          `https://duckduckgo.com/?q=${encodeURIComponent(imgQuery)}&iax=images&ia=images`,
+          { headers: { 'User-Agent': UA } },
+        );
+        const vqd = (await htmlRes.text()).match(/vqd=["']?([\d-]+)["']?/)?.[1];
+        if (!vqd) return { success: false, error: 'Image search token not found — try again in a moment' };
+        const apiRes = await fetch(
+          `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(imgQuery)}&vqd=${vqd}&f=,,,&p=1`,
+          { headers: { 'User-Agent': UA, 'Referer': 'https://duckduckgo.com/' } },
+        );
+        if (!apiRes.ok) return { success: false, error: `Image search failed (${apiRes.status})` };
+        const searchData = (await apiRes.json()) as { results?: Array<{ image?: string; url?: string; title?: string; width?: number; height?: number }> };
+        const rawResults = (searchData.results ?? []).filter((r) => !!r.image);
+        if (!rawResults.length) return { success: false, error: 'Image search returned no results — try different wording' };
+
+        // Honor a site: filter via the hosting page, drop watermark stock, prefer >=640px.
+        const siteMatch = imgQuery.match(/site:([\w.-]+)/i);
+        const siteFilter = siteMatch ? siteMatch[1].toLowerCase().replace(/^www\./, '') : null;
+        let ranked = rawResults.filter((r) => {
+          if (WATERMARK_DOMAINS.test(r.image!) || WATERMARK_DOMAINS.test(r.url ?? '')) return false;
+          if (siteFilter && !(r.url ?? '').toLowerCase().includes(siteFilter)) return false;
+          return true;
+        });
+        if (!ranked.length) ranked = rawResults.filter((r) => !WATERMARK_DOMAINS.test(r.image!));
+        if (!ranked.length) return { success: false, error: 'Only watermarked stock results found — refine the query' };
+        const sharp = ranked.filter((r) => Math.min(r.width ?? 0, r.height ?? 0) >= 640);
+        if (sharp.length) ranked = sharp;
+
+        for (let i = 0; i < Math.min(ranked.length, 4); i++) {
+          const cand = ranked[i];
+          // eBay images upgrade to full resolution by swapping the size token.
+          const candUrl = cand.image!.replace(/(i\.ebayimg\.com\/images\/g\/[^/]+\/)s-l\d+/i, '$1s-l1600');
+          try {
+            const saved = await saveImageToDisk(candUrl, topic || imgQuery.replace(/site:[\w.-]+/i, '').trim());
+            if (saved.success) {
+              sendMsg(`âœ“ Image downloaded (${cand.width}Ã—${cand.height}, from ${(cand.url ?? '').slice(0, 60)})`);
+              return { success: true, filePath: saved.filePath, fileType: 'image', title: cand.title || topic || imgQuery, origin: 'imagesearch' };
+            }
+            sendMsg(`â†³ Candidate ${i + 1} failed (${saved.error}) — trying next`);
+          } catch {
+            sendMsg(`â†³ Candidate ${i + 1} unreachable — trying next`);
+          }
+        }
+        return { success: false, error: 'All image candidates failed to download — try different wording' };
+      } catch (searchErr) {
+        return { success: false, error: `Image search failed: ${String((searchErr as Error)?.message ?? searchErr).slice(0, 200)}` };
+      }
+    }
+
+    const isImagePageUrl = /^https?:\/\/(www\.)?ebay\.[a-z.]+\/itm\//i.test(url)
+      || /^https?:\/\/([a-z]+\.)?pinterest\.[a-z.]+\/pin\//i.test(url);
+    if (isImagePageUrl) {
+      sendMsg('â†³ Opening the page to extract its product photoâ€¦');
+      let scrapeWin: BrowserWindow | null = null;
+      try {
+        scrapeWin = new BrowserWindow({
+          show: false,
+          width: 1280,
+          height: 900,
+          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+        });
+        // Electron's default UA contains "Electron/…", which bot walls flag — present as plain Chrome.
+        scrapeWin.webContents.setUserAgent(
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        );
+        try {
+          await Promise.race([
+            scrapeWin.loadURL(url),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('page load timed out')), 25000)),
+          ]);
+        } catch (loadErr) {
+          if (!/ERR_ABORTED/.test(String(loadErr))) throw loadErr;
+        }
+        for (let w = 0; w < 30 && scrapeWin.webContents.isLoading(); w++) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        await new Promise((r) => setTimeout(r, 3000)); // let the image gallery hydrate
+        const imgUrl: string | null = await scrapeWin.webContents.executeJavaScript(
+          `(() => {
+            const ebay = [...document.querySelectorAll('img')]
+              .map((i) => i.currentSrc || i.src || i.getAttribute('data-src') || '')
+              .filter((s) => /i\\.ebayimg\\.com\\/images\\/g\\//.test(s));
+            if (ebay.length) return ebay[0].replace(/s-l\\d+/, 's-l1600');
+            const og = document.querySelector('meta[property="og:image"]');
+            return og ? og.getAttribute('content') : null;
+          })()`,
+          true,
+        );
+        if (!imgUrl) return { success: false, error: 'No product image found on that page — try a different listing URL' };
+        sendMsg('â†³ Downloading the high-res imageâ€¦');
+        const saved = await saveImageToDisk(imgUrl, topic || path.basename(new URL(url).pathname));
+        if (!saved.success) return { success: false, error: saved.error };
+        sendMsg('âœ“ Image downloaded');
+        return { success: true, filePath: saved.filePath, fileType: 'image', title: topic || 'page image', origin: 'url' };
+      } catch (pageErr) {
+        return { success: false, error: `Page image extraction failed: ${String((pageErr as Error)?.message ?? pageErr).slice(0, 200)}` };
+      } finally {
+        try { scrapeWin?.destroy(); } catch { /* already gone */ }
+      }
+    }
+
+    const isDirectImageUrl = /^https?:\/\//i.test(url) && /\.(jpe?g|png|gif|webp|bmp)([?#].*)?$/i.test(url);
+    if (isDirectImageUrl) {
+      try {
+        sendMsg('â†³ Downloading imageâ€¦');
+        const saved = await saveImageToDisk(
+          url,
+          topic || path.basename(new URL(url).pathname, path.extname(new URL(url).pathname)),
+        );
+        if (!saved.success) return { success: false, error: saved.error };
+        sendMsg('âœ“ Image downloaded');
+        return { success: true, filePath: saved.filePath, fileType: 'image', title: topic || 'image', origin: 'url' };
+      } catch (imgErr) {
+        return { success: false, error: `Image download failed: ${String((imgErr as Error)?.message ?? imgErr).slice(0, 200)}` };
+      }
+    }
+
     const isSearchQuery = url.startsWith('ytsearch') || url.startsWith('ytdl:ytsearch');
     if (isSearchQuery) sendMsg(`â†³ Searching YouTube for: ${url.replace(/^ytsearch\d*:/, '').trim()}`);
 
@@ -5735,20 +5944,29 @@ Be strict on watermarks â€” even faint, semi-transparent watermarks count a
         if (code === 0 && finalPath) {
           const runFrameCheck = async (checkPath: string) => {
             const anthropicApiKey2 = loadEnvKey('ANTHROPIC_API_KEY');
-            if (ffmpegPath && anthropicApiKey2 && verify) {
-              // Multi-frame content verify — Claude Haiku scans the clip against the requirement
-              const result = await verifyClipContent(checkPath, ffmpegPath, anthropicApiKey2, verify, sendMsg);
-              event.sender.send('edith:brollCheck', {
-                label: topic || verify,
-                duration: 0,
-                passed: result.passed,
-                reason: result.reason,
-                frameBase64: result.frameBase64 ?? null,
-              });
-              if (!result.passed) {
-                try { fs.unlinkSync(checkPath); } catch {}
-                settle({ success: false, error: `Clip rejected — doesn't match "${verify}": ${result.reason}` });
-                return false;
+            if (verify) {
+              // Contact-sheet verification first (findMoment's batch-panel pipeline);
+              // discrete-frame Haiku check only as infrastructure fallback.
+              let result = await verifyClipByContactSheets(checkPath, verify, sendMsg);
+              if (!result && ffmpegPath && anthropicApiKey2) {
+                sendMsg('Contact-sheet verify unavailable - falling back to quick frame check.');
+                const legacy = await verifyClipContent(checkPath, ffmpegPath, anthropicApiKey2, verify, sendMsg);
+                result = { passed: legacy.passed, reason: legacy.reason, foundAtSec: null, frameBase64: legacy.frameBase64 ?? null };
+              }
+              if (result) {
+                event.sender.send('edith:brollCheck', {
+                  label: topic || verify,
+                  duration: 0,
+                  passed: result.passed,
+                  reason: result.reason,
+                  frameBase64: result.frameBase64 ?? null,
+                });
+                if (!result.passed) {
+                  try { fs.unlinkSync(checkPath); } catch {}
+                  settle({ success: false, error: `Clip rejected — doesn't match "${verify}": ${result.reason}` });
+                  return false;
+                }
+                sendMsg(`Verified: ${result.reason}`);
               }
             } else if (ffmpegPath) {
               // No verify string — just show a preview frame
@@ -5824,13 +6042,153 @@ ipcMain.handle('media:cancelDownload', (_event, jobId: string) => {
   return { success: true };
 });
 
+// EDITH web sourcing: search YouTube via yt-dlp and return ranked candidates so the
+// model can reason over sources (resolution keywords, view counts, channel credibility)
+// instead of blindly taking ytsearch1's first hit. Search-only — nothing is downloaded.
+ipcMain.handle('media:searchMedia', async (_event, { query, count }: { query: string; count?: number }) => {
+  const q = (query ?? '').trim();
+  if (!q) return { success: false, error: 'Empty search query' };
+  const n = Math.min(Math.max(count ?? 6, 1), 12);
+  const ytdlp = getYtdlpPath();
+  return new Promise((resolve) => {
+    let out = '';
+    let errBuf = '';
+    const proc = spawn(ytdlp, [`ytsearch${n}:${q}`, '--dump-json', '--flat-playlist', '--no-warnings'], { shell: false });
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve({ success: false, error: 'Search timed out after 45s' });
+    }, 45000);
+    proc.stdout?.on('data', (c: Buffer) => { out += c.toString(); });
+    proc.stderr?.on('data', (c: Buffer) => { errBuf += c.toString(); });
+    proc.on('close', () => {
+      clearTimeout(timer);
+      const candidates = out
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .filter(Boolean)
+        .map((j: any) => ({
+          title: j.title ?? 'untitled',
+          url: j.url ?? (j.id ? `https://www.youtube.com/watch?v=${j.id}` : ''),
+          durationSec: typeof j.duration === 'number' ? Math.round(j.duration) : null,
+          viewCount: typeof j.view_count === 'number' ? j.view_count : null,
+          channel: j.channel ?? j.uploader ?? null,
+        }))
+        .filter((c: any) => c.url);
+      if (!candidates.length) {
+        const errLine = errBuf.trim().split('\n').filter(Boolean).slice(-1)[0];
+        resolve({ success: false, error: errLine || 'No results' });
+        return;
+      }
+      resolve({ success: true, candidates });
+    });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ success: false, error: `yt-dlp failed to start: ${err.message}` });
+    });
+  });
+});
+
+// Media-level filler removal — transcribes the FILE itself (word timestamps),
+// cuts every um/uh/erm/ahh/hmm in one filter_complex pass, and writes
+// "Filler removed <name>" next to the source. Powers EDITH's removeFillersFromMedia
+// op for media that is not on the timeline (e.g. recordings sent from the Record
+// studio). The timeline removeFillers op is untouched — that one ripple-deletes.
+ipcMain.handle('media:removeFillersFromFile', async (event, payload: { filePath: string; extraWords?: string[] }) => {
+  const sendMsg = (text: string) =>
+    event.sender.send('mycelium:message', { role: 'system', text });
+  const filePath = payload?.filePath;
+  if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+  if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available' };
+  try {
+    await ensurePythonInitialized('ipc:media:removeFillersFromFile');
+    sendMsg('↳ Transcribing the recording to find every filler word…');
+    const t0 = Date.now();
+    const result: WhisperResult = await transcribeAudio(filePath, {});
+    const words: { word: string; start: number; end: number }[] = [];
+    for (const seg of result.segments ?? []) for (const w of seg.words ?? []) words.push({ word: w.word, start: w.start, end: w.end });
+    if (!words.length) return { success: false, error: 'Transcription produced no word timestamps' };
+    sendMsg(`↳ Transcribed ${Math.round(result.duration)}s in ${Math.round((Date.now() - t0) / 1000)}s — scanning for fillers…`);
+
+    // Same filler families as the timeline removeFillers op: um/umm/uhm…, uh/uhh…,
+    // er/erm, ah/ahh, hm/hmm — matched whole after stripping punctuation.
+    const FILLER_RE = /^(u+h*m+|u+h+|e+r+m*|a+h+|h+m+)$/;
+    const extras = (payload.extraWords ?? []).map((w) => String(w).toLowerCase().trim()).filter(Boolean);
+    const cleanTok = (t: string) => t.toLowerCase().replace(/[^a-z]/g, '');
+    const cuts: { start: number; end: number; token: string }[] = [];
+    for (let i = 0; i < words.length; i++) {
+      const tok = cleanTok(words[i].word);
+      if (!tok || !(FILLER_RE.test(tok) || extras.includes(tok))) continue;
+      // Small pad for a clean cut, clamped to the neighbouring words so no real
+      // speech is ever eaten.
+      const prevEnd = i > 0 ? words[i - 1].end : 0;
+      const nextStart = i + 1 < words.length ? words[i + 1].start : Infinity;
+      const start = Math.max(prevEnd, words[i].start - 0.04);
+      const end = Math.min(nextStart, words[i].end + 0.04);
+      if (end > start) cuts.push({ start, end, token: tok });
+    }
+    if (!cuts.length) {
+      return { success: true, removedCount: 0, outPath: null, breakdown: {}, transcriptChars: result.text?.length ?? 0 };
+    }
+
+    cuts.sort((a, b) => a.start - b.start);
+    const mergedCuts: { start: number; end: number }[] = [];
+    for (const c of cuts) {
+      const last = mergedCuts[mergedCuts.length - 1];
+      if (last && c.start <= last.end + 0.02) last.end = Math.max(last.end, c.end);
+      else mergedCuts.push({ start: c.start, end: c.end });
+    }
+    const totalDur = result.duration || words[words.length - 1].end;
+    const keeps: { start: number; end: number }[] = [];
+    let cursor = 0;
+    for (const m of mergedCuts) {
+      if (m.start > cursor + 0.01) keeps.push({ start: cursor, end: m.start });
+      cursor = Math.max(cursor, m.end);
+    }
+    if (cursor < totalDur - 0.01) keeps.push({ start: cursor, end: totalDur });
+    if (!keeps.length) return { success: false, error: 'Nothing left after cutting fillers' };
+
+    const isAudio = /\.(mp3|m4a|wav|aac|ogg|opus)$/i.test(filePath);
+    const dir = path.dirname(filePath);
+    const base = path.basename(filePath, path.extname(filePath));
+    const outExt = isAudio ? '.mp3' : '.mp4';
+    let outPath = path.join(dir, `Filler removed ${base}${outExt}`);
+    for (let n = 2; fs.existsSync(outPath); n++) outPath = path.join(dir, `Filler removed ${base} (${n})${outExt}`);
+
+    sendMsg(`↳ Cutting ${cuts.length} filler word${cuts.length === 1 ? '' : 's'} (${mergedCuts.length} splice${mergedCuts.length === 1 ? '' : 's'})…`);
+    const fc: string[] = [];
+    keeps.forEach((k, i) => {
+      if (!isAudio) fc.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
+      fc.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
+    });
+    const concatIn = keeps.map((_, i) => (isAudio ? `[a${i}]` : `[v${i}][a${i}]`)).join('');
+    fc.push(`${concatIn}concat=n=${keeps.length}:v=${isAudio ? 0 : 1}:a=1${isAudio ? '[aout]' : '[vout][aout]'}`);
+    const args = ['-y', '-i', filePath, '-filter_complex', fc.join(';')];
+    if (isAudio) args.push('-map', '[aout]', '-codec:a', 'libmp3lame', '-q:a', '2', outPath);
+    else args.push('-map', '[vout]', '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outPath);
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn(ffmpegPath!, args);
+      let errOut = '';
+      p.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+      p.on('close', (code) => (code === 0 && fs.existsSync(outPath) ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${errOut.slice(-300)}`))));
+      p.on('error', reject);
+    });
+    const removedSec = mergedCuts.reduce((s, m) => s + (m.end - m.start), 0);
+    const breakdown: Record<string, number> = {};
+    for (const c of cuts) breakdown[c.token] = (breakdown[c.token] ?? 0) + 1;
+    return { success: true, outPath, removedCount: cuts.length, removedSec: +removedSec.toFixed(2), breakdown };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
 // IPC Handler to cut silence from a media file using ffmpeg silencedetect
 ipcMain.handle(
   'media:cutSilence',
   async (
     _event,
     { filePath, noiseDb = -30, minDuration = 0.4 }: { filePath: string; noiseDb?: number; minDuration?: number },
-  ): Promise<{ success: boolean; filePath?: string; error?: string }> => {
+  ): Promise<{ success: boolean; filePath?: string; keepRanges?: Array<{ start: number; end: number }>; newDuration?: number; error?: string }> => {
     console.log('âœ‚ï¸ MAIN PROCESS: media:cutSilence called', { filePath, noiseDb, minDuration });
 
     if (!ffmpegPath) {
@@ -5951,10 +6309,15 @@ ipcMain.handle(
         `${baseName}_nosilence${ext}`,
       );
 
+      // Kept ranges + new total duration let the renderer remap transcript timings
+      // and fix clip durations after the cut — without them every downstream
+      // transcript-driven op works in stale original-file time.
+      const keptDuration = speechSegments.reduce((a, s) => a + (s.end - s.start), 0);
+
       if (segmentFiles.length === 1) {
         fs.renameSync(segmentFiles[0], outputFile);
         console.log('âœ‚ï¸ Single segment â€” output:', outputFile);
-        return { success: true, filePath: outputFile };
+        return { success: true, filePath: outputFile, keepRanges: speechSegments, newDuration: keptDuration };
       }
 
       // Step 6: Write concat list file
@@ -5988,7 +6351,7 @@ ipcMain.handle(
       try { fs.unlinkSync(concatListFile); } catch { /* ignore */ }
 
       console.log(`âœ‚ï¸ Silence cut complete â†’ ${outputFile}`);
-      return { success: true, filePath: outputFile };
+      return { success: true, filePath: outputFile, keepRanges: speechSegments, newDuration: keptDuration };
     } catch (err: any) {
       console.error('âœ‚ï¸ media:cutSilence error:', err);
       return { success: false, error: err.message ?? String(err) };
@@ -6895,6 +7258,199 @@ ipcMain.handle('save-temp-image', async (_event, base64Data: string, ext: string
     const tmpDir = app.getPath('temp');
     const fileName = `edith-paste-${Date.now()}.${ext || 'png'}`;
     const filePath = path.join(tmpDir, fileName);
+    fs.writeFileSync(filePath, buf);
+    return { success: true, filePath };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+});
+
+// Generic sibling of save-temp-image for document attachments (PDF, scripts,
+// XML…): pasted files have no filesystem path in the renderer, so the bytes
+// come over as a data URL and land in temp where EDITH's Read tool can open
+// them. Keeps the ORIGINAL filename (sanitized) — EDITH reads it in the
+// [Attached: …] token and the extension tells her what she's opening.
+// ═══ Record & Create (Clipchamp-style in-app recorder) ═══
+// Chunks stream straight to disk under userData/recordings while capturing, so
+// long takes never sit in renderer memory. Recordings live ONLY there until the
+// user saves them into the media library — nothing is ever written to the
+// user's Downloads folder.
+
+const recorderStreams = new Map<string, { stream: fs.WriteStream; tempPath: string }>();
+
+function getRecordingsDir(): string {
+  const dir = path.join(app.getPath('userData'), 'recordings');
+  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch { /* handled at write */ }
+  return dir;
+}
+
+// Screen/window thumbnails for the custom "choose what to share" picker.
+ipcMain.handle('recorder:getSources', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 320, height: 180 },
+      fetchWindowIcons: false,
+    });
+    return {
+      success: true,
+      sources: sources.map((s) => ({
+        id: s.id,
+        name: s.name,
+        isScreen: s.id.startsWith('screen'),
+        thumbnail: s.thumbnail?.toDataURL() ?? null,
+      })),
+    };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
+ipcMain.handle('recorder:begin', async () => {
+  try {
+    const id = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const tempPath = path.join(getRecordingsDir(), `${id}.raw.webm`);
+    const stream = fs.createWriteStream(tempPath);
+    recorderStreams.set(id, { stream, tempPath });
+    return { success: true, id };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
+ipcMain.handle('recorder:appendChunk', async (_event, id: string, chunk: ArrayBuffer) => {
+  const entry = recorderStreams.get(id);
+  if (!entry) return { success: false, error: 'unknown recording id' };
+  return new Promise((resolve) => {
+    entry.stream.write(Buffer.from(chunk), (err) =>
+      resolve(err ? { success: false, error: err.message } : { success: true }));
+  });
+});
+
+// Close the raw stream and finalize: MediaRecorder webm blobs carry no duration
+// header, so a stream-copy remux writes one (fast, no re-encode). Audio-only
+// takes are transcoded to mp3 so they behave like the rest of the audio pipeline.
+ipcMain.handle('recorder:finish', async (_event, id: string, kind: 'video' | 'audio') => {
+  const entry = recorderStreams.get(id);
+  if (!entry) return { success: false, error: 'unknown recording id' };
+  recorderStreams.delete(id);
+  await new Promise<void>((resolve) => entry.stream.end(() => resolve()));
+  if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available' };
+  try {
+    // MediaRecorder may hand us h264+opus in a webm/matroska shell — h264 is
+    // illegal in a real WebM container, so pick the output box by codec:
+    // h264 → .mp4 (video copy, opus→aac); vp8/vp9 → .webm stream copy.
+    let vCodec = '';
+    if (kind === 'video' && ffprobePath?.path) {
+      vCodec = await new Promise<string>((resolve) => {
+        let out = '';
+        const p = spawn(ffprobePath!.path, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', entry.tempPath]);
+        p.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+        p.on('close', () => resolve(out.trim()));
+        p.on('error', () => resolve(''));
+      });
+    }
+    const isH264 = vCodec === 'h264';
+    const ext = kind === 'audio' ? '.mp3' : isH264 ? '.mp4' : '.webm';
+    const outPath = path.join(getRecordingsDir(), `${id}${ext}`);
+    const args = kind === 'audio'
+      ? ['-y', '-i', entry.tempPath, '-vn', '-codec:a', 'libmp3lame', '-q:a', '2', outPath]
+      : isH264
+        ? ['-y', '-i', entry.tempPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outPath]
+        : ['-y', '-i', entry.tempPath, '-c', 'copy', outPath];
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn(ffmpegPath!, args);
+      let errOut = '';
+      p.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+      p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${errOut.slice(-300)}`))));
+      p.on('error', reject);
+    });
+    try { fs.unlinkSync(entry.tempPath); } catch { /* temp cleanup is best-effort */ }
+    let duration = 0;
+    if (ffprobePath?.path) {
+      duration = await new Promise<number>((resolve) => {
+        let out = '';
+        const p = spawn(ffprobePath!.path, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', outPath]);
+        p.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+        p.on('close', () => resolve(parseFloat(out.trim()) || 0));
+        p.on('error', () => resolve(0));
+      });
+    }
+    return { success: true, filePath: outPath, duration };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
+// Retake / delete — remove every trace of the take from disk.
+ipcMain.handle('recorder:discard', async (_event, payload: { id?: string; filePath?: string }) => {
+  const entry = payload?.id ? recorderStreams.get(payload.id) : undefined;
+  if (entry && payload.id) {
+    recorderStreams.delete(payload.id);
+    await new Promise<void>((resolve) => entry.stream.end(() => resolve()));
+    try { fs.unlinkSync(entry.tempPath); } catch { /* already gone */ }
+  }
+  if (payload?.filePath && payload.filePath.startsWith(getRecordingsDir())) {
+    try { fs.unlinkSync(payload.filePath); } catch { /* already gone */ }
+  }
+  return { success: true };
+});
+
+// "Send to EDITH" gate — does the finished recording actually contain audible
+// audio? A muted mic still writes a silent track, so stream presence alone
+// proves nothing: volumedetect must see real signal above the silence floor.
+ipcMain.handle('recorder:hasAudibleAudio', async (_event, payload: { filePath: string }) => {
+  if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available' };
+  const filePath = payload?.filePath;
+  if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
+  try {
+    const stderr = await new Promise<string>((resolve, reject) => {
+      let err = '';
+      // -map 0:a:0 makes ffmpeg fail outright when the file has no audio stream,
+      // which is exactly the signal wanted for that case.
+      const p = spawn(ffmpegPath!, ['-i', filePath, '-map', '0:a:0', '-vn', '-af', 'volumedetect', '-f', 'null', '-']);
+      p.stderr?.on('data', (d: Buffer) => { err += d.toString(); });
+      p.on('close', () => resolve(err));
+      p.on('error', reject);
+    });
+    const maxM = stderr.match(/max_volume:\s*(-?[\d.]+)\s*dB/);
+    if (!maxM) return { success: true, hasAudioStream: false, audible: false, maxVolumeDb: null };
+    const maxDb = parseFloat(maxM[1]);
+    const meanM = stderr.match(/mean_volume:\s*(-?[\d.]+)\s*dB/);
+    // Muted-mic tracks measure at the ~-91dB silence floor; real speech peaks far
+    // above -50 even when quiet.
+    return {
+      success: true,
+      hasAudioStream: true,
+      audible: maxDb > -50,
+      maxVolumeDb: maxDb,
+      meanVolumeDb: meanM ? parseFloat(meanM[1]) : null,
+    };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
+// The screen+camera composite is painted on a canvas by renderer timers. While
+// the user records another app, DiviDr sits in the background — Chromium would
+// throttle those timers to ~1fps and freeze the composite, so throttling is
+// switched off for the duration of the recording only.
+ipcMain.handle('recorder:setBackgroundThrottling', async (_event, enabled: boolean) => {
+  try {
+    mainWindow?.webContents.setBackgroundThrottling(enabled);
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
+ipcMain.handle('save-temp-attachment', async (_event, base64Data: string, originalName: string) => {
+  try {
+    const buf = Buffer.from(base64Data.replace(/^data:[^;]+;base64,/, ''), 'base64');
+    const safeName = String(originalName || 'attachment').replace(/[^\w.\- ]+/g, '_').slice(-80);
+    const tmpDir = path.join(app.getPath('temp'), 'edith-attachments');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const filePath = path.join(tmpDir, `${Date.now()}_${safeName}`);
     fs.writeFileSync(filePath, buf);
     return { success: true, filePath };
   } catch (e) {

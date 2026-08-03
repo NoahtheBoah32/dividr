@@ -17,7 +17,7 @@ import {
   type PanelType,
 } from '@/frontend/features/editor/stores/PanelStore';
 import { cn } from '@/frontend/utils/utils';
-import { Clapperboard, ClosedCaption, Music, Settings, Type, Upload } from 'lucide-react';
+import { Clapperboard, ClosedCaption, Music, Settings, Type, Upload, Video } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 import { Button } from '../../components/ui/button';
 
@@ -80,6 +80,11 @@ const toolbarConfig: ToolbarConfig[] = [
     panelType: 'text-tools',
     icon: <Type size={16} />,
     title: 'Text tools',
+  },
+  {
+    panelType: 'record',
+    icon: <Video size={16} />,
+    title: 'Record & create',
   },
   {
     panelType: 'captions',

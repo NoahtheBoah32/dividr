@@ -50,7 +50,7 @@ const probeChat = () => page.evaluate(() => {
   const inputCards = ps.filter((p) => p.closest('div[style*="width: 148"]')?.querySelector('button[aria-label="Remove clip"]'));
   const rawTokenVisible = Array.from(document.querySelectorAll('span, p, div'))
     .some((el) => el.children.length === 0 && /\[clip "/.test(el.textContent ?? ''));
-  const ta = Array.from(document.querySelectorAll('textarea')).find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+  const ta = Array.from(document.querySelectorAll('textarea')).find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
   return {
     totalCards: ps.length,
     inputCards: inputCards.length,
@@ -79,7 +79,7 @@ if (!clip) { console.log('no video clip in scratch project'); process.exit(1); }
 
 const geo = await page.evaluate((clipId) => {
   const el = document.querySelector(`[data-edith-target="track-body:${clipId}"]`);
-  const ta = Array.from(document.querySelectorAll('textarea')).find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+  const ta = Array.from(document.querySelectorAll('textarea')).find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
   if (!el || !ta) return { ok: false };
   const cr = el.getBoundingClientRect();
   const ir = ta.getBoundingClientRect();
@@ -103,13 +103,13 @@ const beforeMsgCards = st.messageCards;
 
 const MSG = 'set this clip\'s label color to green';
 await page.evaluate((msg) => {
-  const ta = Array.from(document.querySelectorAll('textarea')).find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+  const ta = Array.from(document.querySelectorAll('textarea')).find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
   setter.call(ta, msg);
   ta.dispatchEvent(new Event('input', { bubbles: true }));
 }, MSG);
 await page.waitForTimeout(300);
-await page.locator('textarea[placeholder*="reels" i]').press('Enter');
+await page.locator('textarea[placeholder*="edith" i]').press('Enter');
 await page.waitForTimeout(1500);
 
 st = await probeChat();

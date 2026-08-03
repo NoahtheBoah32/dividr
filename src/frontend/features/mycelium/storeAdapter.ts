@@ -9,7 +9,7 @@ import { useCaptionStylesStore } from '@/frontend/features/editor/stores/caption
 import { Op } from './types';
 import { sceneTimesToMarkers } from '@/shared/sceneDetection';
 import { operationEngine } from './operationEngine';
-import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
+import { useDownloadApprovalStore, importFileIntoLibrary } from './stores/downloadApprovalStore';
 import { pickSubtitleRow } from './captionUtils';
 import { animateForOp, startEdithEditing, stopEdithEditing } from './edithPlayheadAnimator';
 import { useEdithEditingStore } from './stores/edithEditingStore';
@@ -43,6 +43,24 @@ import {
   movePhrase,
   coverageClipsForSource,
 } from '@/frontend/features/editor/components/properties-panel/audio/transcriptSurgery';
+
+/**
+ * Relay reference-analysis progress from the main process into the window
+ * event the chat's reasoning card listens to. Subscribed once per session —
+ * the preload's generic `on` has no matching `off`, so a module flag guards it.
+ */
+let referenceProgressRelayed = false;
+function ensureReferenceProgressRelay(): void {
+  if (referenceProgressRelayed) return;
+  referenceProgressRelayed = true;
+  try {
+    (window.electronAPI as any).on('reference:progress', (_event: unknown, data: { stage: string; detail?: string; done?: boolean }) => {
+      window.dispatchEvent(new CustomEvent('edith:reasoning', {
+        detail: { stage: data?.stage, detail: data?.detail, done: !!data?.done },
+      }));
+    });
+  } catch { /* preload without generic on — reasoning card just stays empty */ }
+}
 import {
   flattenWords,
   matchPhraseInWords,
@@ -327,6 +345,13 @@ function computeBrollOverlayProps(
     textTransform: { x: 0, y: 0, scale: 1, rotation: 0, width: canvasW, height: canvasH },
   };
 }
+
+/**
+ * Public entry for UI components that need to run a single editor op directly
+ * (e.g. the SFX panel's drag-to-timeline reuses placeSFX's placement machinery).
+ * Function declarations hoist, so this alias is safe above the definition.
+ */
+export const applyEditorOpDirect = (op: unknown): Promise<void> => applyOp(op as Op);
 
 async function applyOp(op: Op): Promise<void> {
   const store = useVideoEditorStore.getState() as any;
@@ -699,6 +724,89 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'searchMedia': {
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `Searching for "${op.query}"...` } }));
+      let result: any = null;
+      try {
+        result = await (window.electronAPI as any).invoke('media:searchMedia', { query: op.query, count: op.count ?? 6 });
+      } catch (err) {
+        result = { success: false, error: String((err as Error)?.message ?? err) };
+      }
+      window.dispatchEvent(new CustomEvent('edith:searchMediaResult', {
+        detail: {
+          query: op.query,
+          success: !!result?.success,
+          candidates: result?.candidates ?? [],
+          error: result?.error ?? null,
+        },
+      }));
+      break;
+    }
+
+    case 'removeFillersFromMedia': {
+      // Media-FILE filler removal: resolve the file (explicit path from an
+      // [Attached: …] token, or a media-library name), hand it to the main-process
+      // transcribe-and-cut pipeline, then import the cleaned file back into the
+      // library. Timeline clips are the removeFillers op's job, never this one.
+      const mfLib = ((store.mediaLibrary as any[]) ?? []);
+      let mfPath: string | undefined = (op as any).mediaPath;
+      let mfTitle: string | undefined;
+      if (!mfPath && (op as any).mediaName) {
+        const q = String((op as any).mediaName).toLowerCase();
+        const hit = mfLib.find((m: any) => (m?.name ?? '').toLowerCase().includes(q));
+        if (hit) { mfPath = hit.tempFilePath ?? hit.source; mfTitle = hit.name; }
+      }
+      if (mfPath && !mfTitle) {
+        const hit = mfLib.find((m: any) => m?.source === mfPath || m?.tempFilePath === mfPath);
+        mfTitle = hit?.name;
+      }
+      if (!mfPath) throw new Error('removeFillersFromMedia: no media resolved — pass mediaPath or a mediaName that exists in the library');
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Transcribing to find filler words…' } }));
+      let mfRes: any;
+      try {
+        mfRes = await (window.electronAPI as any).invoke('media:removeFillersFromFile', {
+          filePath: mfPath,
+          extraWords: (op as any).extraWords,
+        });
+      } catch (err) {
+        mfRes = { success: false, error: String((err as Error)?.message ?? err) };
+      }
+      let importedName: string | null = null;
+      if (mfRes?.success && mfRes.outPath) {
+        const baseTitle = mfTitle ?? mfPath.replace(/\\/g, '/').split('/').pop() ?? 'recording';
+        importedName = `Filler removed ${baseTitle}`;
+        const mfIsAudio = /\.(mp3|m4a|wav|aac|ogg|opus)$/i.test(mfRes.outPath);
+        try {
+          const mediaId = await importFileIntoLibrary({
+            id: Math.random().toString(36).slice(2),
+            filePath: mfRes.outPath,
+            fileName: mfRes.outPath.replace(/\\/g, '/').split('/').pop() ?? 'filler-removed',
+            fileType: mfIsAudio ? 'audio' : 'video',
+            sourceUrl: 'edith://filler-removed',
+            title: importedName,
+            origin: 'edith',
+          });
+          window.dispatchEvent(new CustomEvent('edith:mediaFetched', {
+            detail: { mediaId, name: importedName, mediaType: mfIsAudio ? 'audio' : 'video' },
+          }));
+        } catch (err) {
+          mfRes = { success: false, error: `cleaned file import failed: ${String((err as Error)?.message ?? err)}` };
+          importedName = null;
+        }
+      }
+      window.dispatchEvent(new CustomEvent('edith:removeFillersFileResult', {
+        detail: {
+          success: !!mfRes?.success,
+          error: mfRes?.error ?? null,
+          removedCount: mfRes?.removedCount ?? 0,
+          removedSec: mfRes?.removedSec ?? 0,
+          breakdown: mfRes?.breakdown ?? {},
+          importedName,
+        },
+      }));
+      break;
+    }
+
     case 'cutSilence': {
       const track = store.tracks.find((t: any) => t.id === op.clipId);
       if (!track) {
@@ -727,7 +835,93 @@ async function applyOp(op: Op): Promise<void> {
         // fall through with raw path
       }
       const newName = result.filePath.replace(/\\/g, '/').split('/').pop() ?? track.name;
-      store.updateTrack(op.clipId, { source: result.filePath, previewUrl: newPreviewUrl, name: newName });
+      const csOldSrc: string = track.source;
+      const csFps: number = (store.timeline?.fps ?? 30);
+      const csKeepRanges: Array<{ start: number; end: number }> = Array.isArray((result as any).keepRanges)
+        ? (result as any).keepRanges
+        : [];
+      const csNewDurSec: number =
+        typeof (result as any).newDuration === 'number' && (result as any).newDuration > 0
+          ? (result as any).newDuration
+          : csKeepRanges.reduce((a, r) => a + (r.end - r.start), 0);
+      const csNewDurFrames = csNewDurSec > 0
+        ? Math.max(1, Math.round(csNewDurSec * csFps))
+        : track.endFrame - track.startFrame;
+
+      // The cut file is SHORTER — the clip must shrink with it or the timeline
+      // keeps a dead tail past the end of the media.
+      store.updateTrack(op.clipId, {
+        source: result.filePath,
+        previewUrl: newPreviewUrl,
+        name: newName,
+        endFrame: track.startFrame + csNewDurFrames,
+        duration: csNewDurFrames,
+      });
+
+      // The linked audio clip still plays the ORIGINAL file — swap it too, or
+      // picture and sound drift apart at the first removed silence.
+      const csLinkedAudio = (store.tracks as any[]).find(
+        (t: any) => t.id === (track as any).linkedTrackId && t.type === 'audio',
+      );
+      if (csLinkedAudio) {
+        store.updateTrack(csLinkedAudio.id, {
+          source: result.filePath,
+          previewUrl: newPreviewUrl,
+          name: `${newName} (Audio)`,
+          endFrame: csLinkedAudio.startFrame + csNewDurFrames,
+          duration: csNewDurFrames,
+        });
+      }
+
+      // Keep the transcript usable after the cut: remap cached word/segment times
+      // from original-file time to cut-file time and re-point the media item's
+      // tempFilePath at the cut file, so the transcribe already-done guard,
+      // removeFillers and buildCaptions all keep matching — with correct timings.
+      if (csKeepRanges.length) {
+        const csMedia = (store.mediaLibrary as any[] | undefined)?.find(
+          (m: any) => m?.source === csOldSrc || m?.tempFilePath === csOldSrc,
+        );
+        if (csMedia) {
+          const csOffsets: number[] = [];
+          let csAcc = 0;
+          for (const r of csKeepRanges) { csOffsets.push(csAcc); csAcc += r.end - r.start; }
+          const csRemap = (t: number): number => {
+            for (let i = 0; i < csKeepRanges.length; i++) {
+              const r = csKeepRanges[i];
+              if (t < r.start) return csOffsets[i]; // inside a removed gap — snap to the next kept boundary
+              if (t <= r.end) return csOffsets[i] + (t - r.start);
+            }
+            return csAcc; // past the last kept range — clamp to the new end
+          };
+          const csTr = csMedia.cachedKaraokeSubtitles?.transcriptionResult;
+          if (csTr?.segments?.length) {
+            const csRemapped = {
+              ...csTr,
+              duration: csAcc,
+              segments: csTr.segments.map((seg: any) => ({
+                ...seg,
+                start: csRemap(seg.start),
+                end: Math.max(csRemap(seg.start), csRemap(seg.end)),
+                words: Array.isArray(seg.words)
+                  ? seg.words.map((w: any) => ({
+                      ...w,
+                      start: csRemap(w.start),
+                      end: Math.max(csRemap(w.start), csRemap(w.end)),
+                    }))
+                  : seg.words,
+              })),
+            };
+            useVideoEditorStore.getState().updateMediaLibraryItem(csMedia.id, {
+              tempFilePath: result.filePath,
+              cachedKaraokeSubtitles: { transcriptionResult: csRemapped, generatedAt: Date.now() },
+            } as any);
+          } else {
+            useVideoEditorStore.getState().updateMediaLibraryItem(csMedia.id, {
+              tempFilePath: result.filePath,
+            } as any);
+          }
+        }
+      }
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Silence removed' } }));
       break;
     }
@@ -1050,12 +1244,7 @@ async function applyOp(op: Op): Promise<void> {
     case 'analyzeReference': {
       const state = useVideoEditorStore.getState() as any;
       // Try media library first, then fall back to finding a reference item by name/path match
-      let mediaItem = state.mediaLibrary?.find((m: any) => m.id === op.clipId);
-      // Hard guard â€” never re-analyze a reference that already has data
-      if (mediaItem?.referenceAnalysis?.captionStyle) {
-        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Reference already analyzed â€” skipping' } }));
-        break;
-      }
+      let mediaItem = state.mediaLibrary?.find((m: any) => m.id === op.clipId || m.name === op.clipId);
       if (!mediaItem) {
         // EDITH may have passed a timeline track ID â€” find the track and match to media library
         const track = state.tracks?.find((t: any) => t.id === op.clipId);
@@ -1070,13 +1259,32 @@ async function applyOp(op: Op): Promise<void> {
         mediaItem = state.mediaLibrary?.find((m: any) => m.category === 'reference');
       }
       if (!mediaItem) throw new Error(`analyzeReference: no reference video found. Make sure a reference is uploaded in the References panel.`);
+      // Skip only when the FULL profile already exists — legacy-analyzed items
+      // (pre-profiler) get re-analyzed so EDITH always edits from the real profile.
+      if (mediaItem.referenceAnalysis?.profile?.version) {
+        window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Reference already analyzed â€” profile in context' } }));
+        window.dispatchEvent(new CustomEvent('edith:referenceAnalyzed', {
+          detail: { name: mediaItem.name, alreadyAnalyzed: true },
+        }));
+        break;
+      }
       const filePath = (mediaItem as any).tempFilePath || (mediaItem as any).source;
       const mediaLibraryId = (mediaItem as any).id;
-      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Analyzing reference (frame sampling)â€¦' } }));
+      ensureReferenceProgressRelay();
+      window.dispatchEvent(new CustomEvent('edith:reasoning', {
+        detail: { title: `Watching "${mediaItem.name}"`, stage: 'Opening the reference', begin: true },
+      }));
       const result = await (window.electronAPI as any).invoke('mycelium:analyzeReference', { filePath });
-      if (!result.success) throw new Error(result.error ?? 'Reference analysis failed');
+      if (!result.success) {
+        window.dispatchEvent(new CustomEvent('edith:reasoning', { detail: { finish: true, failed: true } }));
+        throw new Error(result.error ?? 'Reference analysis failed');
+      }
       useVideoEditorStore.getState().updateMediaLibraryItem(mediaLibraryId, { referenceAnalysis: result.analysis });
-      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Reference analyzed' } }));
+      window.dispatchEvent(new CustomEvent('edith:reasoning', { detail: { finish: true } }));
+      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Reference analyzed â€” style profile ready' } }));
+      window.dispatchEvent(new CustomEvent('edith:referenceAnalyzed', {
+        detail: { name: mediaItem.name, alreadyAnalyzed: false },
+      }));
       break;
     }
 
@@ -1683,10 +1891,17 @@ async function applyOp(op: Op): Promise<void> {
       // V2: {“type”:”download”,”query”:”...”,”verify”:”...”,”isStockFootage”:true|false}
       // isStockFootage:true  → Pixabay API search (no cookies, watermark-free)
       // isStockFootage:false → YouTube search via ytsearch: (uses browser cookies automatically)
+      // Optional `url` (direct http(s) link EDITH found via web search) bypasses both search
+      // modes and goes straight to yt-dlp — handles direct .mp4/.webm files and most site pages.
       const isStock = (op as any).isStockFootage !== false;
-      const urlToUse = isStock
-        ? `pixabaysearch:${(op as any).query}`
-        : `ytsearch1:${(op as any).query}`;
+      const directUrl = typeof (op as any).url === 'string'
+        && (/^https?:\/\//i.test((op as any).url) || (op as any).url.startsWith('imagesearch:'))
+        ? (op as any).url as string
+        : null;
+      const urlToUse = directUrl
+        ?? (isStock
+          ? `pixabaysearch:${(op as any).query}`
+          : `ytsearch1:${(op as any).query}`);
       await applyOp({
         type: 'downloadMedia',
         url: urlToUse,
@@ -1736,6 +1951,146 @@ async function applyOp(op: Op): Promise<void> {
     case 'caption': {
       // V2: {“type”:”caption”,”text”:”EXACT WORDS”,”from”:5.0,”to”:7.2}
       await applyOp({ type: 'addCaption', text: (op as any).text, startSeconds: (op as any).from, endSeconds: (op as any).to, style: (op as any).style } as any);
+      break;
+    }
+
+    case 'kineticText': {
+      // {"type":"kineticText","phrase":"controlling human attention.","emphasis":"human","from":3.2,"to":6.0}
+      // Dylan-style kinetic typography: big bold lowercase words that appear ONE BY ONE
+      // and accumulate into a stacked phrase, timed to the speech. One word may carry an
+      // accent color. Implemented as a merged caption stream (one segment per reveal step)
+      // so it previews live AND bakes step-by-step into the export.
+      const o = op as any;
+      const ktPhrase = String(o.phrase ?? '').trim();
+      if (!ktPhrase) throw new Error('kineticText: no phrase given');
+      const ktFps: number = store.timeline?.fps ?? 30;
+      const ktWords = ktPhrase.split(/\s+/);
+
+      // Timing: explicit from/to wins; otherwise find the phrase in the transcript
+      let fromSec: number | null = typeof o.from === 'number' ? o.from : null;
+      let toSec: number | null = typeof o.to === 'number' ? o.to : null;
+      if (fromSec === null || toSec === null) {
+        const ktVid = findMainVideoTrack(store);
+        if (!ktVid) throw new Error('kineticText: no main video on the timeline');
+        const ktMedia = (store.mediaLibrary as any[] | undefined)?.find(
+          (m: any) => m?.source === ktVid.source || m?.tempFilePath === ktVid.source,
+        );
+        const ktTr = ktMedia?.cachedKaraokeSubtitles?.transcriptionResult;
+        const ktAll = flattenWords(ktTr ?? null);
+        const ktMatch = ktAll.length ? matchPhraseInWords(ktAll, ktPhrase) : null;
+        if (!ktMatch) throw new Error(`kineticText: "${ktPhrase}" not found in the transcript — pass "from"/"to" seconds instead`);
+        const ktCov = coverageClipsForSource(ktVid.source, 'video');
+        const ktRange = wordToTimelineRange({ start: ktMatch.startSec, end: ktMatch.endSec }, ktCov, ktFps);
+        if (!ktRange) throw new Error('kineticText: phrase lies in a cut-away section of the timeline');
+        fromSec = ktRange.fromFrame / ktFps;
+        toSec = ktRange.toFrame / ktFps;
+      }
+      if (toSec <= fromSec) toSec = fromSec + Math.max(1.2, ktWords.length * 0.35);
+      const holdSec: number = typeof o.hold === 'number' ? o.hold : 0.5;
+
+      const emphasisRaw = String(o.emphasis ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const ktEmphasisIdx = emphasisRaw
+        ? ktWords.findIndex((w) => w.toLowerCase().replace(/[^a-z0-9]/g, '') === emphasisRaw)
+        : -1;
+
+      // Text is pre-lowercased (the dylan look) with textTransform 'none', so the
+      // export's inline ASS emphasis tags survive untouched by case transforms.
+      const ktDisplay = ktWords.map((w) => w.toLowerCase());
+
+      // Layout, measured off dylan minute 1 ("as an / EDITOR / you have the"):
+      // the emphasis word sits ALONE on its own line and renders ~2x; the function
+      // words around it group into lines of two (a trailing orphan joins the
+      // previous line so no lonely word dangles under the stack).
+      const ktLines: number[][] = [];
+      let ktCur: number[] = [];
+      ktWords.forEach((_, i) => {
+        if (i === ktEmphasisIdx) {
+          if (ktCur.length) { ktLines.push(ktCur); ktCur = []; }
+          ktLines.push([i]);
+        } else {
+          ktCur.push(i);
+          if (ktCur.length === 2) { ktLines.push(ktCur); ktCur = []; }
+        }
+      });
+      if (ktCur.length) {
+        const prev = ktLines[ktLines.length - 1];
+        if (ktCur.length === 1 && prev && prev.length === 2 && !prev.includes(ktEmphasisIdx)) prev.push(ktCur[0]);
+        else ktLines.push(ktCur);
+      }
+      // Reveal steps: words appear one by one across the spoken span, keeping the
+      // final line structure at every step; the full stack holds after the phrase.
+      const stackText = (count: number) => ktLines
+        .map((line) => line.filter((i) => i < count).map((i) => ktDisplay[i]).join(' '))
+        .filter((s) => s.length > 0)
+        .join('\n');
+
+      const ktStartFrame = Math.round(fromSec * ktFps);
+      const ktEndFrame = Math.max(ktStartFrame + 2, Math.round((toSec + holdSec) * ktFps));
+      const spokenFrames = Math.round((toSec - fromSec) * ktFps);
+      const step = Math.max(1, Math.floor(spokenFrames / ktWords.length));
+      const ktSegments = ktWords.map((_, i) => ({
+        text: stackText(i + 1),
+        startFrame: ktStartFrame + i * step,
+        endFrame: i === ktWords.length - 1 ? ktEndFrame : ktStartFrame + (i + 1) * step,
+        highlightWordIndex: ktEmphasisIdx,
+      }));
+
+      const ktSubs = (store.tracks as any[]).filter((t: any) => t.type === 'subtitle');
+      const ktRow = pickSubtitleRow(ktSubs, ktStartFrame, ktEndFrame);
+      await store.addTrack({
+        type: 'subtitle',
+        name: `kinetic — ${ktPhrase.slice(0, 30)}`,
+        source: '',
+        subtitleText: stackText(ktWords.length),
+        subtitleType: 'karaoke',
+        subtitleSegments: ktSegments,
+        duration: ktEndFrame - ktStartFrame,
+        startFrame: ktStartFrame,
+        endFrame: ktEndFrame,
+        visible: true,
+        locked: false,
+        color: '#38BDF8',
+        trackRowIndex: ktRow,
+        subtitleStyle: {
+          // Heavy grotesque like the reference (Helvetica-class). Arial Black is
+          // the only such face guaranteed on this system — libass silently falls
+          // back to plain Arial for any font that isn't actually installed.
+          fontFamily: o.fontFamily ?? 'Arial Black',
+          // Sized off the dylan target frame: a word spans ~45% of frame width
+          // ("controlling" ≈ 880px at 1920 ⇒ ~160px font); emphasis lands ~210px
+          fontSize: o.fontSize ?? 155,
+          fillColor: '#FFFFFF',
+          isBold: false, // Arial Black IS the heavy weight; bold on top distorts it
+          textTransform: 'none',
+          highlightColor: o.accent ?? '#3EC6E0',
+          highlightWordIndex: ktEmphasisIdx,
+          highlightScale: o.emphasisScale ?? 1.35,
+          // The reference is CLEAN white — no outline, no shadow
+          strokeColor: 'transparent',
+          hasShadow: false,
+          textAlign: 'center',
+          lineHeight: 0.95,
+        },
+        // y in [-1,1]: dylan parks the stack slightly ABOVE center (-0.15);
+        // 'lower' drops it to the lower third without clipping tall stacks
+        subtitleTransform: { x: typeof o.x === 'number' ? o.x : 0, y: o.position === 'lower' ? 0.3 : -0.15 },
+      } as any);
+
+      // Dylan never double-prints: while a kinetic stack is up, the regular caption
+      // stream goes quiet. Drop caption segments that overlap this window (undo
+      // restores them — the whole op is one history group).
+      for (const t of ktSubs) {
+        if ((t.name ?? '').startsWith('kinetic')) continue;
+        const segs = (t as any).subtitleSegments as Array<{ startFrame: number; endFrame: number }> | undefined;
+        if (!segs?.length) continue;
+        const kept = segs.filter((sg) => sg.endFrame <= ktStartFrame || sg.startFrame >= ktEndFrame);
+        if (kept.length !== segs.length) {
+          await store.updateTrack(t.id, { subtitleSegments: kept } as any);
+        }
+      }
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: `Kinetic text "${ktPhrase.slice(0, 40)}" placed` },
+      }));
       break;
     }
 
@@ -3781,7 +4136,19 @@ async function applyOp(op: Op): Promise<void> {
       } catch { /* fall through */ }
 
       const newName = result.filePath.replace(/\\/g, '/').split('/').pop() ?? zoomClip.name;
+      const zoomOldSrc: string = zoomClip.source;
       store.updateTrack(op.clipId, { source: result.filePath, previewUrl: newPreviewUrl, name: newName });
+      // The bake preserves timing, so the cached transcript stays valid — but the
+      // source path changed. Re-point the media item so transcript lookups keyed by
+      // the clip's source (removeFillers, cut-at-phrase ops) keep matching.
+      const zoomMedia = (store.mediaLibrary as any[] | undefined)?.find(
+        (m: any) => m?.source === zoomOldSrc || m?.tempFilePath === zoomOldSrc,
+      );
+      if (zoomMedia) {
+        useVideoEditorStore.getState().updateMediaLibraryItem(zoomMedia.id, {
+          tempFilePath: result.filePath,
+        } as any);
+      }
       window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: `Zoom on ${statusLabel} applied` } }));
       break;
     }
@@ -4017,6 +4384,7 @@ async function applyOp(op: Op): Promise<void> {
         mediaId,
         startFrame: atFrame,
         endFrame: sfxEndFrame,
+        duration: durationFrames, // export's atrim reads this — omitting it = NaN filter graph
         trackRowIndex: 1,
         layer: 1,
         volumeDb,
@@ -4032,6 +4400,7 @@ async function applyOp(op: Op): Promise<void> {
         store.updateTrack(placedSfxId, {
           startFrame: atFrame,
           endFrame: sfxEndFrame,
+          duration: durationFrames,
           trackRowIndex: 1,
           layer: 1,
           ...(sfxColor ? { color: sfxColor } : {}),

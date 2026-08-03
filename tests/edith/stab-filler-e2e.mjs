@@ -43,13 +43,13 @@ async function gotoEditor() {
   await sleep(1400);
 }
 async function openEdith() {
-  if (await page.locator('textarea[placeholder*="reels"]').count() === 0) {
+  if (await page.locator('textarea[placeholder*="EDITH"]').count() === 0) {
     try { await page.locator('[title="E.D.I.T.H"]').first().click({ timeout: 5000 }); } catch {}
     await sleep(600);
   }
   const agree = page.locator('button:has-text("Agree")');
   try { if (await agree.count() > 0) await agree.first().click({ timeout: 3000 }); } catch {}
-  const ta = page.locator('textarea[placeholder*="reels"]').first();
+  const ta = page.locator('textarea[placeholder*="EDITH"]').first();
   await ta.waitFor({ state: 'visible', timeout: 12000 });
   return ta;
 }
@@ -280,7 +280,7 @@ check('F2 removeFillers cut the filler frames from the timeline',
 // ════ F3: real EDITH chat → removeFillers ════
 await injectClip(FILLER_CLIP, FILLER_FPS, FILLER_FRAMES, { cachedKaraokeSubtitles: cachedTranscription });
 await capReset();
-if (await page.locator('textarea[placeholder*="reels"]').count() === 0) ta = await openEdith();
+if (await page.locator('textarea[placeholder*="EDITH"]').count() === 0) ta = await openEdith();
 const tF3 = Date.now();
 await ta.fill('remove all the filler words from my video');
 await ta.press('Enter');

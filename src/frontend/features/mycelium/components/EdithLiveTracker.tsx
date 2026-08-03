@@ -26,6 +26,10 @@ function describeOp(op: Op): { icon: string; label: string; detail: string } {
       return { icon: '◌', label: 'Cut silences', detail: '' };
     case 'downloadMedia':
       return { icon: '↓', label: 'B-roll', detail: (op.topic ?? op.url).slice(0, 28) };
+    case 'searchMedia':
+      return { icon: '⌕', label: 'Sourcing', detail: op.query.slice(0, 28) };
+    case 'removeFillersFromMedia':
+      return { icon: '✂', label: 'Removing fillers', detail: (op.mediaName ?? op.mediaPath ?? '').slice(0, 28) };
     case 'saveStyle':
       return { icon: '★', label: 'Style saved', detail: op.name };
     case 'geminiEdit':

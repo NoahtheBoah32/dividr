@@ -249,7 +249,7 @@ def _pick(cands):
     return best
 
 
-def _locate_one(pool, clip, query, bs, be, tag=""):
+def _locate_one(pool, clip, query, bs, be, tag="", dense=False):
     """Build SEVERAL small timestamped contact sheets for [bs, be] and hand them to a warm Claude
     session (from the pool) in ONE inline call. Multiple images EACH keep their own resolution
     budget, so each frame is ~520px (sharp)
@@ -257,7 +257,11 @@ def _locate_one(pool, clip, query, bs, be, tag=""):
     problem). Returns a LIST of (snapped_sec, confidence) candidates so the cross-clip ranker can
     enforce clarity-first + earliest-tie-break in CODE. Sheets deleted right after (nothing stored)."""
     span = be - bs
-    n = max(12, min(30, int(round(span / 11)) or 12))  # total frames across this batch
+    # Default density (~1 frame / 11s) is tuned for find-the-moment on long footage. Dense mode
+    # (~1 frame / 2.5s) is for VERIFYING short downloaded clips, where the thing being checked
+    # may be a few-second action that sparse sampling steps right over.
+    n = (max(24, min(48, int(round(span / 2.5)) or 24)) if dense
+         else max(12, min(30, int(round(span / 11)) or 12)))  # total frames across this batch
     M = 6  # frames per sub-sheet — kept small so each frame stays large within the per-image budget
     K = max(1, (n + M - 1) // M)  # number of small sub-sheets, handed to Claude together
     sheets, times = [], []
@@ -336,7 +340,7 @@ def _verify_frame(pool, clip, sec, query):
     return bool(m) and m.group(1).upper() == "YES"
 
 
-def find_moment_vision(clip, query, start=0.0, end=-1.0, pool=None):
+def find_moment_vision(clip, query, start=0.0, end=-1.0, pool=None, dense=False):
     """Open-vocab 'find the part where X' via timestamped contact sheets ('frame canvas').
     Short footage scans as one sheet; long footage splits into ~5.5-min batches scanned in parallel
     waves, so a 28-min clip keeps a 5-min clip's frame density without going linearly slower.
@@ -372,7 +376,7 @@ def find_moment_vision(clip, query, start=0.0, end=-1.0, pool=None):
         cands = []
         if span <= _BATCH_SPAN:
             _log("processing", 25, f"Scanning for “{query}”")
-            cands = _locate_one(pool, clip, query, s, e)
+            cands = _locate_one(pool, clip, query, s, e, dense=dense)
         else:
             # Long-form: time-ordered batches scanned in PARALLEL WAVES across the warm pool. Stop as
             # soon as the current best (_pick) is MEDIUM-or-better: by the +-2-rank rule nothing in a
@@ -385,7 +389,7 @@ def find_moment_vision(clip, query, start=0.0, end=-1.0, pool=None):
             W = _MAX_BATCH_WORKERS
             for w0 in range(0, nb, W):
                 with ThreadPoolExecutor(max_workers=W) as ex:
-                    futs = [ex.submit(_locate_one, pool, clip, query, bounds[i][0], bounds[i][1], str(i))
+                    futs = [ex.submit(_locate_one, pool, clip, query, bounds[i][0], bounds[i][1], str(i), dense)
                             for i in range(w0, min(w0 + W, nb))]
                     for f in as_completed(futs):
                         try:

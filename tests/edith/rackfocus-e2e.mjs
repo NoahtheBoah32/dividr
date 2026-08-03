@@ -99,7 +99,7 @@ await page.waitForTimeout(1500);
 const geo = await page.evaluate((clipId) => {
   const clip = document.querySelector(`[data-edith-target="track-body:${clipId}"]`);
   const inputBox = Array.from(document.querySelectorAll('textarea'))
-    .find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+    .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
   if (!clip || !inputBox) return { ok: false, clip: !!clip, input: !!inputBox };
   const cr = clip.getBoundingClientRect();
   const ir = inputBox.getBoundingClientRect();
@@ -127,7 +127,7 @@ if (geo.ok) {
 
   st = await page.evaluate(() => {
     const inputBox = Array.from(document.querySelectorAll('textarea'))
-      .find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+      .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
     const s = window.__dividrTest.getStoreSnapshot();
     const v = s.tracks.find((t) => t.type === 'video');
     return {
@@ -145,7 +145,7 @@ if (geo.ok) {
   // clear the input so nothing stray gets sent later
   await page.evaluate(() => {
     const inputBox = Array.from(document.querySelectorAll('textarea'))
-      .find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+      .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
     if (!inputBox) return;
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
     setter.call(inputBox, '');

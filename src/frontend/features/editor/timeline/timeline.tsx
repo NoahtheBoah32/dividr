@@ -26,6 +26,9 @@ import { InsertionLineIndicator } from './insertionLineIndicator';
 import { TimelineControls } from './timelineControls';
 import { TimelinePlayhead } from './timelinePlayhead';
 import { TimelineRuler } from './timelineRuler';
+import { TimelineHScrollbar } from './TimelineHScrollbar';
+import { applyEditorOpDirect } from '../../mycelium/storeAdapter';
+import { SFX_DRAG_MIME } from '../components/panels/components/SfxLibrarySection';
 import { TimelineTrackControllers } from './timelineTrackControllers';
 import { TimelineTracks } from './timelineTracks';
 import {
@@ -754,6 +757,27 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
 
         const targetFrame = Math.max(0, Math.floor(cursorX / frameWidth));
 
+        // SFX-panel drop: route through placeSFX so the drop gets the same
+        // machinery EDITH's op uses (media import, row-1 clash push-up,
+        // export-safe duration) instead of a hand-rolled track
+        const sfxRaw = e.dataTransfer.getData(SFX_DRAG_MIME);
+        if (sfxRaw) {
+          try {
+            const sfx = JSON.parse(sfxRaw) as { name?: string };
+            if (sfx?.name) {
+              const fps = timeline.fps || 30;
+              await applyEditorOpDirect({
+                type: 'placeSFX',
+                file: sfx.name,
+                atTime: targetFrame / fps,
+              });
+            }
+          } catch (err) {
+            console.warn('SFX drop failed', err);
+          }
+          return;
+        }
+
         // Try to parse as media library drag first
         const payload = parseMediaDropPayload(e.dataTransfer);
 
@@ -852,6 +876,7 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
         mediaLibrary,
         importMediaFromDrop,
         importMediaToTimeline,
+        timeline.fps,
       ],
     );
 
@@ -1935,12 +1960,21 @@ export const Timeline: React.FC<TimelineProps> = React.memo(
                 />
               </div>
 
+              {/* Premiere-style draggable horizontal scrollbar — sits under the
+                  ruler (the app layout clips ~100px at the window bottom, so a
+                  bottom-anchored bar would never be seen) */}
+              <TimelineHScrollbar
+                tracksRef={tracksRef}
+                contentWidth={timelineWidth}
+                scrollX={timeline.scrollX}
+              />
+
               {/* Timeline Tracks Area - Scrollable vertically */}
               <div className="flex-1 relative min-h-0">
                 <div
                   ref={tracksRef}
                   className={cn(
-                    'relative h-full overflow-auto scrollbar-thin z-10',
+                    'relative h-full overflow-auto scrollbar-thin z-10 timeline-tracks-scroll',
                     clipTransitionsEnabled && 'cut-transitions',
                     restoreTransitionsEnabled && 'restore-transitions',
                     // Don't apply cursor styles when dragging/resizing tracks

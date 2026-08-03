@@ -7,6 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { generateEditSpec } from './geminiAnalyzer';
 import { analyzeReferenceVideoWithClaude } from './claudeReferenceAnalyzer';
+import { profileReference, renderProfileDigest, type StyleProfile } from './referenceProfiler';
 import { runQACheck, type QAClip, type QAReferenceInfo } from './qaChecker';
 import { addLesson, loadLessons, formatLessonsForPrompt, inferCategory } from './edithLessons';
 import { screenshotHtml, reviewGraphicDesign } from './graphicPreview';
@@ -65,6 +66,7 @@ export interface MediaContextItem {
     editing?: Record<string, unknown>;
     structure?: Record<string, unknown>;
     colorGrade?: Record<string, unknown>;
+    profile?: StyleProfile; // v2 measured+interpreted style profile (referenceProfiler)
   };
 }
 
@@ -281,6 +283,25 @@ function buildMediaContext(media?: MediaContextItem[], snapshot?: TimelineSnapsh
     }
   });
 
+  // References are style sources, never footage — listed separately so EDITH
+  // can see them, analyze them, and edit FROM them without ever placing them.
+  const references = media.filter((m) => m.isReference);
+  if (references.length) {
+    ctx += '\n## Reference Videos (style sources — NEVER place these on the timeline)\n';
+    for (const r of references) {
+      const dur = r.duration ? ` | ${formatDuration(r.duration)}` : '';
+      ctx += `- [reference] "${r.name}"${dur} | id: ${r.id}\n`;
+      if (r.referenceAnalysis?.profile) {
+        ctx += renderProfileDigest(r.referenceAnalysis.profile);
+      } else if (r.referenceAnalysis) {
+        ctx += `  (analyzed with the old analyzer — re-run {"type":"analyzeReference","clipId":"${r.id}"} for the full style profile)\n`;
+        if (r.referenceAnalysis.description) ctx += `  ${r.referenceAnalysis.description}\n`;
+      } else {
+        ctx += `  (not yet analyzed — emit {"type":"analyzeReference","clipId":"${r.id}"} to watch it and extract its editing style)\n`;
+      }
+    }
+  }
+
   return ctx;
 }
 
@@ -485,7 +506,7 @@ export async function spawnEdith(
   const sfxSection = buildSfxSection(sfxLibrary);
   const contextBlock = `${mediaSection}${timelineSection}${activeDownloadsSection}${sfxSection}`;
 
-  if (session.process) { session.process.kill(); session.process = null; }
+  if (session.process) { killTree(session.process); session.process = null; }
   if (session.abortController) { session.abortController.abort(); session.abortController = null; }
   session.paused = false;
 
@@ -513,7 +534,14 @@ export async function spawnEdith(
 
   const claude = spawn(
     'claude',
-    ['--print', '--model', 'claude-opus-4-7', '--max-turns', '30'],
+    [
+      '--print', '--model', 'claude-opus-4-7', '--max-turns', '30',
+      // Pin EDITH's tool grants so she behaves identically on every machine. Without this,
+      // --print mode silently denies WebSearch/WebFetch unless the HOST machine's personal
+      // ~/.claude settings happen to allow them — which is why web sourcing worked in dev
+      // but not for repo testers.
+      '--allowedTools', 'WebSearch,WebFetch,Read',
+    ],
     { shell: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env } },
   );
 
@@ -528,6 +556,10 @@ export async function spawnEdith(
 
   claude.stdout?.on('data', (chunk: Buffer) => {
     if (session.paused) return;
+    // Stale-stream guard: after stopSession (or a superseding spawn) this closure
+    // may still receive in-flight chunks from the dying tree — drop them so an
+    // interrupted EDITH goes silent immediately.
+    if (session.process !== claude) return;
     buffer += chunk.toString();
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
@@ -566,6 +598,10 @@ export async function spawnEdith(
   });
 
   claude.on('close', (code) => {
+    // If stopSession (or a superseding spawn) already detached this process,
+    // the run was intentionally cancelled — keep what she said, but never
+    // auto-retry or auto-continue a run the user killed.
+    const wasStopped = session.process !== claude;
     session.process = null;
     edithLinesThisRun.forEach((text) => {
       session.uiHistory.push({
@@ -595,7 +631,7 @@ export async function spawnEdith(
     send(win, 'mycelium:done', null);
 
     // Auto-retry on 529 overload — wait 30s then replay the same prompt
-    if (hit529 && !session.paused) {
+    if (hit529 && !session.paused && !wasStopped) {
       if (autoContinueTimer) clearTimeout(autoContinueTimer);
       autoContinueTimer = setTimeout(() => {
         autoContinueTimer = null;
@@ -614,7 +650,7 @@ export async function spawnEdith(
 
     // Auto-continue if EDITH announced a pending batch (e.g. "25 placed, 75 remaining")
     // Silently re-spawn with "continue" — no user action needed
-    if (code === 0 && !session.paused) {
+    if (code === 0 && !session.paused && !wasStopped) {
       const lastLine = naturalLines[naturalLines.length - 1] ?? '';
       const hasPendingBatch = /\d+\s+remaining|\bnext batch\b|batch\s*\d+\s*(done|complete)/i.test(lastLine);
       if (hasPendingBatch) {
@@ -640,13 +676,26 @@ export async function spawnEdith(
 export function pauseSession() { session.paused = true; }
 export function resumeSession() { session.paused = false; }
 
+// Kill the WHOLE process tree. spawn(..., { shell: true }) wraps the CLI in
+// cmd.exe on Windows, so a plain .kill() only takes down the shell — the actual
+// claude process (a grandchild) keeps streaming into the inherited stdout pipe,
+// which is why Esc showed "Interrupted" while EDITH kept talking. taskkill /t /f
+// is the only reliable stop on Windows.
+function killTree(proc: { pid?: number; kill: () => boolean } | null) {
+  if (!proc) return;
+  if (process.platform === 'win32' && proc.pid) {
+    try { spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], { shell: false }); } catch { /* already gone */ }
+  }
+  try { proc.kill(); } catch { /* already gone */ }
+}
+
 export function stopSession() {
   if (autoContinueTimer) { clearTimeout(autoContinueTimer); autoContinueTimer = null; }
-  if (session.process) { session.process.kill(); session.process = null; }
+  if (session.process) { killTree(session.process); session.process = null; }
   if (session.abortController) { session.abortController.abort(); session.abortController = null; }
   session.paused = false;
-  session.conversationHistory = [];
-  session.uiHistory = [];
+  // NOTE: conversation/ui history is deliberately PRESERVED. Stopping EDITH
+  // mid-reply must not wipe the chat — that's what the Clear button is for.
 }
 
 // --- IPC registration ---
@@ -667,11 +716,26 @@ export function registerMyceliumIPC(
   // Load history when user opens or switches projects.
   ipcMain.handle('mycelium:setProject', async (_event, projectId: string) => {
     if (autoContinueTimer) { clearTimeout(autoContinueTimer); autoContinueTimer = null; }
-    if (session.process) { session.process.kill(); session.process = null; }
+    if (session.process) { killTree(session.process); session.process = null; }
     session.projectId = projectId;
     session.uiHistory = loadHistoryFromDisk(projectId);
     session.conversationHistory = rebuildConversationHistory(session.uiHistory);
     return { success: true, messages: session.uiHistory };
+  });
+
+  // Persist a UI-only chat entry (e.g. EDITH's fetched-media cards). Stored with
+  // role 'system' because rebuildConversationHistory filters system entries out —
+  // the token text must never reach the LLM's conversation context.
+  ipcMain.handle('mycelium:appendUiMessage', async (_event, payload: { text: string }) => {
+    if (typeof payload?.text !== 'string' || !payload.text.trim()) return { success: false };
+    session.uiHistory.push({
+      id: Math.random().toString(36).slice(2),
+      role: 'system',
+      text: payload.text,
+      timestamp: Date.now(),
+    });
+    if (session.projectId) saveHistoryToDisk(session.projectId, session.uiHistory);
+    return { success: true };
   });
 
   // Clear EDITH's memory for the current project.
@@ -686,14 +750,96 @@ export function registerMyceliumIPC(
   ipcMain.handle('mycelium:resume', () => { resumeSession(); return { success: true }; });
   ipcMain.handle('mycelium:stop', () => { stopSession(); return { success: true }; });
 
-  // Analyze a reference video using Claude CLI (same auth as EDITH — no separate API key needed)
-  ipcMain.handle('mycelium:analyzeReference', async (_event, payload: { filePath: string }) => {
+  // Analyze a reference video — full style profile (measure → interpret → synthesize).
+  // Progress streams to the renderer as reference:progress events so the chat can
+  // narrate the stages live. Falls back to the legacy 8-frame analyzer on hard
+  // failure so analysis never comes back empty-handed.
+  ipcMain.handle('mycelium:analyzeReference', async (event, payload: { filePath: string }) => {
+    const sendProgress = (stage: string, detail?: string, done?: boolean) => {
+      try { event.sender.send('reference:progress', { stage, detail, done }); } catch { /* window gone */ }
+    };
     try {
-      const result = await analyzeReferenceVideoWithClaude(payload.filePath, app.getAppPath());
+      const result = await profileReference(payload.filePath, app.getAppPath(), sendProgress);
+      sendProgress('Style profile ready', `${result.profile.blocks.length} blocks · ${result.profile.rules.length} rules`, true);
       return { success: true, analysis: result };
     } catch (e) {
-      return { success: false, error: String(e) };
+      console.error('[agentRuntime] profileReference failed, falling back to legacy analyzer:', e);
+      sendProgress('Deep profile failed — running quick analysis', String(e).slice(0, 120));
+      try {
+        const legacy = await analyzeReferenceVideoWithClaude(payload.filePath, app.getAppPath());
+        sendProgress('Quick analysis ready', undefined, true);
+        return { success: true, analysis: legacy, fallback: true };
+      } catch (e2) {
+        return { success: false, error: `profile: ${String(e)} | legacy: ${String(e2)}` };
+      }
     }
+  });
+
+  // Download a video by URL straight into the References flow (yt-dlp).
+  // Deliberately separate from the b-roll download pipeline: no search, no
+  // verification pass, no Gemini — a URL in, an mp4 path out.
+  ipcMain.handle('reference:downloadFromUrl', async (event, payload: { url: string }) => {
+    const url = String(payload?.url ?? '').trim();
+    if (!/^https?:\/\//i.test(url)) return { success: false, error: 'Not a valid URL' };
+
+    const resolveYtdlp = (): string => {
+      const candidates = [
+        path.join(app.getAppPath(), 'yt-dlp.exe'),
+        path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages',
+          'yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe', 'yt-dlp.exe'),
+        path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'Scripts', 'yt-dlp.exe'),
+        path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'Scripts', 'yt-dlp.exe'),
+        'C:\\ProgramData\\chocolatey\\bin\\yt-dlp.exe',
+        path.join(os.homedir(), 'scoop', 'shims', 'yt-dlp.exe'),
+      ];
+      for (const c of candidates) { try { if (fs.existsSync(c)) return c; } catch { /* keep looking */ } }
+      return 'yt-dlp';
+    };
+
+    const outDir = path.join(os.homedir(), 'Dividr Downloads', 'references');
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+    return new Promise((resolve) => {
+      const args = [
+        url,
+        '-f', 'bv*[height<=1080]+ba/b',
+        '--merge-output-format', 'mp4',
+        '--restrict-filenames',
+        '--no-playlist',
+        '--no-simulate',
+        '--print', 'after_move:filepath',
+        '--newline',
+        '-o', path.join(outDir, '%(title).80s.%(ext)s'),
+      ];
+      const proc = spawn(resolveYtdlp(), args, { shell: false });
+      let stdout = '', stderr = '';
+      const timer = setTimeout(() => {
+        try { proc.kill(); } catch { /* already gone */ }
+        resolve({ success: false, error: 'Download timed out (5 min)' });
+      }, 300000);
+      proc.stdout?.on('data', (d: Buffer) => {
+        const s = d.toString();
+        stdout += s;
+        const m = s.match(/\[download\]\s+([\d.]+)%/);
+        if (m) { try { event.sender.send('reference:downloadProgress', { url, percent: parseFloat(m[1]) }); } catch { /* window gone */ } }
+      });
+      proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        // --print after_move:filepath emits the final merged path as its own stdout line
+        const lines = stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+        const filePath = [...lines].reverse().find((l) => /\.(mp4|mkv|webm|mov)$/i.test(l) && fs.existsSync(l));
+        if (code === 0 && filePath) {
+          resolve({ success: true, filePath, title: path.basename(filePath).replace(/\.[^.]+$/, '') });
+        } else {
+          resolve({ success: false, error: (stderr.split('\n').filter((l) => l.includes('ERROR')).pop() ?? stderr.slice(-300)) || `yt-dlp exited ${code}` });
+        }
+      });
+      proc.on('error', (err: Error) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: `yt-dlp not available: ${err.message}` });
+      });
+    });
   });
 
   // QA check — frame capture at cut points + Claude Haiku vision + programmatic checks

@@ -41,8 +41,8 @@ async function capReset() {
   });
 }
 async function openEdith() {
-  if (await page.locator('textarea[placeholder*="reels"]').count() === 0) { try { await page.locator('[title="E.D.I.T.H"]').first().click({ timeout: 5000 }); } catch {} }
-  const ta = page.locator('textarea[placeholder*="reels"]').first();
+  if (await page.locator('textarea[placeholder*="EDITH"]').count() === 0) { try { await page.locator('[title="E.D.I.T.H"]').first().click({ timeout: 5000 }); } catch {} }
+  const ta = page.locator('textarea[placeholder*="EDITH"]').first();
   await ta.waitFor({ state: 'visible', timeout: 12000 }); return ta;
 }
 async function snap() { return page.evaluate(() => { const t = window.__dividrTest.getStoreSnapshot().tracks?.[0] || {}; return { source: t.source, sf: t.selectiveFreeze || null }; }); }

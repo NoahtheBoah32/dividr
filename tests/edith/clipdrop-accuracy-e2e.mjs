@@ -67,7 +67,7 @@ await page.waitForTimeout(1200);
 const geo = await page.evaluate((clipId) => {
   const clip = document.querySelector(`[data-edith-target="track-body:${clipId}"]`);
   const ta = Array.from(document.querySelectorAll('textarea'))
-    .find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+    .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
   if (!clip || !ta) return { ok: false, clip: !!clip, input: !!ta };
   const cr = clip.getBoundingClientRect();
   const ir = ta.getBoundingClientRect();
@@ -88,7 +88,7 @@ await page.waitForTimeout(900);
 // ── Assert: card present, times EXACT, textarea clean, clip snapped back ──
 let st = await page.evaluate((clipId) => {
   const ta = Array.from(document.querySelectorAll('textarea'))
-    .find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+    .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
   const cardTimes = Array.from(document.querySelectorAll('p'))
     .map((p) => p.textContent ?? '')
     .find((t) => /on timeline/.test(t)) ?? null;
@@ -115,13 +115,13 @@ await page.screenshot({ path: 'C:/tmp/clipcard.png' }).catch(() => {});
 console.log('sending to real EDITH (bake ~1-2 min)…');
 await page.evaluate(() => {
   const ta = Array.from(document.querySelectorAll('textarea'))
-    .find((t) => (t.placeholder ?? '').toLowerCase().includes('reels'));
+    .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
   setter.call(ta, 'apply a rack focus to this clip');
   ta.dispatchEvent(new Event('input', { bubbles: true }));
 });
 await page.waitForTimeout(300);
-await page.locator('textarea[placeholder*="reels" i]').press('Enter');
+await page.locator('textarea[placeholder*="edith" i]').press('Enter');
 
 // wait for the bake to land: source swaps to rackfocus_*.mp4
 let baked = null;
@@ -147,10 +147,18 @@ if (baked) {
   check('clip position untouched by the bake', baked.startFrame === 600 && baked.endFrame === 780);
 }
 
-// card should be consumed by the send
-st = await page.evaluate(() => ({
-  cardGone: !Array.from(document.querySelectorAll('p')).some((p) => /on timeline/.test(p.textContent ?? '')),
-}));
+// card should be consumed by the send — scope the check to the COMPOSER only.
+// The sent message deliberately echoes the clip card into the transcript (with
+// the same "on timeline" caption), so a document-wide query would false-fail.
+st = await page.evaluate(() => {
+  const ta = Array.from(document.querySelectorAll('textarea'))
+    .find((t) => (t.placeholder ?? '').toLowerCase().includes('edith'));
+  const composer = ta?.closest('div.border-t') ?? null;
+  return {
+    cardGone: !!composer && !Array.from(composer.querySelectorAll('p'))
+      .some((p) => /on timeline/.test(p.textContent ?? '')),
+  };
+});
 check('card consumed after sending', st.cardGone);
 
 await page.screenshot({ path: 'C:/tmp/clipcard-after.png' }).catch(() => {});

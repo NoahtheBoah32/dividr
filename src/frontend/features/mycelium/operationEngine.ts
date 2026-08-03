@@ -92,7 +92,7 @@ class OperationEngine {
 
   // Ops that are already slow (async work) — no artificial delay needed
   private static readonly INSTANT_OPS = new Set([
-    'cutSilence', 'runWhisper', 'analyzeReference', 'downloadMedia', 'geminiEdit', 'renderGraphic',
+    'cutSilence', 'runWhisper', 'analyzeReference', 'downloadMedia', 'searchMedia', 'removeFillersFromMedia', 'geminiEdit', 'renderGraphic',
     'cursorMoveTo', 'cursorClick', 'cursorStartDrag', 'cursorDrop', 'cursorHide',
     'highlightClipSegment', 'clearClipHighlight',
   ]);

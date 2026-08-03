@@ -9,6 +9,8 @@ import { usePanelStore } from '@/frontend/features/editor/stores/PanelStore';
 import { useProjectStore } from '@/frontend/features/projects/store/projectStore';
 import { operationEngine } from './operationEngine';
 import { refreshSfxLibrary } from './sfxLibraryCache';
+import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
+import { sendMediaToEdith } from './sendToEdith';
 import type { Op } from './types';
 
 interface DividrTestBridge {
@@ -34,6 +36,11 @@ interface DividrTestBridge {
   openProjectByTitle(query: string): Promise<boolean>;
   /** Snapshot of the op queue (id/type/status/error) — surfaces silent op failures. */
   getOpQueue(): { id: string; type: string; status: string; error?: string }[];
+  /** The download-approval store EDITH's fetches flow through — lets tests drive
+   *  the REAL enqueue→approve→import→chat-card path with a local file. */
+  getDownloadApprovalStore(): typeof useDownloadApprovalStore;
+  /** Hand a media file to EDITH's chat exactly like the recorder's Send to EDITH. */
+  sendMediaToEdith(item: { name: string; path: string; preview?: string }): void;
 }
 
 function initTestBridge() {
@@ -111,6 +118,14 @@ function initTestBridge() {
       await (useProjectStore as any).getState().openProject(id);
       window.location.hash = '#/video-editor';
       return id;
+    },
+
+    getDownloadApprovalStore() {
+      return useDownloadApprovalStore;
+    },
+
+    sendMediaToEdith(item: { name: string; path: string; preview?: string }) {
+      sendMediaToEdith(item);
     },
 
     getOpQueue() {

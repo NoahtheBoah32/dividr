@@ -834,8 +834,9 @@ function renderCaptionWords(
   fillColor: string,
   highlightColor?: string,
   highlightWordIndex = 0,
+  highlightScale?: number,
 ): React.ReactNode {
-  if (!highlightColor) return text;
+  if (!highlightColor && !highlightScale) return text;
   const tokens = text.split(/(\s+)/);
   let wordCount = 0;
   return tokens.map((token, i) =>
@@ -844,7 +845,16 @@ function renderCaptionWords(
       : (() => {
           const isHighlight = wordCount++ === highlightWordIndex;
           return (
-            <span key={i} style={{ color: isHighlight ? highlightColor : fillColor }}>
+            <span
+              key={i}
+              style={{
+                color: isHighlight && highlightColor ? highlightColor : fillColor,
+                // Kinetic-typography emphasis: the highlighted word renders larger
+                // (em so it tracks every preview zoom level)
+                fontSize:
+                  isHighlight && highlightScale ? `${highlightScale}em` : undefined,
+              }}
+            >
               {token}
             </span>
           );
@@ -979,6 +989,7 @@ function renderSubtitleContent(
                 style.color,
                 track.subtitleStyle?.highlightColor,
                 track.subtitleStyle?.highlightWordIndex,
+                (track.subtitleStyle as any)?.highlightScale,
               )}
             </div>
           </div>
@@ -1029,6 +1040,7 @@ function renderSubtitleContent(
               style.color,
               track.subtitleStyle?.highlightColor,
               track.subtitleStyle?.highlightWordIndex,
+              (track.subtitleStyle as any)?.highlightScale,
             )}
           </div>
         </div>
@@ -1061,6 +1073,7 @@ function renderSubtitleContent(
           style.color,
           track.subtitleStyle?.highlightColor,
           track.subtitleStyle?.highlightWordIndex,
+          (track.subtitleStyle as any)?.highlightScale,
         )}
       </div>
     </div>

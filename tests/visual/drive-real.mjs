@@ -164,14 +164,14 @@ async function gotoEditor() {
 
 async function openEdith() {
   // EDITH is the 'friday' dock panel — open it via its toolbar button (title E.D.I.T.H).
-  if (await page.locator('textarea[placeholder*="reels"]').count() === 0) {
+  if (await page.locator('textarea[placeholder*="EDITH"]').count() === 0) {
     try { await page.locator('[title="E.D.I.T.H"]').first().click({ timeout: 5000 }); } catch {}
     await sleep(600);
   }
   // Pass the per-project consent gate if it appears (pre-granted in addInitScript, belt+braces).
   const agree = page.locator('button:has-text("Agree")');
   try { if (await agree.count() > 0) await agree.first().click({ timeout: 3000 }); } catch {}
-  const ta = page.locator('textarea[placeholder*="reels"]').first();
+  const ta = page.locator('textarea[placeholder*="EDITH"]').first();
   await ta.waitFor({ state: 'visible', timeout: 12000 });
   return ta;
 }
@@ -263,7 +263,7 @@ for (let i = 0; i < selected.length; i++) {
     // history (speed uses a real LLM turn) and flush any renderer memory. Cheap at 2-3x/run.
     if (i > 0 && i % 10 === 0) { await gotoEditor(); ta = await openEdith(); }
     await injectClip(tc.clip);
-    if (await page.locator('textarea[placeholder*="reels"]').count() === 0) ta = await openEdith();
+    if (await page.locator('textarea[placeholder*="EDITH"]').count() === 0) ta = await openEdith();
     await capReset();
     await seek(40);
     const beforeShot = await shot(`${id}-before`);

@@ -46,6 +46,12 @@ body {
   display: none;
 }
 
+/* Timeline tracks: native horizontal bar is replaced by TimelineHScrollbar
+   (the 5px sliver was invisible to editors) — keep the vertical one. */
+.timeline-tracks-scroll::-webkit-scrollbar:horizontal {
+  display: none;
+}
+
 .scrollbar-hidden {
   -ms-overflow-style: none; /* IE and Edge */
   scrollbar-width: none; /* Firefox */

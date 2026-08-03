@@ -8,6 +8,7 @@ import type { HistoryEntry, MediaContextItem, SfxEntry, TimelineSnapshot } from 
 import { useDownloadApprovalStore } from './stores/downloadApprovalStore';
 import { useEdithEditingStore } from './stores/edithEditingStore';
 import { setSfxLibraryCache } from './storeAdapter';
+import { consumePendingEdithAttachment } from './sendToEdith';
 
 // "Find me the moment" fast-path. A plain CTRL-F request ("find the car", "where's the
 // person", "jump to the busiest part") does NOT need an LLM turn — that adds ~7-10s of
@@ -132,7 +133,8 @@ function PlanCard({
   };
 
   return (
-    <div className="px-4 py-2">
+    <div className="px-4 py-1.5">
+      <div className="rounded-xl border border-white/[0.07] px-3 py-2" style={{ background: 'rgba(255,255,255,0.02)' }}>
       {plan.generating && (
         <div className="flex items-center gap-0 mb-1">
           <span className="text-[11px] text-zinc-600">planning process</span>
@@ -148,7 +150,7 @@ function PlanCard({
           className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-100 transition-colors font-medium"
         >
           <span>View process</span>
-          <span className="text-zinc-500">{plan.open ? 'â–¾' : 'â€º'}</span>
+          <span className="text-zinc-500">{plan.open ? '▾' : '›'}</span>
         </button>
       )}
 
@@ -201,7 +203,7 @@ function PlanCard({
                         if (e.key === 'Escape') { setEditingStepId(null); setEditValue(''); }
                       }}
                       onBlur={() => commitEdit(step.id)}
-                      placeholder="Type your instructionâ€¦"
+                      placeholder="Type your instruction…"
                       className="w-full bg-transparent border-0 border-b border-white/20 text-[13px] text-white outline-none pb-px placeholder-zinc-600 leading-snug"
                       style={{ boxShadow: 'none', WebkitAppearance: 'none' }}
                     />
@@ -234,6 +236,129 @@ function PlanCard({
           })}
         </div>
       )}
+      </div>
+    </div>
+  );
+}
+
+// ── Live reasoning card ───────────────────────────────────────────────────────
+// Claude-style "thinking" feed for long analysis work (reference watching). Each
+// stage line is a REAL pipeline step streamed from the main process — the shimmer
+// line is what EDITH is doing at this exact moment, not decoration.
+const REASONING_CSS = `
+@keyframes edith-shimmer {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+@keyframes edith-star-spin {
+  0% { transform: rotate(0deg) scale(1); opacity: 0.85; }
+  50% { transform: rotate(180deg) scale(1.18); opacity: 1; }
+  100% { transform: rotate(360deg) scale(1); opacity: 0.85; }
+}
+@keyframes edith-stage-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}`;
+
+const SHIMMER_STYLE: React.CSSProperties = {
+  background: 'linear-gradient(90deg, #8b8b93 25%, #f4f4f5 50%, #8b8b93 75%)',
+  backgroundSize: '200% auto',
+  WebkitBackgroundClip: 'text',
+  backgroundClip: 'text',
+  WebkitTextFillColor: 'transparent',
+  animation: 'edith-shimmer 2.2s linear infinite',
+};
+
+function ReasoningStar({ running, failed }: { running: boolean; failed?: boolean }) {
+  return (
+    <svg
+      width="11" height="11" viewBox="0 0 24 24"
+      className={failed ? 'text-red-400' : running ? 'text-emerald-300' : 'text-zinc-500'}
+      fill="currentColor"
+      style={running ? { animation: 'edith-star-spin 5s ease-in-out infinite' } : undefined}
+    >
+      <path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z" />
+    </svg>
+  );
+}
+
+function ReasoningCard({ message, onToggle }: { message: AgentMessage; onToggle: (msgId: string) => void }) {
+  const r = message.reasoning!;
+  const [nowTick, setNowTick] = useState(0);
+
+  useEffect(() => {
+    if (!r.running) return;
+    const id = setInterval(() => setNowTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [r.running]);
+  void nowTick;
+
+  const seconds = r.elapsedMs != null
+    ? Math.max(1, Math.round(r.elapsedMs / 1000))
+    : Math.max(0, Math.floor((Date.now() - r.startedAt) / 1000));
+  const showStages = r.running || r.open;
+
+  return (
+    <div className="mx-4 my-1.5 rounded-xl border border-white/[0.07] overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)' }}>
+      <style>{REASONING_CSS}</style>
+      {/* Header — shimmering title while she works, quiet summary once done */}
+      <button
+        onClick={() => { if (!r.running) onToggle(message.id); }}
+        className={`w-full flex items-center gap-2 px-3 py-2 text-left ${r.running ? 'cursor-default' : 'cursor-pointer hover:bg-white/[0.02]'} transition-colors`}
+      >
+        <ReasoningStar running={r.running} failed={r.failed} />
+        {r.running ? (
+          <span className="text-[12px] font-medium flex-1 truncate" style={SHIMMER_STYLE}>
+            {r.title}
+          </span>
+        ) : (
+          <span className={`text-[12px] font-medium flex-1 truncate ${r.failed ? 'text-red-400/90' : 'text-zinc-400'}`}>
+            {r.failed ? 'Reference analysis failed' : r.title.replace(/^Watching\b/, 'Watched')}
+          </span>
+        )}
+        <span className="text-[10px] text-zinc-600 tabular-nums flex-shrink-0">{seconds}s</span>
+        {!r.running && (
+          <span className="text-[10px] text-zinc-600 flex-shrink-0">{r.open ? '▾' : '›'}</span>
+        )}
+      </button>
+
+      {/* Stage feed — appears line by line as the pipeline advances */}
+      {showStages && r.stages.length > 0 && (
+        <div className="px-3 pb-2.5">
+          <div className="border-l border-white/[0.07] pl-3 ml-[4px] space-y-[3px]">
+            {r.stages.map((st, i) => {
+              const isActive = st.status === 'active' && r.running;
+              return (
+                <div key={`${st.stage}-${i}`} style={{ animation: 'edith-stage-in 0.35s ease both' }}>
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 flex-shrink-0 flex items-center justify-center">
+                      {st.status === 'done' ? (
+                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 6.5l2.5 2.5 5.5-5.5" stroke="#4ade80" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : st.status === 'failed' ? (
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                          <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="#f87171" strokeWidth="1.6" strokeLinecap="round" />
+                        </svg>
+                      ) : (
+                        <span className="w-[5px] h-[5px] rounded-full bg-emerald-300 animate-pulse" />
+                      )}
+                    </span>
+                    {isActive ? (
+                      <span className="text-[12px] leading-snug" style={SHIMMER_STYLE}>{st.stage}</span>
+                    ) : (
+                      <span className={`text-[12px] leading-snug ${st.status === 'failed' ? 'text-red-400/80' : 'text-zinc-500'}`}>{st.stage}</span>
+                    )}
+                  </div>
+                  {st.detail && (
+                    <p className="text-[10px] text-zinc-600 leading-snug pl-5 mt-[1px]">{st.detail}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -244,17 +369,24 @@ function ConsentScreen({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
       {/* Header */}
       <div className="flex items-center px-4 py-2.5 border-b border-white/[0.06] select-none">
         <div className="flex items-center gap-2.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-zinc-600" />
-          <span className="text-xs font-medium tracking-widest uppercase text-zinc-300">E.D.I.T.H</span>
+          <div
+            className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: 'rgba(34,197,94,0.14)' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="#4ade80">
+              <path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z" />
+            </svg>
+          </div>
+          <span className="text-[12.5px] font-semibold text-zinc-100">EDITH</span>
         </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 flex flex-col px-5 py-5 gap-4 min-h-0 overflow-y-auto">
+      <div className="flex-1 flex flex-col justify-center px-6 py-5 gap-4 min-h-0 overflow-y-auto">
         <div>
           <p className="text-sm font-medium text-zinc-100 mb-1">Allow EDITH to edit</p>
           <p className="text-[12px] text-zinc-500 leading-relaxed">
-            She'll read your project context to edit effectively â€" nothing leaves your machine without your approval.
+            She'll read your project context to edit effectively — nothing leaves your machine without your approval.
           </p>
         </div>
 
@@ -263,11 +395,11 @@ function ConsentScreen({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
           {[
             'She won\'t record, export, or transmit your footage.',
             'She won\'t upload anything to the cloud without a separate confirmation from you.',
-            'She can\'t see raw video â€" only clip names, positions, and transcripts.',
+            'She can\'t see raw video — only clip names, positions, and transcripts.',
             'When she downloads b-roll, a prompt will ask for your approval before anything enters your media library.',
           ].map((line) => (
             <div key={line} className="flex gap-2 items-start">
-              <span className="text-zinc-700 text-[11px] mt-[1px] flex-shrink-0">â€"</span>
+              <span className="text-zinc-700 text-[11px] mt-[1px] flex-shrink-0">—</span>
               <p className="text-[11px] text-zinc-600 leading-relaxed">{line}</p>
             </div>
           ))}
@@ -281,8 +413,8 @@ function ConsentScreen({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
         <div className="flex gap-2 pt-2">
           <button
             onClick={onAgree}
-            className="flex-1 py-2 rounded text-xs font-semibold text-white transition-colors"
-            style={{ background: '#6b7c3a' }}
+            className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all hover:brightness-110"
+            style={{ background: '#22c55e', color: '#052e13' }}
           >
             Agree
           </button>
@@ -299,44 +431,25 @@ function ConsentScreen({ onAgree, onCancel }: { onAgree: () => void; onCancel: (
   );
 }
 
-const THINKING_TEXT = 'E.D.I.T.H thinking...';
-
 function ThinkingIndicator() {
-  const [displayed, setDisplayed] = useState('');
-  const frameRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    let index = 0;
-    let cancelled = false;
-
-    const tick = () => {
-      if (cancelled) return;
-      index += 1;
-      setDisplayed(THINKING_TEXT.slice(0, index));
-      if (index < THINKING_TEXT.length) {
-        frameRef.current = setTimeout(tick, 65);
-      } else {
-        // hold at end then restart
-        frameRef.current = setTimeout(() => {
-          if (cancelled) return;
-          index = 0;
-          setDisplayed('');
-          frameRef.current = setTimeout(tick, 100);
-        }, 500);
-      }
-    };
-
-    frameRef.current = setTimeout(tick, 65);
-    return () => {
-      cancelled = true;
-      if (frameRef.current) clearTimeout(frameRef.current);
-    };
-  }, []);
-
+  // Audio-waveform bars — the editor's own visual language, not a generic chat
+  // bouncing-dots. Bars breathe out of phase at slightly different periods so the
+  // motion never reads as a loop.
   return (
-    <span className="text-[12px] italic text-zinc-400">
-      {displayed}
-      <span className="inline-block w-[1px] h-[10px] bg-zinc-400 ml-[1px] align-middle animate-pulse" />
+    <span className="flex items-center gap-[3px] py-0.5" style={{ height: 14 }}>
+      <style>{`@keyframes edith-wave { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }`}</style>
+      {[0.9, 1.15, 0.75, 1.3, 1.0].map((period, i) => (
+        <span
+          key={i}
+          className="inline-block rounded-full bg-emerald-400/80"
+          style={{
+            width: 2.5,
+            height: 13,
+            transformOrigin: 'center',
+            animation: `edith-wave ${period}s ease-in-out ${i * 0.12}s infinite`,
+          }}
+        />
+      ))}
     </span>
   );
 }
@@ -365,6 +478,19 @@ function extractClipTokens(text: string): {
   return { clean, clips };
 }
 
+// EDITH's own fetches (b-roll downloads, sourced images) persist as a system-role
+// token line — system entries never re-enter the LLM's context on reload, but the
+// UI parses them back into the same playable card the user saw live.
+const MEDIA_TOKEN_RE = /^\[fetched (video|audio|image) "([^"]*)" media:([^\s\]]+)\]$/;
+function fmtMediaDuration(sec: number | undefined): string {
+  if (!sec || !isFinite(sec)) return '0:00';
+  const s = Math.round(sec);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+function mediaTokenText(card: NonNullable<AgentMessage['mediaCard']>): string {
+  return `[fetched ${card.mediaType} "${card.name.replace(/"/g, "'")}" media:${card.mediaId}]`;
+}
+
 function historyToMessages(entries: HistoryEntry[]): AgentMessage[] {
   return entries
     // Internal agent-loop "continue" turns fire silently (no chat bubble) when they
@@ -374,6 +500,18 @@ function historyToMessages(entries: HistoryEntry[]): AgentMessage[] {
     // just makes a reloaded chat match what was shown live.
     .filter((e) => !(e.role === 'user' && /^continue($| \()/.test(e.text.trim())))
     .map((e, i) => {
+    if (e.role === 'system') {
+      const m = e.text.match(MEDIA_TOKEN_RE);
+      if (m) {
+        return {
+          id: e.id,
+          role: 'edith' as AgentMessage['role'],
+          text: '',
+          timestamp: e.timestamp,
+          mediaCard: { mediaType: m[1] as 'video' | 'audio' | 'image', name: m[2], mediaId: m[3] },
+        };
+      }
+    }
     if (e.role === 'edith' && e.text.startsWith('PLAN:')) {
       try {
         const steps = JSON.parse(e.text.slice(5).trim()) as Array<{ id: string; step: string }>;
@@ -437,12 +575,19 @@ export function FridayPanel({ className }: { className?: string }) {
   const [showQueue, setShowQueue] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ name: string; path: string; preview?: string }>>([]);
   const [activeDownloads, setActiveDownloads] = useState<{ url: string; topic?: string }[]>([]);
+  // Media the user clicked to preview — resolved to a playable src at click time
+  // so every card kind (EDITH's fetches, attached timeline clips) opens the same
+  // full-size player. seekTo starts a clip at its own source in-point.
+  const [mediaPreview, setMediaPreview] = useState<{
+    src: string; name: string; mediaType: 'video' | 'audio' | 'image'; seekTo?: number;
+  } | null>(null);
   const [sfxLibrary, setSfxLibrary] = useState<SfxEntry[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   const submittingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputTaRef = useRef<HTMLTextAreaElement>(null);
   const activePlanIdRef = useRef<string | null>(null);
   const agentStatusRef = useRef<AgentStatus>('idle');
   const interruptedRef = useRef(false);
@@ -454,7 +599,7 @@ export function FridayPanel({ className }: { className?: string }) {
   const isPanelVisibleRef = useRef(true);
   const pendingSlowOpsRef = useRef<Set<string>>(new Set());
   const pendingSnapshotAnalysisRef = useRef<string | null>(null);
-  // QA tracking â€" count substantial ops per EDITH run, trigger QA after done
+  // QA tracking — count substantial ops per EDITH run, trigger QA after done
   const substantialOpsThisRunRef = useRef(0);
   const qaRunningRef = useRef(false);
   // Self-correction memory loop
@@ -466,6 +611,10 @@ export function FridayPanel({ className }: { className?: string }) {
   const edithLlmActiveRef = useRef(false);
   const transcriptionPipelineActiveRef = useRef(false);
   const pendingDownloadContinueRef = useRef(false);
+  // Reference analysis: id of the live reasoning card being streamed to, and the
+  // auto-continue note held back if analysis lands while an LLM turn is running.
+  const activeReasoningIdRef = useRef<string | null>(null);
+  const pendingReferenceNoteRef = useRef<string | null>(null);
   const [approvalTransitioning, setApprovalTransitioning] = useState(false);
   const denyContextRef = useRef<string | null>(null);
   // Gate: once a download op is seen in a turn, drop all subsequent non-download ops.
@@ -531,6 +680,68 @@ export function FridayPanel({ className }: { className?: string }) {
       }
     }
   }, []);
+  // Selection tool — arm it from the chat box, then click a timeline clip to attach
+  // it as the same card a drag-into-chat produces. 'single' disarms after one pick;
+  // double-clicking the target button arms 'persistent' (survives sends). Esc or
+  // leaving the EDITH panel disarms, so a forgotten armed tool can't silently
+  // hoover up every clip the user clicks while editing.
+  const [selectionMode, setSelectionMode] = useState<'off' | 'single' | 'persistent'>('off');
+  const attachClipByTrackId = useCallback((trackId: string) => {
+    const s = useVideoEditorStore.getState() as any;
+    const clip = s.tracks.find((t: any) => t.id === trackId);
+    if (!clip) return;
+    const fps = getDisplayFps(s.tracks) || 30;
+    const startSec = +(clip.startFrame / fps).toFixed(1);
+    const endSec = +(clip.endFrame / fps).toFixed(1);
+    const media = (s.mediaLibrary ?? []).find((m: any) => m.id === clip.mediaId);
+    setClipRefs((prev) =>
+      prev.some((r) => r.trackId === clip.id)
+        ? prev
+        : [...prev, { trackId: clip.id, name: clip.name, startSec, endSec, thumbnail: media?.thumbnail }],
+    );
+  }, []);
+  useEffect(() => {
+    if (selectionMode === 'off') return;
+    const store = useVideoEditorStore.getState() as any;
+    // Arming clears the timeline selection so the very next click attaches — without
+    // this, picking the clip that was already selected produces no store change.
+    store.setSelectedTracks?.([]);
+    let prevIds: string[] = (useVideoEditorStore.getState() as any).timeline?.selectedTrackIds ?? [];
+    const unsub = useVideoEditorStore.subscribe((s: any) => {
+      const ids: string[] = s.timeline?.selectedTrackIds ?? [];
+      if (ids === prevIds) return;
+      const added = ids.filter((id) => !prevIds.includes(id));
+      prevIds = ids;
+      if (added.length === 0) return;
+      // One click can select a linked video+audio pair — attach only the video half.
+      const byId = new Map<string, any>(s.tracks.map((t: any) => [t.id, t]));
+      const picked = added.filter((id) => {
+        const c = byId.get(id);
+        if (!c) return false;
+        return !(c.isLinked && c.linkedTrackId && added.includes(c.linkedTrackId) && c.type === 'audio');
+      });
+      if (picked.length === 0) return;
+      picked.forEach(attachClipByTrackId);
+      if (selectionMode === 'single') setSelectionMode('off');
+    });
+    return unsub;
+  }, [selectionMode, attachClipByTrackId]);
+  useEffect(() => {
+    if (selectionMode === 'off') return;
+    // Capture-phase so this Esc ONLY exits selection mode — it must not also reach
+    // the document-level Esc that cancels a running EDITH turn.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setSelectionMode('off');
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectionMode]);
+  useEffect(() => {
+    if (panelTypeForVisibility !== 'friday') setSelectionMode('off');
+  }, [panelTypeForVisibility]);
   const approvalPending = useDownloadApprovalStore((s) => s.pending);
   const approvalApprove = useDownloadApprovalStore((s) => s.approve);
   const approvalApproveAll = useDownloadApprovalStore((s) => s.approveAll);
@@ -554,7 +765,7 @@ export function FridayPanel({ className }: { className?: string }) {
     window.electronAPI.invoke('mycelium:setProject', currentProjectId).then((result: any) => {
       if (result?.messages?.length) {
         setMessages(historyToMessages(result.messages));
-        // History exists â€" consent was implicitly given in a prior session
+        // History exists — consent was implicitly given in a prior session
         setConsentGiven(true);
       } else {
         setMessages([{
@@ -567,7 +778,7 @@ export function FridayPanel({ className }: { className?: string }) {
     });
   }, [currentProjectId]);
 
-  // Shared silent continue â€" fires EDITH with fresh context, no chat bubble
+  // Shared silent continue — fires EDITH with fresh context, no chat bubble
   const triggerAutoContinue = useCallback((contextNote?: string) => {
     edithLlmActiveRef.current = true; // EDITH LLM subprocess is about to start
     setTimeout(() => {
@@ -615,7 +826,19 @@ export function FridayPanel({ className }: { className?: string }) {
       };
       const snapshotNote = pendingSnapshotAnalysisRef.current;
       pendingSnapshotAnalysisRef.current = null;
-      const combinedNote = [snapshotNote, contextNote].filter(Boolean).join(' | ');
+      // Queue-awareness: EDITH cannot see the op queue, so a continue turn after a
+      // long op made her re-emit work she had already queued (observed: doubled
+      // gradeReference/buildCaptions/zoomToFace stacks). Tell her what's in flight.
+      let queueNote: string | null = null;
+      try {
+        const inFlight = operationEngine.getQueue()
+          .filter((q) => q.status === 'pending' || q.status === 'running')
+          .map((q) => (q.op as any).type);
+        if (inFlight.length) {
+          queueNote = `ops ALREADY queued/running from your previous turn (do NOT re-emit these, they are being applied): ${inFlight.join(', ')}`;
+        }
+      } catch { /* queue unavailable */ }
+      const combinedNote = [snapshotNote, queueNote, contextNote].filter(Boolean).join(' | ');
       const text = combinedNote ? `continue (note: ${combinedNote})` : 'continue';
       window.electronAPI.invoke('mycelium:sendMessage', {
         text,
@@ -643,6 +866,25 @@ export function FridayPanel({ className }: { className?: string }) {
     return () => window.removeEventListener('edith:downloadImported', handler);
   }, [triggerAutoContinue]);
 
+  // EDITH fetched media herself — drop a playable card into the chat and persist
+  // it (as a system-role token) so a reloaded chat shows the same card.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const card = (e as CustomEvent<NonNullable<AgentMessage['mediaCard']>>).detail;
+      if (!card?.mediaId) return;
+      setMessages((prev) => [...prev, {
+        id: Math.random().toString(36).slice(2),
+        role: 'edith' as const,
+        text: '',
+        timestamp: Date.now(),
+        mediaCard: card,
+      }]);
+      window.electronAPI.invoke('mycelium:appendUiMessage', { text: mediaTokenText(card) }).catch(() => {});
+    };
+    window.addEventListener('edith:mediaFetched', handler);
+    return () => window.removeEventListener('edith:mediaFetched', handler);
+  }, []);
+
   // Deny clears the queue — prompt the user for a new direction
   useEffect(() => {
     const handler = (e: Event) => {
@@ -658,6 +900,83 @@ export function FridayPanel({ className }: { className?: string }) {
     window.addEventListener('edith:downloadDenied', handler);
     return () => window.removeEventListener('edith:downloadDenied', handler);
   }, []);
+
+  // Live reasoning feed — reference analysis streams its real pipeline stages here.
+  // begin → new card; stage updates → append/refresh lines; finish → settle the card.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<{
+        title?: string; stage?: string; detail?: string;
+        done?: boolean; begin?: boolean; finish?: boolean; failed?: boolean;
+      }>).detail || {};
+      if (d.begin) {
+        const id = Math.random().toString(36).slice(2);
+        activeReasoningIdRef.current = id;
+        setMessages((prev) => [...prev, {
+          id,
+          role: 'edith' as const,
+          text: '',
+          timestamp: Date.now(),
+          reasoning: {
+            title: d.title || 'Analyzing the reference',
+            stages: d.stage ? [{ stage: d.stage, detail: d.detail, status: 'active' as const }] : [],
+            running: true,
+            open: true,
+            startedAt: Date.now(),
+          },
+        }]);
+        return;
+      }
+      const id = activeReasoningIdRef.current;
+      if (!id) return;
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== id || !m.reasoning) return m;
+        const r = { ...m.reasoning, stages: [...m.reasoning.stages] };
+        if (d.finish) {
+          r.running = false;
+          r.elapsedMs = Date.now() - r.startedAt;
+          r.open = false;
+          r.failed = !!d.failed;
+          r.stages = r.stages.map((s) =>
+            s.status === 'active' ? { ...s, status: d.failed ? 'failed' as const : 'done' as const } : s);
+          return { ...m, reasoning: r };
+        }
+        if (d.stage) {
+          const lastIdx = r.stages.length - 1;
+          const last = r.stages[lastIdx];
+          if (last && last.stage === d.stage) {
+            r.stages[lastIdx] = { ...last, detail: d.detail ?? last.detail, status: d.done ? 'done' : last.status };
+          } else {
+            if (last && last.status === 'active') r.stages[lastIdx] = { ...last, status: 'done' };
+            r.stages.push({ stage: d.stage, detail: d.detail, status: d.done ? 'done' : 'active' });
+          }
+        }
+        return { ...m, reasoning: r };
+      }));
+      if (d.finish) activeReasoningIdRef.current = null;
+    };
+    window.addEventListener('edith:reasoning', handler);
+    return () => window.removeEventListener('edith:reasoning', handler);
+  }, []);
+
+  // Analysis finished — auto-continue so EDITH moves from watching into applying.
+  // If her LLM turn is somehow still open, hold the note and flush it on done.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { name, alreadyAnalyzed } = (e as CustomEvent<{ name: string; alreadyAnalyzed?: boolean }>).detail || {};
+      if (interruptedRef.current) return;
+      const note = alreadyAnalyzed
+        ? `Reference "${name}" was already analyzed — its STYLE PROFILE is in your context under "Reference Videos". Move straight to applying it to the timeline footage.`
+        : `Reference "${name}" analyzed — the full STYLE PROFILE is now in your context under "Reference Videos". Say in ONE short line what defines this style, then start applying it to the timeline footage following the profile's blocks and rules. NEVER place the reference itself on the timeline.`;
+      if (edithLlmActiveRef.current) {
+        pendingReferenceNoteRef.current = note;
+      } else {
+        triggerAutoContinue(note);
+      }
+    };
+    window.addEventListener('edith:referenceAnalyzed', handler);
+    return () => window.removeEventListener('edith:referenceAnalyzed', handler);
+  }, [triggerAutoContinue]);
 
   // Transcription chunk pipeline — fire EDITH per 30s segment while Whisper runs in background
   const flushTranscriptChunks = useCallback(() => {
@@ -853,6 +1172,124 @@ export function FridayPanel({ className }: { className?: string }) {
     return () => window.removeEventListener('edith:findMomentResult', handler);
   }, [sfxLibrary]);
 
+  // searchMedia result — feed the YouTube candidate list back so EDITH reasons over
+  // sources (resolution keywords, view counts, channel credibility) and picks one
+  // before emitting a download. Same continue-turn pattern as findMoment/scanVideo.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      let note: string;
+      if (d.success && Array.isArray(d.candidates) && d.candidates.length) {
+        const list = d.candidates.map((c: any, i: number) => {
+          const dur = c.durationSec != null
+            ? `${Math.floor(c.durationSec / 60)}:${String(Math.floor(c.durationSec % 60)).padStart(2, '0')}`
+            : 'unknown length';
+          const views = c.viewCount != null ? `${c.viewCount.toLocaleString('en-US')} views` : 'view count unknown';
+          return `${i + 1}. "${c.title}" — ${dur}, ${views}, channel: ${c.channel ?? 'unknown'} — ${c.url}`;
+        }).join('\n');
+        note = `searchMedia result for "${d.query}" — ${d.candidates.length} candidates:\n${list}\n\nReason over these like an editor sourcing footage: prefer resolution keywords (4K/HDR/1080p) in the title, high view counts, credible clip channels, and a duration that fits the need. Skip reactions, essays, fan edits, and vertical crops. Tell the user in ONE line which you picked and why, then emit download with that exact url and a concrete verify description of what must be visible.`;
+      } else {
+        note = `searchMedia found nothing for "${d.query}"${d.error ? ` (${d.error})` : ''}. Rephrase the query with the most distinctive words (movie title + scene nouns) and try searchMedia once more, or ask the user for a link. Do NOT emit a blind download.`;
+      }
+      setAgentStatus('running');
+      const s = useVideoEditorStore.getState() as any;
+      const fps = s.timeline?.fps || 30;
+      const timelineCtx = {
+        fps,
+        currentFrame: s.timeline?.currentFrame ?? 0,
+        totalFrames: s.timeline?.totalFrames ?? 0,
+        selectedClipIds: s.selectedTrackIds ?? [],
+        clips: (s.tracks ?? []).map((t: any) => ({
+          id: t.id,
+          mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+          sourcePath: t.source ?? '',
+          type: t.type, layer: t.trackRowIndex ?? 0,
+          startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+          durationFrames: (t.endFrame ?? 0) - (t.startFrame ?? 0),
+        })),
+      };
+      window.electronAPI.invoke('mycelium:sendMessage', {
+        text: `continue (${note})`,
+        timelineSnapshot: timelineCtx,
+        activeDownloads: [],
+        sfxLibrary,
+      }).catch(() => {});
+    };
+    window.addEventListener('edith:searchMediaResult', handler);
+    return () => window.removeEventListener('edith:searchMediaResult', handler);
+  }, [sfxLibrary]);
+
+  // Media handed off from the Record studio ("Send to EDITH") — lands as a file
+  // chip in the input. Consumed on mount AND on the live event, because this
+  // panel mounts lazily on first open.
+  useEffect(() => {
+    const attach = () => {
+      const item = consumePendingEdithAttachment();
+      if (!item?.path) return;
+      setAttachments((prev) =>
+        prev.some((a) => a.path === item.path)
+          ? prev
+          : [...prev, { name: item.name, path: item.path, preview: item.preview }],
+      );
+      inputTaRef.current?.focus();
+    };
+    attach();
+    window.addEventListener('edith:attachMedia', attach);
+    return () => window.removeEventListener('edith:attachMedia', attach);
+  }, []);
+
+  // removeFillersFromMedia result — the cleaned file is already imported (its card
+  // is in chat via edith:mediaFetched); this continue turn is narration only.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = ((e as CustomEvent).detail ?? {}) as any;
+      let note: string;
+      if (!d.success) {
+        note =
+          `removeFillersFromMedia result: the pipeline FAILED (${d.error ?? 'unknown error'}). ` +
+          'Tell the user honestly it did not work and they can try again. Do NOT claim anything was removed, do NOT emit any op.';
+      } else if (!d.removedCount) {
+        note =
+          'removeFillersFromMedia result: the transcription found NO filler words — the take is already clean. ' +
+          'Tell the user that in one line. Nothing was created or imported. Do NOT emit any op. ' +
+          'ZERO cuts were made this run — any filler counts from earlier in the conversation are from a different run; do not mention them.';
+      } else {
+        const parts = Object.entries(d.breakdown ?? {})
+          .map(([w, n]) => `"${w}" ×${n}`)
+          .join(', ');
+        note =
+          `removeFillersFromMedia result: removed ${d.removedCount} filler word(s) (${parts}), cutting ${d.removedSec}s total. ` +
+          `The cleaned file is imported into the media panel as "${d.importedName}" and its playable card is already shown in chat. ` +
+          'Tell the user in one or two lines what was removed and where the clean version lives. Do NOT place anything on the timeline unless they ask. Do NOT emit any op.';
+      }
+      setAgentStatus('running');
+      const s = useVideoEditorStore.getState() as any;
+      const fps = s.timeline?.fps || 30;
+      const timelineCtx = {
+        fps,
+        currentFrame: s.timeline?.currentFrame ?? 0,
+        totalFrames: s.timeline?.totalFrames ?? 0,
+        selectedClipIds: s.selectedTrackIds ?? [],
+        clips: (s.tracks ?? []).map((t: any) => ({
+          id: t.id,
+          mediaName: (t.source ?? '').replace(/\\/g, '/').split('/').pop() ?? t.name,
+          sourcePath: t.source ?? '',
+          type: t.type, layer: t.trackRowIndex ?? 0,
+          startFrame: t.startFrame ?? 0, endFrame: t.endFrame ?? 0,
+          durationFrames: (t.endFrame ?? 0) - (t.startFrame ?? 0),
+        })),
+      };
+      window.electronAPI.invoke('mycelium:sendMessage', {
+        text: `continue (${note})`,
+        timelineSnapshot: timelineCtx,
+        activeDownloads: [],
+        sfxLibrary,
+      }).catch(() => {});
+    };
+    window.addEventListener('edith:removeFillersFileResult', handler);
+    return () => window.removeEventListener('edith:removeFillersFileResult', handler);
+  }, [sfxLibrary]);
+
   // organizeMedia result — feed the folder breakdown back so EDITH narrates the
   // summary (a line + one bullet per folder). The library was already re-foldered
   // by the op; this turn is narration only.
@@ -999,9 +1436,9 @@ export function FridayPanel({ className }: { className?: string }) {
           const isTranscribeOp = completedOp?.type === 'runWhisper' || completedOp?.type === 'transcribe';
           if (isTranscribeOp && completedOp?.streamCaptions !== false) {
             transcriptionPipelineActiveRef.current = false;
-            note = 'Transcription fully complete. Check ## Timeline — if subtitle clips exist, captions were placed automatically, so do NOT emit caption ops. CRITICAL: now do ONLY what the user actually asked for. If they only asked to transcribe or caption, STOP here and confirm it is done — do NOT cut, grade, zoom, or download/place b-roll on your own. Only continue into cuts / b-roll / grade / snapshot if the user EXPLICITLY asked for a full edit, reels, or "edit this video". When unsure, do the minimal thing they asked and ask before doing more.';
+            note = 'Transcription fully complete. Check ## Timeline — if subtitle clips exist, captions were placed automatically, so do NOT emit caption ops. Now decide which case you are in: (a) the user asked ONLY to transcribe/caption → STOP here and confirm it is done, do NOT cut, grade, zoom, or download/place b-roll on your own; (b) transcription was ONE STEP of a larger request or of a plan you announced (a full edit, "edit this video", applying a reference style) → CONTINUE with the next step of that plan RIGHT NOW, in this turn — emit its ops, do not stop to announce the transcript and do not wait for acknowledgment. In both cases b-roll stays off unless it was explicitly requested.';
           } else if (isTranscribeOp && completedOp?.streamCaptions === false) {
-            note = 'Transcription complete. The full transcript is now in ## Available Project Media. CRITICAL: do ONLY what the user actually asked. If they asked only to transcribe, STOP and confirm it is ready — do NOT emit captions, cuts, grade, zoom, or b-roll on your own. Only build captions or continue editing if the user EXPLICITLY requested it.';
+            note = 'Transcription complete. The full transcript is now in ## Available Project Media. Now decide which case you are in: (a) the user asked ONLY to transcribe → STOP and confirm it is ready, do NOT emit captions, cuts, grade, zoom, or b-roll on your own; (b) transcription was ONE STEP of a larger request or of a plan you announced (a full edit, applying a reference style) → CONTINUE with the next step of that plan RIGHT NOW, in this turn — emit its ops, do not stop or wait for acknowledgment. In both cases b-roll stays off unless it was explicitly requested.';
           }
           triggerAutoContinue(note);
         }
@@ -1050,7 +1487,7 @@ export function FridayPanel({ className }: { className?: string }) {
       if (data.role !== 'user' && data.role !== 'system') {
         setActiveAgent(data.role);
         setAgentStatus('running');
-        // EDITH is speaking â€" she's thinking, not executing an op
+        // EDITH is speaking — she's thinking, not executing an op
         if (useEdithEditingStore.getState().isEditing) {
           useEdithEditingStore.getState().setIsThinking(true);
         }
@@ -1137,7 +1574,7 @@ export function FridayPanel({ className }: { className?: string }) {
             const timelineStart = clip.startFrame / fps;
             const sourceSec = mainOffset + timelineStart;
             const seg = transcriptionSegs.find((seg: any) => seg.start <= sourceSec && seg.end >= sourceSec);
-            if (seg) clip.transcriptContext = seg.text.trim();
+            if (seg) (clip as any).transcriptContext = seg.text.trim();
           }
         }
 
@@ -1166,13 +1603,13 @@ export function FridayPanel({ className }: { className?: string }) {
               }
             }
           } catch {
-            // non-fatal â€" vision check will proceed without caption screenshot
+            // non-fatal — vision check will proceed without caption screenshot
           }
         }
 
         setMessages((prev) => [
           ...prev,
-          { id: Math.random().toString(36).slice(2), role: 'system' as const, text: 'Running QA checkâ€¦', timestamp: Date.now() },
+          { id: Math.random().toString(36).slice(2), role: 'system' as const, text: 'Running QA check…', timestamp: Date.now() },
         ]);
 
         const result = await (window.electronAPI as any).invoke('mycelium:runQA', { clips, fps, reference, captionScreenshot });
@@ -1183,8 +1620,8 @@ export function FridayPanel({ className }: { className?: string }) {
 
         if (allIssues.length === 0 && qa.passed) {
           setMessages((prev) => [
-            ...prev.filter((m) => m.text !== 'Running QA checkâ€¦'),
-            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA passed â€" ${qa.summary}`, timestamp: Date.now() },
+            ...prev.filter((m) => m.text !== 'Running QA check…'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA passed — ${qa.summary}`, timestamp: Date.now() },
           ]);
           // Verification pass after a correction: record lessons for each original issue
           if (isVerification) {
@@ -1201,23 +1638,23 @@ export function FridayPanel({ className }: { className?: string }) {
             lastQAIssuesRef.current = [];
           }
         } else if (isVerification) {
-          // Second QA still has issues â€" stop the loop, don't record unresolved lessons
+          // Second QA still has issues — stop the loop, don't record unresolved lessons
           isQACorrectionRunRef.current = false;
           lastQAIssuesRef.current = [];
           setMessages((prev) => [
-            ...prev.filter((m) => m.text !== 'Running QA checkâ€¦'),
-            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) remain after correction â€" review manually`, timestamp: Date.now() },
+            ...prev.filter((m) => m.text !== 'Running QA check…'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) remain after correction — review manually`, timestamp: Date.now() },
           ]);
         } else {
           // Format issues for EDITH
           const issueLines = allIssues.map((iss: any) =>
-            `[${iss.severity.toUpperCase()}] ${iss.label}: ${iss.issue} â†’ ${iss.suggestion}`
+            `[${iss.severity.toUpperCase()}] ${iss.label}: ${iss.issue} → ${iss.suggestion}`
           ).join('\n');
           const qaNote = `QA check found ${allIssues.length} issue(s):\n${issueLines}\nSummary: ${qa.summary}`;
 
           setMessages((prev) => [
-            ...prev.filter((m) => m.text !== 'Running QA checkâ€¦'),
-            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) â€" sending to EDITH`, timestamp: Date.now() },
+            ...prev.filter((m) => m.text !== 'Running QA check…'),
+            { id: Math.random().toString(36).slice(2), role: 'system' as const, text: `QA: ${allIssues.length} issue(s) — sending to EDITH`, timestamp: Date.now() },
           ]);
 
           // Mark this as a correction run so handleDone triggers a verification QA
@@ -1259,7 +1696,7 @@ export function FridayPanel({ className }: { className?: string }) {
               })),
             };
             window.electronAPI.invoke('mycelium:sendMessage', {
-              text: `continue (QA report â€" fix these before declaring done:\n${qaNote})`,
+              text: `continue (QA report — fix these before declaring done:\n${qaNote})`,
               mediaContext: mediaCtx,
               timelineSnapshot: timelineCtx,
               activeDownloads: [],
@@ -1270,7 +1707,7 @@ export function FridayPanel({ className }: { className?: string }) {
         }
       } catch (e) {
         console.error('[FridayPanel] QA check failed:', e);
-        setMessages((prev) => prev.filter((m) => m.text !== 'Running QA checkâ€¦'));
+        setMessages((prev) => prev.filter((m) => m.text !== 'Running QA check…'));
       } finally {
         qaRunningRef.current = false;
       }
@@ -1411,12 +1848,17 @@ export function FridayPanel({ className }: { className?: string }) {
         // Downloads finished while EDITH was on a chunk turn — now place them
         pendingDownloadContinueRef.current = false;
         triggerAutoContinue();
+      } else if (pendingReferenceNoteRef.current) {
+        // Reference analysis landed mid-turn — apply the style now that she's free
+        const note = pendingReferenceNoteRef.current;
+        pendingReferenceNoteRef.current = null;
+        triggerAutoContinue(note);
       }
     };
 
     const handlePlan = (_: unknown, data: { steps: Array<{ id: string; step: string }> }) => {
       if (interruptedRef.current) return;
-      // EDITH is laying out a plan â€" she's thinking
+      // EDITH is laying out a plan — she's thinking
       if (useEdithEditingStore.getState().isEditing) {
         useEdithEditingStore.getState().setIsThinking(true);
       }
@@ -1474,12 +1916,12 @@ export function FridayPanel({ className }: { className?: string }) {
     return () => window.removeEventListener('edith:downloadComplete', handler);
   }, []);
 
-  // Graphic design pre-check failed â€" send Haiku's critique back to EDITH for revision
+  // Graphic design pre-check failed — send Haiku's critique back to EDITH for revision
   useEffect(() => {
     const handler = (e: Event) => {
       const { issues, summary } = (e as CustomEvent<{ issues: string[]; summary: string }>).detail;
       const issueList = issues.map((iss) => `- ${iss}`).join('\n');
-      const critiqueMsg = `Design QA failed â€" revising graphic before renderâ€¦`;
+      const critiqueMsg = `Design QA failed — revising graphic before render…`;
       const continueMsg = `continue (graphic design critique:\nSummary: ${summary}\n\nFix these issues in the HTML before re-emitting renderGraphic:\n${issueList}\n\nUse glassmorphism: backdrop-filter blur, rgba backgrounds, text-shadow, proper visual hierarchy. No plain colored boxes or unstyled text.)`;
 
       setMessages((prev) => [
@@ -1567,6 +2009,7 @@ export function FridayPanel({ className }: { className?: string }) {
           editing: ra.editing,
           structure: ra.structure,
           colorGrade: ra.colorGrade,
+          profile: ra.profile, // full StyleProfile — rendered as the digest in EDITH's context
         };
       }
 
@@ -1641,6 +2084,22 @@ export function FridayPanel({ className }: { className?: string }) {
         }
       };
       reader.readAsDataURL(file);
+    } else if (!realPath) {
+      // Documents (PDF, scripts, XML, SRT…) pasted without a filesystem path:
+      // persist the bytes to temp so EDITH's Read tool can open them from the
+      // [Attached: …] token. Files dragged from Explorer keep their real path.
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const dataUrl = e.target?.result as string;
+        if (!dataUrl) return;
+        try {
+          const result = await window.electronAPI.invoke('save-temp-attachment', dataUrl, file.name);
+          if (result?.filePath) {
+            setAttachments((prev) => prev.map((a) => a.name === file.name && !a.path ? { ...a, path: result.filePath } : a));
+          }
+        } catch {}
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -1650,6 +2109,14 @@ export function FridayPanel({ className }: { className?: string }) {
     if (imageItem) {
       const file = imageItem.getAsFile();
       if (file) addAttachment(file);
+      return;
+    }
+    // Pasted FILES (PDF, script, XML, SRT… copied in Explorer): attach instead
+    // of dumping a filename string into the input.
+    const files = Array.from(e.clipboardData.files ?? []);
+    if (files.length > 0) {
+      e.preventDefault();
+      files.forEach(addAttachment);
     }
   };
 
@@ -1669,7 +2136,7 @@ export function FridayPanel({ className }: { className?: string }) {
     substantialOpsThisRunRef.current = 0; // reset per-run counter
     isQACorrectionRunRef.current = false; // new user turn resets correction cycle
     lastUserRequestRef.current = text;
-    const attachedPaths = attachments.map((a) => a.path);
+    const attachedPaths = attachments.map((a) => a.path).filter(Boolean);
     const imagePreviews = attachments.filter((a) => a.preview).map((a) => a.preview!);
     const denyCtx = denyContextRef.current;
     denyContextRef.current = null;
@@ -1750,6 +2217,16 @@ export function FridayPanel({ className }: { className?: string }) {
     );
   }, []);
 
+  const handleReasoningToggle = useCallback((msgId: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId && m.reasoning
+          ? { ...m, reasoning: { ...m.reasoning, open: !m.reasoning.open } }
+          : m,
+      ),
+    );
+  }, []);
+
   const handleSkipStep = useCallback((msgId: string, stepId: string, override?: string) => {
     operationEngine.cancelByStepId(stepId);
     // If user typed an override, keep the step visible (PlanCard handles its own display state)
@@ -1785,6 +2262,17 @@ export function FridayPanel({ className }: { className?: string }) {
     }]);
   }, []);
 
+  // Auto-grow the input from its CONTENT, not from keystrokes — sizing on
+  // onChange alone left the box tall after send cleared it programmatically
+  // (no keystroke, no resize until the next typed letter). This also sizes the
+  // box correctly when a saved draft is restored on project switch.
+  useEffect(() => {
+    const ta = inputTaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 128) + 'px';
+  }, [input]);
+
   // Keep ref in sync so the Escape listener doesn't close over stale state
   useEffect(() => { agentStatusRef.current = agentStatus; }, [agentStatus]);
   useEffect(() => { isPanelVisibleRef.current = panelTypeForVisibility === 'friday'; }, [panelTypeForVisibility]);
@@ -1806,6 +2294,20 @@ export function FridayPanel({ className }: { className?: string }) {
     document.addEventListener('keydown', onCopy);
     return () => document.removeEventListener('keydown', onCopy);
   }, []);
+
+  // While the media preview overlay is open, Escape closes IT — registered in the
+  // capture phase so the interrupt-EDITH listener below never sees the keystroke.
+  useEffect(() => {
+    if (!mediaPreview) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      e.preventDefault();
+      setMediaPreview(null);
+    };
+    document.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => document.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, [mediaPreview]);
 
   // Escape cancels EDITH mid-response
   useEffect(() => {
@@ -1834,6 +2336,23 @@ export function FridayPanel({ className }: { className?: string }) {
   const pendingOps = queue.filter((q) => q.status === 'pending' || q.status === 'running').length;
   const failedOps = queue.filter((q) => q.status === 'failed').length;
   const isActive = agentStatus === 'running' || agentStatus === 'paused';
+
+  // Merge consecutive plain EDITH text messages into ONE bubble. The runtime emits
+  // one message per output line, which rendered as a stack of separate bubbles for
+  // what reads as a single reply. Display-only — the messages array is untouched.
+  const groupedMessages = React.useMemo(() => {
+    const out: Array<AgentMessage & { mergedTexts?: string[] }> = [];
+    for (const m of messages) {
+      const plainEdithText = m.role !== 'system' && m.role !== 'user' && !m.reasoning && !m.plan && !m.mediaCard;
+      const prev = out[out.length - 1];
+      if (plainEdithText && prev?.mergedTexts) {
+        prev.mergedTexts.push(m.text);
+        continue;
+      }
+      out.push(plainEdithText ? { ...m, mergedTexts: [m.text] } : m);
+    }
+    return out;
+  }, [messages]);
 
   if (!consentGiven) {
     return (
@@ -1865,16 +2384,22 @@ export function FridayPanel({ className }: { className?: string }) {
       className={`flex flex-col h-full text-white${className ? ` ${className}` : ''}`}
       style={{ fontFamily: 'Inter, system-ui, sans-serif', background: '#141414' }}
     >
-      {/* Header */}
+      {/* Header — Bubble grammar: round accent mark + name + status dot */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06] select-none">
         <div className="flex items-center gap-2.5">
+          <div
+            className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ background: 'rgba(34,197,94,0.14)' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="#4ade80">
+              <path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z" />
+            </svg>
+          </div>
+          <span className="text-[12.5px] font-semibold text-zinc-100">EDITH</span>
           <div className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[agentStatus]}`} />
-          <span className="text-xs font-medium tracking-widest uppercase text-zinc-300">
-            E.D.I.T.H
-          </span>
           {activeAgent && activeAgent !== 'friday' && (
             <span className="text-xs text-zinc-600 tracking-widest uppercase">
-              â†’ {activeAgent}
+              → {activeAgent}
             </span>
           )}
         </div>
@@ -1924,57 +2449,57 @@ export function FridayPanel({ className }: { className?: string }) {
                 const scale = (f: number) => Math.round((f / 325) * totalFrames);
                 startEditing();
                 const ops: [number, string][] = [
-                  [scale(0),   'trimClip â€" in-point'],
-                  [scale(4),   'trimClip â€" nudge back'],
-                  [scale(6),   'trimClip â€" locked'],
-                  [scale(18),  'addCaption â€" start'],
-                  [scale(14),  'addCaption â€" micro-pull'],
-                  [scale(20),  'addCaption â€" confirmed'],
-                  [scale(42),  'addCaption â€" end'],
-                  [scale(38),  'addCaption â€" shorten'],
-                  [scale(44),  'addCaption â€" locked'],
-                  [scale(58),  'addCaption â€" next caption start'],
-                  [scale(62),  'addCaption â€" confirmed'],
-                  [scale(88),  'addCaption â€" end'],
-                  [scale(82),  'addCaption â€" trim end'],
-                  [scale(90),  'addCaption â€" locked'],
-                  [scale(105), 'addBroll â€" scanning'],
-                  [scale(116), 'addBroll â€" placing'],
-                  [scale(110), 'addBroll â€" micro-pull'],
-                  [scale(118), 'addBroll â€" align'],
-                  [scale(148), 'addBroll â€" out-point'],
-                  [scale(142), 'addBroll â€" trim'],
-                  [scale(152), 'addBroll â€" locked'],
-                  [scale(165), 'addCaption â€" start'],
-                  [scale(172), 'addCaption â€" confirmed'],
-                  [scale(167), 'addCaption â€" micro-pull'],
-                  [scale(175), 'addCaption â€" locked'],
-                  [scale(200), 'addCaption â€" end'],
-                  [scale(195), 'addCaption â€" tighten'],
-                  [scale(204), 'addCaption â€" locked'],
-                  [scale(5),   'colorGrade â€" pass from startâ€¦'],
-                  [scale(86),  'colorGrade â€" midâ€¦'],
-                  [scale(206), 'colorGrade â€" through'],
-                  [scale(215), 'addBroll â€" insert'],
-                  [scale(222), 'addBroll â€" placing'],
-                  [scale(218), 'addBroll â€" micro-pull'],
-                  [scale(226), 'addBroll â€" in-point'],
-                  [scale(254), 'addBroll â€" out-point'],
-                  [scale(248), 'addBroll â€" shorten'],
-                  [scale(257), 'addBroll â€" locked'],
-                  [scale(270), 'addCaption â€" CTA gap check'],
-                  [scale(278), 'addCaption â€" start'],
-                  [scale(273), 'addCaption â€" micro-pull'],
-                  [scale(281), 'addCaption â€" locked'],
-                  [scale(312), 'addCaption â€" end'],
-                  [scale(307), 'addCaption â€" tighten'],
-                  [scale(315), 'addCaption â€" locked'],
-                  [scale(322), 'trimClip â€" out-point'],
-                  [scale(318), 'trimClip â€" micro-pull'],
-                  [scale(325), 'trimClip â€" locked'],
-                  [scale(5),   'colorGrade â€" final passâ€¦'],
-                  [scale(163), 'colorGrade â€" midâ€¦'],
-                  [scale(325), 'âœ" Edit complete'],
+                  [scale(0),   'trimClip — in-point'],
+                  [scale(4),   'trimClip — nudge back'],
+                  [scale(6),   'trimClip — locked'],
+                  [scale(18),  'addCaption — start'],
+                  [scale(14),  'addCaption — micro-pull'],
+                  [scale(20),  'addCaption — confirmed'],
+                  [scale(42),  'addCaption — end'],
+                  [scale(38),  'addCaption — shorten'],
+                  [scale(44),  'addCaption — locked'],
+                  [scale(58),  'addCaption — next caption start'],
+                  [scale(62),  'addCaption — confirmed'],
+                  [scale(88),  'addCaption — end'],
+                  [scale(82),  'addCaption — trim end'],
+                  [scale(90),  'addCaption — locked'],
+                  [scale(105), 'addBroll — scanning'],
+                  [scale(116), 'addBroll — placing'],
+                  [scale(110), 'addBroll — micro-pull'],
+                  [scale(118), 'addBroll — align'],
+                  [scale(148), 'addBroll — out-point'],
+                  [scale(142), 'addBroll — trim'],
+                  [scale(152), 'addBroll — locked'],
+                  [scale(165), 'addCaption — start'],
+                  [scale(172), 'addCaption — confirmed'],
+                  [scale(167), 'addCaption — micro-pull'],
+                  [scale(175), 'addCaption — locked'],
+                  [scale(200), 'addCaption — end'],
+                  [scale(195), 'addCaption — tighten'],
+                  [scale(204), 'addCaption — locked'],
+                  [scale(5),   'colorGrade — pass from start…'],
+                  [scale(86),  'colorGrade — mid…'],
+                  [scale(206), 'colorGrade — through'],
+                  [scale(215), 'addBroll — insert'],
+                  [scale(222), 'addBroll — placing'],
+                  [scale(218), 'addBroll — micro-pull'],
+                  [scale(226), 'addBroll — in-point'],
+                  [scale(254), 'addBroll — out-point'],
+                  [scale(248), 'addBroll — shorten'],
+                  [scale(257), 'addBroll — locked'],
+                  [scale(270), 'addCaption — CTA gap check'],
+                  [scale(278), 'addCaption — start'],
+                  [scale(273), 'addCaption — micro-pull'],
+                  [scale(281), 'addCaption — locked'],
+                  [scale(312), 'addCaption — end'],
+                  [scale(307), 'addCaption — tighten'],
+                  [scale(315), 'addCaption — locked'],
+                  [scale(322), 'trimClip — out-point'],
+                  [scale(318), 'trimClip — micro-pull'],
+                  [scale(325), 'trimClip — locked'],
+                  [scale(5),   'colorGrade — final pass…'],
+                  [scale(163), 'colorGrade — mid…'],
+                  [scale(325), '✓ Edit complete'],
                 ];
                 let i = 0;
                 const tick = () => {
@@ -1987,7 +2512,7 @@ export function FridayPanel({ className }: { className?: string }) {
                 };
                 tick();
               }}
-              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-cyan-400 border border-white/[0.06] hover:border-cyan-900/50 transition-colors"
+              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-emerald-400 border border-white/[0.06] hover:border-emerald-900/50 transition-colors"
               title="Test EDITH timeline visualization"
             >
               Test viz
@@ -2008,7 +2533,7 @@ export function FridayPanel({ className }: { className?: string }) {
                   detail: { atSeconds, reason: 'manual test', analysis: result?.analysis ?? null, error: result?.error ?? null },
                 }));
               }}
-              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-cyan-400 border border-white/[0.06] hover:border-cyan-900/50 transition-colors"
+              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-emerald-400 border border-white/[0.06] hover:border-emerald-900/50 transition-colors"
               title="Test snapshot verification at current playhead"
             >
               Test snap
@@ -2030,9 +2555,9 @@ export function FridayPanel({ className }: { className?: string }) {
       <div
         ref={scrollContainerRef}
         onScroll={handleMessagesScroll}
-        className="flex-1 overflow-y-auto py-3 min-h-0 space-y-0.5 select-text"
+        className="flex-1 overflow-y-auto py-3 min-h-0 space-y-2 select-text"
       >
-        {messages.map((msg) => {
+        {groupedMessages.map((msg) => {
           if (msg.role === 'system') {
             const isInterrupted = msg.text === 'Interrupted';
             const isThinking = msg.text === 'E.D.I.T.H thinking…';
@@ -2058,14 +2583,13 @@ export function FridayPanel({ className }: { className?: string }) {
               const frame = msg.imagePreviews?.[0];
               const accentColor = isBrollCheck
                 ? (passed ? 'text-emerald-400' : 'text-red-400')
-                : isScreenshot ? 'text-sky-400'
-                : 'text-violet-400';
+                : isScreenshot ? 'text-zinc-400'
+                : 'text-emerald-400';
               const borderColor = isBrollCheck
                 ? (passed ? 'border-emerald-500/30' : 'border-red-500/30')
-                : isScreenshot ? 'border-sky-500/20'
-                : 'border-violet-500/20';
+                : 'border-white/[0.08]';
               return (
-                <div key={msg.id} className={`mx-4 my-1.5 rounded-lg border overflow-hidden ${borderColor}`} style={{ background: 'rgba(255,255,255,0.03)' }}>
+                <div key={msg.id} className={`mx-4 my-1.5 rounded-xl border overflow-hidden ${borderColor}`} style={{ background: 'rgba(255,255,255,0.03)' }}>
                   {frame && (
                     <div className="relative">
                       <img
@@ -2079,12 +2603,12 @@ export function FridayPanel({ className }: { className?: string }) {
                         </span>
                       )}
                       {isSnapshot && (
-                        <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-violet-600/80 text-white font-mono">
+                        <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-black/70 text-emerald-300 font-mono">
                           snapshot
                         </span>
                       )}
                       {isScreenshot && (
-                        <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-sky-600/80 text-white font-mono">
+                        <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-black/70 text-zinc-200 font-mono">
                           EDITH sees this
                         </span>
                       )}
@@ -2121,50 +2645,67 @@ export function FridayPanel({ className }: { className?: string }) {
             return (
               <div key={msg.id} className="px-4 py-1.5 flex justify-end">
                 <div className="flex flex-col items-end gap-1.5 max-w-[85%]">
-                  {msg.clipAttachments?.map((c) => {
-                    // Live echo carries the thumbnail; hydrated history re-resolves
-                    // it from the media library (survives source swaps from bakes).
-                    const tr = tracks.find((t) => t.id === c.trackId);
-                    const thumb = c.thumbnail
-                      ?? (tr ? mediaLibrary?.find((m) => m.id === (tr as any).mediaId)?.thumbnail : undefined);
-                    return (
-                      <div
-                        key={c.trackId}
-                        className="rounded-xl border border-white/10 overflow-hidden"
-                        style={{ background: '#1e1e1e', width: 148 }}
-                      >
-                        <div className="relative w-full" style={{ height: 76, background: '#111' }}>
-                          {thumb ? (
-                            <img src={thumb} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth="1.6">
-                                <rect x="2" y="4" width="20" height="16" rx="3"/><path d="M10 9l5 3-5 3V9z" fill="#52525b" stroke="none"/>
-                              </svg>
-                            </div>
-                          )}
-                          <div
-                            className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full px-2 py-0.5"
-                            style={{ background: 'rgba(0,0,0,0.75)' }}
+                  {msg.clipAttachments && msg.clipAttachments.length > 0 && (
+                    // Side-by-side like Gemini — multiple attached clips sit in a
+                    // row and wrap, never stack one per line.
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      {msg.clipAttachments.map((c) => {
+                        // Live echo carries the thumbnail; hydrated history re-resolves
+                        // it from the media library (survives source swaps from bakes).
+                        const tr = tracks.find((t) => t.id === c.trackId);
+                        const thumb = c.thumbnail
+                          ?? (tr ? mediaLibrary?.find((m) => m.id === (tr as any).mediaId)?.thumbnail : undefined);
+                        const clipSrc = (tr as any)?.previewUrl ?? (tr as any)?.source;
+                        return (
+                          <button
+                            type="button"
+                            key={c.trackId}
+                            onClick={() => clipSrc && setMediaPreview({
+                              src: clipSrc, name: c.name, mediaType: 'video',
+                              seekTo: (tr as any)?.sourceStartTime ?? 0,
+                            })}
+                            disabled={!clipSrc}
+                            className={`text-left rounded-xl border border-white/10 overflow-hidden transition-colors ${clipSrc ? 'hover:border-white/25 cursor-pointer' : 'cursor-default'}`}
+                            style={{ background: '#1e1e1e', width: 104 }}
+                            title={clipSrc ? 'Click to preview' : undefined}
                           >
-                            <svg width="8" height="8" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4V1z" fill="#fff"/></svg>
-                            <span className="text-[10px] font-semibold text-white tabular-nums">
-                              {(c.endSec - c.startSec).toFixed(1)}s
-                            </span>
-                          </div>
-                        </div>
-                        <div className="px-2 py-1.5">
-                          <p className="text-[10px] text-zinc-300 font-medium truncate">{c.name}</p>
-                          <p className="text-[10px] text-zinc-500 tabular-nums">{c.startSec}s – {c.endSec}s on timeline</p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                            <div className="relative w-full" style={{ height: 58, background: '#111' }}>
+                              {thumb ? (
+                                <img src={thumb} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth="1.6">
+                                    <rect x="2" y="4" width="20" height="16" rx="3"/><path d="M10 9l5 3-5 3V9z" fill="#52525b" stroke="none"/>
+                                  </svg>
+                                </div>
+                              )}
+                              <div
+                                className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full px-2 py-0.5"
+                                style={{ background: 'rgba(0,0,0,0.75)' }}
+                              >
+                                <svg width="8" height="8" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4V1z" fill="#fff"/></svg>
+                                <span className="text-[10px] font-semibold text-white tabular-nums">
+                                  {(c.endSec - c.startSec).toFixed(1)}s
+                                </span>
+                              </div>
+                            </div>
+                            <div className="px-2 py-1.5">
+                              <p className="text-[10px] text-zinc-300 font-medium truncate">{c.name}</p>
+                              <p className="text-[10px] text-zinc-500 tabular-nums">{c.startSec}s – {c.endSec}s on timeline</p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   {msg.imagePreviews?.map((src, i) => (
                     <img key={i} src={src} className="rounded-lg max-w-full max-h-40 object-contain border border-white/10" />
                   ))}
                   {msg.text && (
-                    <span className="text-xs text-zinc-300 bg-white/[0.06] rounded-lg px-3 py-1.5 break-words select-text cursor-text">
+                    <span
+                      className="text-xs leading-relaxed break-words select-text cursor-text px-3.5 py-2"
+                      style={{ background: '#173f27', color: '#c9f2d9', borderRadius: '16px 16px 4px 16px' }}
+                    >
                       {msg.text}
                     </span>
                   )}
@@ -2172,20 +2713,89 @@ export function FridayPanel({ className }: { className?: string }) {
               </div>
             );
           }
+          if (msg.reasoning) {
+            return <ReasoningCard key={msg.id} message={msg} onToggle={handleReasoningToggle} />;
+          }
           if (msg.plan) {
             return <PlanCard key={msg.id} message={msg} onToggle={handlePlanToggle} onSkipStep={handleSkipStep} />;
           }
+          if (msg.mediaCard) {
+            const card = msg.mediaCard;
+            const media = mediaLibrary?.find((m) => m.id === card.mediaId);
+            const thumb = (media as any)?.thumbnail as string | undefined;
+            const src = (media as any)?.previewUrl ?? (media as any)?.source;
+            const duration = (media as any)?.duration as number | undefined;
+            return (
+              <div key={msg.id} className="px-4 py-1.5 flex justify-start">
+                <button
+                  type="button"
+                  onClick={() => media && src && setMediaPreview({ src, name: card.name, mediaType: card.mediaType })}
+                  disabled={!media}
+                  className={`text-left rounded-xl border border-white/10 overflow-hidden transition-colors ${media ? 'hover:border-white/25 cursor-pointer' : 'opacity-60 cursor-default'}`}
+                  style={{ background: '#1e1e1e', width: 168 }}
+                  title={media ? 'Click to preview' : 'Removed from the media library'}
+                >
+                  <div className="relative w-full" style={{ height: 94, background: '#111' }}>
+                    {media && card.mediaType === 'video' && (
+                      thumb
+                        ? <img src={thumb} className="w-full h-full object-cover" />
+                        : <video src={src} preload="metadata" muted playsInline className="w-full h-full object-cover pointer-events-none" />
+                    )}
+                    {media && card.mediaType === 'image' && (
+                      <img src={thumb ?? src} className="w-full h-full object-cover" />
+                    )}
+                    {(!media || card.mediaType === 'audio') && (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#52525b" strokeWidth="1.6">
+                          {card.mediaType === 'audio'
+                            ? <><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>
+                            : <><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M10 9l5 3-5 3V9z" fill="#52525b" stroke="none"/></>}
+                        </svg>
+                      </div>
+                    )}
+                    {media && card.mediaType !== 'image' && (
+                      <div
+                        className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full px-2 py-0.5"
+                        style={{ background: 'rgba(0,0,0,0.75)' }}
+                      >
+                        <svg width="8" height="8" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4V1z" fill="#fff"/></svg>
+                        <span className="text-[10px] font-semibold text-white tabular-nums">{fmtMediaDuration(duration)}</span>
+                      </div>
+                    )}
+                    {media && card.mediaType === 'video' && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.55)' }}>
+                          <svg width="12" height="12" viewBox="0 0 10 10"><path d="M2.5 1l6 4-6 4V1z" fill="#fff"/></svg>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="px-2 py-1.5">
+                    <p className="text-[10px] text-zinc-300 font-medium truncate">{card.name}</p>
+                    <p className="text-[10px] text-zinc-500">{media ? 'Fetched by EDITH — in your media library' : 'Removed from the media library'}</p>
+                  </div>
+                </button>
+              </div>
+            );
+          }
           return (
-            <div key={msg.id} className="px-4 py-1.5">
-              <span className="text-xs text-zinc-300 leading-relaxed break-words select-text cursor-text">{renderBold(msg.text)}</span>
+            <div key={msg.id} className="px-4 py-1.5 flex justify-start">
+              <div
+                className="max-w-[92%] px-3.5 py-2.5 space-y-2"
+                style={{ background: '#1c1c1c', borderRadius: '16px 16px 16px 4px' }}
+              >
+                {(msg.mergedTexts ?? [msg.text]).map((t, i) => (
+                  <span key={i} className="block text-xs text-zinc-300 leading-relaxed break-words select-text cursor-text">{renderBold(t)}</span>
+                ))}
+              </div>
             </div>
           );
         })}
         {/* Live op ticker — shows while EDITH is working */}
         {isEditing && currentOpLabel && (
           <div className="px-4 py-1.5 flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse flex-shrink-0" />
-            <span className="text-[11px] text-cyan-400/80 italic truncate">{currentOpLabel}</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+            <span className="text-[11px] text-emerald-300/80 italic truncate">{currentOpLabel}</span>
           </div>
         )}
         <div ref={bottomRef} />
@@ -2212,7 +2822,7 @@ export function FridayPanel({ className }: { className?: string }) {
         return (
           <div className="border-t border-white/[0.06]">
             <div className="px-3 py-2">
-              <div className="rounded-lg border border-white/[0.08] overflow-hidden" style={{ background: '#1a1a1a' }}>
+              <div className="rounded-xl border border-white/[0.08] overflow-hidden" style={{ background: '#1a1a1a' }}>
                 <div className="px-3 pt-2.5 pb-2">
                   <div className="flex items-center justify-between mb-0.5">
                     <p className="text-[11px] font-semibold text-zinc-100">Allow EDITH to use this download?</p>
@@ -2224,7 +2834,7 @@ export function FridayPanel({ className }: { className?: string }) {
                 </div>
                 <div className="flex border-t border-white/[0.06]" style={{ background: '#141414' }}>
                   <button onClick={handleDeny} className="flex-1 py-2 text-[11px] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03] transition-colors border-r border-white/[0.06]">Deny</button>
-                  <button onClick={handleAllow} className="flex-1 py-2 text-[11px] font-medium hover:bg-white/[0.04] transition-colors border-r border-white/[0.06]" style={{ color: '#a3b862' }}>Allow</button>
+                  <button onClick={handleAllow} className="flex-1 py-2 text-[11px] font-medium hover:bg-white/[0.04] transition-colors border-r border-white/[0.06]" style={{ color: '#4ade80' }}>Allow</button>
                   <button onClick={handleAlwaysAllow} className="flex-1 py-2 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03] transition-colors border-r border-white/[0.06]">Always allow</button>
                   <button onClick={() => window.electronAPI.showItemInFolder(item.filePath)} className="flex-1 py-2 text-[11px] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.03] transition-colors">View</button>
                 </div>
@@ -2243,15 +2853,15 @@ export function FridayPanel({ className }: { className?: string }) {
           >
             <span className="font-mono">
               {pendingOps > 0
-                ? `applying ${pendingOps} edit${pendingOps > 1 ? 's' : ''}â€¦`
+                ? `applying ${pendingOps} edit${pendingOps > 1 ? 's' : ''}…`
                 : `${failedOps} edit${failedOps > 1 ? 's' : ''} failed`}
             </span>
-            <span className="text-zinc-700">{showQueue ? 'â–²' : 'â–¼'}</span>
+            <span className="text-zinc-700">{showQueue ? '▲' : '▼'}</span>
           </button>
           {showQueue && (
             <div className="px-4 pb-2 max-h-28 overflow-y-auto space-y-0.5">
               {queue.filter((q) => q.status === 'pending' || q.status === 'running' || q.status === 'failed').map((q) => {
-                const color = { pending: '#52525b', running: '#4ade80', failed: '#f87171' }[q.status] ?? '#3f3f46';
+                const color = ({ pending: '#52525b', running: '#4ade80', failed: '#f87171' } as Record<string, string>)[q.status] ?? '#3f3f46';
                 return (
                   <div key={q.id} className="flex items-center gap-2 font-mono text-[10px]" style={{ color }}>
                     <span className="w-1 h-1 rounded-full bg-current flex-shrink-0" />
@@ -2272,13 +2882,21 @@ export function FridayPanel({ className }: { className?: string }) {
       <div className="px-3 pb-3 pt-2 border-t border-white/[0.06] select-none">
         {clipRefs.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
-            {clipRefs.map((r) => (
+            {clipRefs.map((r) => {
+              const chipTrack = tracks.find((t) => t.id === r.trackId);
+              const chipSrc = (chipTrack as any)?.previewUrl ?? (chipTrack as any)?.source;
+              return (
               <div
                 key={r.trackId}
-                className="group relative rounded-xl border border-white/10 overflow-hidden"
-                style={{ background: '#1e1e1e', width: 148 }}
+                onClick={() => chipSrc && setMediaPreview({
+                  src: chipSrc, name: r.name, mediaType: 'video',
+                  seekTo: (chipTrack as any)?.sourceStartTime ?? 0,
+                })}
+                className={`group relative rounded-xl border border-white/10 overflow-hidden transition-colors ${chipSrc ? 'hover:border-white/25 cursor-pointer' : ''}`}
+                style={{ background: '#1e1e1e', width: 118 }}
+                title={chipSrc ? 'Click to preview' : undefined}
               >
-                <div className="relative w-full" style={{ height: 76, background: '#111' }}>
+                <div className="relative w-full" style={{ height: 66, background: '#111' }}>
                   {r.thumbnail ? (
                     <img src={r.thumbnail} className="w-full h-full object-cover" />
                   ) : (
@@ -2299,7 +2917,10 @@ export function FridayPanel({ className }: { className?: string }) {
                     </span>
                   </div>
                   <button
-                    onClick={() => setClipRefs((prev) => prev.filter((x) => x.trackId !== r.trackId))}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setClipRefs((prev) => prev.filter((x) => x.trackId !== r.trackId));
+                    }}
                     className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-white/80 hover:text-white"
                     style={{ background: 'rgba(0,0,0,0.7)' }}
                     aria-label="Remove clip"
@@ -2310,7 +2931,8 @@ export function FridayPanel({ className }: { className?: string }) {
                   <p className="text-[10px] text-zinc-500 tabular-nums">{r.startSec}s – {r.endSec}s on timeline</p>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {attachments.length > 0 && (
@@ -2327,53 +2949,143 @@ export function FridayPanel({ className }: { className?: string }) {
                 <button
                   onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
                   className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-white pr-1.5 text-xs leading-none"
-                >Ã—</button>
+                >×</button>
               </div>
             ))}
           </div>
         )}
 
-        <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*" className="hidden" onChange={handleFileInput} />
+        <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*,.pdf,.txt,.md,.xml,.srt,.vtt,.fountain,.json,.csv,.docx,.doc" className="hidden" onChange={handleFileInput} />
 
         <div
-          className="flex items-end gap-2 rounded-lg px-3 py-2 border transition-colors"
+          className="flex items-center gap-2 rounded-xl px-3 py-2 border transition-colors"
           style={{
-            background: '#1e1e1e',
-            borderColor: clipDragActive ? '#22c55e' : 'rgba(255,255,255,0.08)',
-            boxShadow: clipDragActive ? '0 0 0 1px #22c55e66' : 'none',
+            background: '#1c1c1c',
+            borderColor: clipDragActive || selectionMode !== 'off' ? '#22c55e' : 'rgba(255,255,255,0.08)',
+            boxShadow: clipDragActive || selectionMode !== 'off' ? '0 0 0 1px #22c55e66' : 'none',
           }}
           onMouseUp={handleClipDropIntoChat}
         >
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-zinc-600 hover:text-zinc-300 transition-colors mb-0.5"
+            className="flex-shrink-0 w-6 h-6 self-end mb-1 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </button>
           <textarea
-            className="flex-1 bg-transparent text-xs text-zinc-200 placeholder-zinc-700 resize-none outline-none leading-relaxed"
-            rows={2}
-            placeholder="Make 3 reels from this videoâ€¦"
+            ref={inputTaRef}
+            data-testid="edith-input"
+            className="flex-1 bg-transparent text-xs text-zinc-200 placeholder-zinc-600 resize-none outline-none leading-relaxed max-h-32 overflow-y-auto py-1.5"
+            rows={1}
+            placeholder="Say something to EDITH…"
             value={input}
-            onChange={(e) => { setInput(e.target.value); try { localStorage.setItem(getDraftKey(), e.target.value); } catch {} }}
+            onChange={(e) => {
+              setInput(e.target.value);
+              try { localStorage.setItem(getDraftKey(), e.target.value); } catch {}
+            }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
           />
           <button
+            data-testid="edith-selection-tool"
+            onClick={(e) => {
+              // e.detail >= 2 = second click of a double-click. Detected here rather than
+              // onDoubleClick because Chromium doesn't always synthesize dblclick (and the
+              // first click already flipped the mode, so this must override it anyway).
+              if (e.detail >= 2) setSelectionMode('persistent');
+              else setSelectionMode((m) => (m === 'off' ? 'single' : 'off'));
+            }}
+            title={selectionMode === 'persistent'
+              ? 'Selection stays on — click again or press Esc to turn off'
+              : selectionMode === 'single'
+                ? 'Click a clip on the timeline to attach it · Esc to cancel'
+                : 'Attach a timeline clip — click, then pick a clip. Double-click to keep it on.'}
+            className={`flex-shrink-0 w-6 h-6 self-end mb-1 rounded-md flex items-center justify-center transition-colors ${
+              selectionMode === 'off' ? 'text-zinc-500 hover:text-zinc-300' : 'text-emerald-400'
+            }`}
+            style={selectionMode !== 'off'
+              ? {
+                  background: 'rgba(34,197,94,0.12)',
+                  boxShadow: selectionMode === 'persistent' ? '0 0 0 1px rgba(34,197,94,0.55)' : 'none',
+                }
+              : undefined}
+            aria-label="Selection tool"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <circle cx="12" cy="12" r="6.5" />
+              <path d="M12 2.5v3.5M12 18v3.5M2.5 12H6M18 12h3.5" />
+              {selectionMode !== 'off' && <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />}
+            </svg>
+          </button>
+          <button
             onClick={sendMessage}
             disabled={(!input.trim() && attachments.length === 0 && clipRefs.length === 0) || submittingRef.current}
-            className="flex-shrink-0 w-6 h-6 rounded flex items-center justify-center transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            className="flex-shrink-0 w-8 h-8 self-end rounded-full flex items-center justify-center transition-all hover:brightness-110 disabled:opacity-20 disabled:cursor-not-allowed"
             style={{ background: '#22c55e' }}
           >
-            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-              <path d="M1 11L11 1M11 1H4M11 1V8" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            {/* Gemini-style up arrow — minimal, no fill */}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5" />
+              <polyline points="5 12 12 5 19 12" />
             </svg>
           </button>
         </div>
-        <p className="text-[10px] text-zinc-700 mt-1.5 px-1">â†µ send Â· â‡§â†µ newline Â· paste image to attach</p>
+        <p className={`text-[10px] mt-1.5 text-center ${selectionMode !== 'off' ? 'text-emerald-500/80' : 'text-zinc-600'}`}>
+          {selectionMode === 'persistent'
+            ? 'selection mode stays on — click clips on the timeline · esc to exit'
+            : selectionMode === 'single'
+              ? 'selection mode — click a clip on the timeline · esc to cancel'
+              : '↵ send · ⇧↵ newline · paste image or file to attach'}
+        </p>
       </div>
+
+      {/* Media preview — full-size player over the app (Gemini-style). Opens from
+          EDITH's fetched-media cards AND the user's attached-clip cards. */}
+      {mediaPreview && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center"
+            // z 20000 — must beat the preview canvas hit-test layer (9000) and
+            // transform boundary (10000), or clicks over the canvas area die.
+            style={{ background: 'rgba(0,0,0,0.85)', zIndex: 20000 }}
+            onClick={() => setMediaPreview(null)}
+          >
+            <div className="flex flex-col items-center gap-3 max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+              {mediaPreview.mediaType === 'video' && (
+                <video
+                  src={mediaPreview.src}
+                  controls
+                  autoPlay
+                  playsInline
+                  onLoadedMetadata={(e) => {
+                    if (mediaPreview.seekTo) e.currentTarget.currentTime = mediaPreview.seekTo;
+                  }}
+                  className="rounded-2xl"
+                  style={{ maxWidth: '90vw', maxHeight: '78vh', background: '#000' }}
+                />
+              )}
+              {mediaPreview.mediaType === 'image' && (
+                <img src={mediaPreview.src} className="rounded-2xl object-contain" style={{ maxWidth: '90vw', maxHeight: '78vh' }} />
+              )}
+              {mediaPreview.mediaType === 'audio' && (
+                <audio src={mediaPreview.src} controls autoPlay className="w-[420px] max-w-[90vw]" />
+              )}
+              <p className="text-xs text-zinc-300 max-w-[80vw] truncate">{mediaPreview.name}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMediaPreview(null)}
+              className="absolute top-4 right-4 w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white transition-colors"
+              style={{ background: 'rgba(255,255,255,0.1)' }}
+              title="Close preview"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+      )}
     </div>
   );
 }

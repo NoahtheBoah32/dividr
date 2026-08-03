@@ -58,7 +58,7 @@ async function gotoEditor() {
 }
 
 async function openEdith() {
-  if ((await page.locator('textarea[placeholder*="reels"]').count()) === 0) {
+  if ((await page.locator('textarea[placeholder*="EDITH"]').count()) === 0) {
     try {
       await page.locator('[title="E.D.I.T.H"]').first().click({ timeout: 5000 });
     } catch {}
@@ -68,7 +68,7 @@ async function openEdith() {
   try {
     if ((await agree.count()) > 0) await agree.first().click({ timeout: 3000 });
   } catch {}
-  const ta = page.locator('textarea[placeholder*="reels"]').first();
+  const ta = page.locator('textarea[placeholder*="EDITH"]').first();
   await ta.waitFor({ state: 'visible', timeout: 12000 });
   return ta;
 }
@@ -153,7 +153,7 @@ const rampState = () =>
 
 /** Type into the real chat box, exactly as the user would. */
 async function ask(text, done, budgetMs = 120000) {
-  let ta = page.locator('textarea[placeholder*="reels"]').first();
+  let ta = page.locator('textarea[placeholder*="EDITH"]').first();
   if ((await ta.count()) === 0) ta = await openEdith();
   await capReset();
   await ta.fill(text);

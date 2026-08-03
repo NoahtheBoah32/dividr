@@ -76,6 +76,8 @@ def main():
     fm.add_argument('--start',       type=float, default=0.0, help='Search from this second')
     fm.add_argument('--find-all',    action='store_true', dest='find_all',
                     help='Return every match instead of the first')
+    fm.add_argument('--dense',       action='store_true',
+                    help='Dense sampling (~1 frame/2.5s) — for verifying short downloaded clips')
 
     # =========================================================================
     # Organize-media subcommand — plan media-library folder organization

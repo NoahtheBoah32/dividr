@@ -39,10 +39,10 @@ await page.evaluate(() => {
 });
 
 // open EDITH chat
-if (await page.locator('textarea[placeholder*="reels"]').count() === 0) {
+if (await page.locator('textarea[placeholder*="EDITH"]').count() === 0) {
   try { await page.locator('[title="E.D.I.T.H"]').first().click({ timeout: 5000 }); } catch {}
 }
-const ta = page.locator('textarea[placeholder*="reels"]').first();
+const ta = page.locator('textarea[placeholder*="EDITH"]').first();
 await ta.waitFor({ state: 'visible', timeout: 12000 });
 log('EDITH textarea visible:', await ta.count() > 0);
 
