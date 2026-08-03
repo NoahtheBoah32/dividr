@@ -28,12 +28,28 @@ await sleep(4000);
 // idempotent staging: start from an empty timeline every run
 await page.evaluate(() => window.__dividrTest.setStoreState({ tracks: [] }));
 await sleep(500);
+// Base clip goes on row 0 via insertClip (broll pins row 1 — an empty timeline
+// staged with broll alone has no layer-0 main, so PiP could never engage).
 await page.evaluate((src) => {
-  window.__dividrTest.applyOps([{ type: 'broll', src, from: 0, to: 8 }]);
+  window.__dividrTest.applyOps([{ type: 'insertClip', trackType: 'video', src, startFrame: 0, inSeconds: 0, outSeconds: 8 }]);
 }, F.speech);
 await page.evaluate(() => window.__dividrTest.waitForQueueDrained());
 await sleep(3000);
-console.log('staged: EXPORT-SMOKE project with 8s clip', opened ? '' : '(new)');
+// The broll overlay lands on the lane above and auto-enables PiP on the main —
+// the export must run the buildPipFilter path, which once crashed with a
+// ReferenceError the plain single-clip export never reached.
+await page.evaluate((src) => {
+  window.__dividrTest.applyOps([{ type: 'broll', src, from: 0, to: 4 }]);
+}, F.quarterly);
+await page.evaluate(() => window.__dividrTest.waitForQueueDrained());
+await sleep(3000);
+const staged = await page.evaluate(() => {
+  const s = window.__videoEditorStore.getState();
+  const vids = s.tracks.filter((t) => t.type === 'video');
+  return { tracks: s.tracks.length, videoLanes: vids.length, pip: vids.some((t) => !!t.pipFrame) };
+});
+console.log(`staged: EXPORT-SMOKE base+overlay ${JSON.stringify(staged)}`, opened ? '' : '(new)');
+if (!staged.pip) { console.log('FAIL  staging did not enable PiP — export would not cover the PiP path'); process.exit(1); }
 
 // drive the real export UI
 const r = spawnSync(process.execPath, ['tests/edith/export-current-project.mjs', NAME], {

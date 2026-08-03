@@ -200,13 +200,14 @@ export function buildPipFilter(
   if (pip.style === 'circle') {
     const r = pipDiam / 2;
     const innerR = r - borderPx;
-    // geq: border ring = gold, inner = video, outer = transparent
+    // geq: border ring = gold, inner = video, outer = transparent.
+    // ffmpeg's eval has no and() — logical AND is written as multiplication.
     filters.push(
       `[${scaledRef}]format=rgba,` +
       `geq=` +
-        `r='if(and(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR})),${br},r(X\\,Y))':` +
-        `g='if(and(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR})),${bg},g(X\\,Y))':` +
-        `b='if(and(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR})),${bb},b(X\\,Y))':` +
+        `r='if(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r})*gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR}),${br},r(X\\,Y))':` +
+        `g='if(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r})*gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR}),${bg},g(X\\,Y))':` +
+        `b='if(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r})*gt(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${innerR}),${bb},b(X\\,Y))':` +
         `a='if(lte(sqrt(pow(X-${r}\\,2)+pow(Y-${r}\\,2)),${r}),255,0)'` +
       `[${maskedRef}]`,
     );
@@ -219,9 +220,8 @@ export function buildPipFilter(
     );
   }
 
-  // The final masked stream is at maskedRef — caller overlays it at (pipX, pipY) on top of the B-roll
-  filters.push(`# pip_position: x=${pipX} y=${pipY} ref=${maskedRef} → ${outputRef}`);
-
+  // The final masked stream is at maskedRef — the caller overlays it on the
+  // B-roll using main_w/main_h position expressions (see handleFilterComplex).
   return filters;
 }
 

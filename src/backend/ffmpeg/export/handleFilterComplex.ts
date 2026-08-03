@@ -21,7 +21,6 @@ import {
   buildPipFilter,
   buildScaleFilter,
   getHardwareAccelerationStatus,
-  getPipOverlayPosition,
   PIP_MASKED_REF,
 } from './hardwareFilters';
 import {
@@ -1685,11 +1684,10 @@ export function buildSeparateTimelineFilterComplex(
           for (const f of pipFilters) {
             if (!f.startsWith('# ')) videoFilters.push(f);
           }
-          const { x: pipX, y: pipY } = getPipOverlayPosition(
-            targetDimensions.width,
-            targetDimensions.height,
-            overlayPip,
-          );
+          // Position via ffmpeg main_w/main_h expressions, NOT precomputed pixels:
+          // targetDimensions can disagree with the base layer's actual resolution
+          // (layers aren't always scaled to target), and a pixel position computed
+          // in the wrong space silently pushes the whole PiP off-canvas.
           const startT = Math.min(...videoTimeline.segments.map(s => s.startTime));
           const endT = Math.max(...videoTimeline.segments.map(s => s.endTime));
           const pipCompositeLabel = 'video_composite';
@@ -1698,14 +1696,14 @@ export function buildSeparateTimelineFilterComplex(
               `[${currentCompositeLabel}]`,
               `[${PIP_MASKED_REF}]`,
               `[${pipCompositeLabel}]`,
-              String(pipX),
-              String(pipY),
+              `main_w*${overlayPip.x.toFixed(4)}-overlay_w/2`,
+              `main_h*${overlayPip.y.toFixed(4)}-overlay_h/2`,
               hwAccel,
               { shortest: 0, enable: `between(t,${startT.toFixed(3)},${endT.toFixed(3)})`, eofAction: 'pass' },
             ),
           );
           currentCompositeLabel = pipCompositeLabel;
-          console.log(`   🖼️ PiP overlay applied: ${overlayPip.style} at (${pipX},${pipY})`);
+          console.log(`   🖼️ PiP overlay applied: ${overlayPip.style} at normalized (${overlayPip.x},${overlayPip.y})`);
           continue;
         }
 
