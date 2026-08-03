@@ -454,14 +454,6 @@ function ThinkingIndicator() {
   );
 }
 
-const STATUS_DOT: Record<AgentStatus, string> = {
-  idle: 'bg-zinc-600',
-  running: 'bg-emerald-400 animate-pulse',
-  paused: 'bg-yellow-400',
-  done: 'bg-zinc-600',
-  error: 'bg-red-400',
-};
-
 // The [clip "name" id:… at Xs-Ys on the timeline] token EDITH targets is part of
 // the persisted history text. It must never be SHOWN — parse it back out so a
 // reloaded chat renders the same clean card the user saw when sending.
@@ -2396,7 +2388,6 @@ export function FridayPanel({ className }: { className?: string }) {
             </svg>
           </div>
           <span className="text-[12.5px] font-semibold text-zinc-100">EDITH</span>
-          <div className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[agentStatus]}`} />
           {activeAgent && activeAgent !== 'friday' && (
             <span className="text-xs text-zinc-600 tracking-widest uppercase">
               → {activeAgent}
@@ -2437,108 +2428,6 @@ export function FridayPanel({ className }: { className?: string }) {
               </button>
             </>
           )}
-          {!isActive && (<>
-            <button
-              onClick={() => {
-                const { startEditing, stopEditing, setHeadFrame, setOpLabel } =
-                  useEdithEditingStore.getState();
-                const { setCurrentFrame } = useVideoEditorStore.getState();
-                // Scale frame positions to the actual timeline length
-                const totalFrames: number =
-                  (useVideoEditorStore.getState() as any)?.timeline?.totalFrames ?? 900;
-                const scale = (f: number) => Math.round((f / 325) * totalFrames);
-                startEditing();
-                const ops: [number, string][] = [
-                  [scale(0),   'trimClip — in-point'],
-                  [scale(4),   'trimClip — nudge back'],
-                  [scale(6),   'trimClip — locked'],
-                  [scale(18),  'addCaption — start'],
-                  [scale(14),  'addCaption — micro-pull'],
-                  [scale(20),  'addCaption — confirmed'],
-                  [scale(42),  'addCaption — end'],
-                  [scale(38),  'addCaption — shorten'],
-                  [scale(44),  'addCaption — locked'],
-                  [scale(58),  'addCaption — next caption start'],
-                  [scale(62),  'addCaption — confirmed'],
-                  [scale(88),  'addCaption — end'],
-                  [scale(82),  'addCaption — trim end'],
-                  [scale(90),  'addCaption — locked'],
-                  [scale(105), 'addBroll — scanning'],
-                  [scale(116), 'addBroll — placing'],
-                  [scale(110), 'addBroll — micro-pull'],
-                  [scale(118), 'addBroll — align'],
-                  [scale(148), 'addBroll — out-point'],
-                  [scale(142), 'addBroll — trim'],
-                  [scale(152), 'addBroll — locked'],
-                  [scale(165), 'addCaption — start'],
-                  [scale(172), 'addCaption — confirmed'],
-                  [scale(167), 'addCaption — micro-pull'],
-                  [scale(175), 'addCaption — locked'],
-                  [scale(200), 'addCaption — end'],
-                  [scale(195), 'addCaption — tighten'],
-                  [scale(204), 'addCaption — locked'],
-                  [scale(5),   'colorGrade — pass from start…'],
-                  [scale(86),  'colorGrade — mid…'],
-                  [scale(206), 'colorGrade — through'],
-                  [scale(215), 'addBroll — insert'],
-                  [scale(222), 'addBroll — placing'],
-                  [scale(218), 'addBroll — micro-pull'],
-                  [scale(226), 'addBroll — in-point'],
-                  [scale(254), 'addBroll — out-point'],
-                  [scale(248), 'addBroll — shorten'],
-                  [scale(257), 'addBroll — locked'],
-                  [scale(270), 'addCaption — CTA gap check'],
-                  [scale(278), 'addCaption — start'],
-                  [scale(273), 'addCaption — micro-pull'],
-                  [scale(281), 'addCaption — locked'],
-                  [scale(312), 'addCaption — end'],
-                  [scale(307), 'addCaption — tighten'],
-                  [scale(315), 'addCaption — locked'],
-                  [scale(322), 'trimClip — out-point'],
-                  [scale(318), 'trimClip — micro-pull'],
-                  [scale(325), 'trimClip — locked'],
-                  [scale(5),   'colorGrade — final pass…'],
-                  [scale(163), 'colorGrade — mid…'],
-                  [scale(325), '✓ Edit complete'],
-                ];
-                let i = 0;
-                const tick = () => {
-                  if (i >= ops.length) { stopEditing(); return; }
-                  const [frame, label] = ops[i++];
-                  setCurrentFrame(frame);
-                  setHeadFrame(frame);
-                  setOpLabel(label);
-                  setTimeout(tick, 55);
-                };
-                tick();
-              }}
-              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-emerald-400 border border-white/[0.06] hover:border-emerald-900/50 transition-colors"
-              title="Test EDITH timeline visualization"
-            >
-              Test viz
-            </button>
-            <button
-              onClick={async () => {
-                const store = useVideoEditorStore.getState() as any;
-                const fps = store?.timeline?.fps ?? 30;
-                const currentFrame = store?.timeline?.currentFrame ?? 0;
-                const atSeconds = currentFrame / fps;
-                console.log('[TestSnapshot] firing snapshotVerify at', atSeconds, 's');
-                const result = await (window.electronAPI as any).invoke('app:verifySnapshot', {
-                  atSeconds,
-                  reason: 'manual test — verify current frame',
-                });
-                console.log('[TestSnapshot] result:', result);
-                window.dispatchEvent(new CustomEvent('edith:snapshotTaken', {
-                  detail: { atSeconds, reason: 'manual test', analysis: result?.analysis ?? null, error: result?.error ?? null },
-                }));
-              }}
-              className="text-[11px] px-2 py-1 rounded text-zinc-600 hover:text-emerald-400 border border-white/[0.06] hover:border-emerald-900/50 transition-colors"
-              title="Test snapshot verification at current playhead"
-            >
-              Test snap
-            </button>
-          </>)}
           {!isActive && messages.length > 1 && (
             <button
               onClick={handleClearHistory}
