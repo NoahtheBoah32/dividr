@@ -29,10 +29,26 @@ if (ipc?.filePath) {
 }
 
 // 1. Open a project + the EDITH panel so the chat textarea exists
-await page.evaluate(async () => await window.__dividrTest.openProjectByTitle('Untitled Project'));
+const proj = await page.evaluate(async () => {
+  if (await window.__dividrTest.openProjectByTitle('Untitled Project')) return 'Untitled Project';
+  if (await window.__dividrTest.openProjectByTitle('SKILLS-93-TEST')) return 'SKILLS-93-TEST';
+  return null;
+});
 await sleep(4000);
 await page.evaluate(() => window.__dividrTest.openPanel('friday'));
-await sleep(2500);
+// A fresh app session boots the panel into the "Allow EDITH to edit" consent
+// gate — no composer until Agree. Click through the real first-run flow and
+// poll for the textarea instead of trusting a fixed sleep.
+let composer = false;
+for (let i = 0; i < 20 && !composer; i++) {
+  composer = await page.evaluate(() => {
+    const agree = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Agree');
+    if (agree) { agree.click(); return false; }
+    return !!document.querySelector('textarea');
+  });
+  await sleep(1000);
+}
+console.log(`project: ${proj ?? 'ambient'} — composer ${composer ? 'ready' : 'MISSING'}`);
 
 // 2. Simulate pasting a PDF-named text file into the chat textarea
 const pasted = await page.evaluate(async () => {
