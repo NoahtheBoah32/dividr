@@ -7,10 +7,19 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`);
 };
 
+// Playwright's default dialog auto-dismiss races dialogs that close on their
+// own (ProtocolError "No dialog is showing" → unhandled rejection → exit 1).
+// A stray dialog must never kill a run whose checks all passed.
+process.on('unhandledRejection', (e) => {
+  if (String(e?.message ?? e).includes('handleJavaScriptDialog')) return;
+  throw e;
+});
+
 const b = await chromium.connectOverCDP('http://localhost:9222');
 let page;
 for (const c of b.contexts()) for (const p of c.pages()) if (p.url().includes('localhost:5173')) page = p;
 if (!page) { console.log('NO PAGE'); process.exit(1); }
+page.on('dialog', (d) => d.dismiss().catch(() => {}));
 
 // 1. Open the audio tools panel and force a library scan — on a fresh boot the
 //    SFX cache is empty and the panel mounts before the scan lands (race).

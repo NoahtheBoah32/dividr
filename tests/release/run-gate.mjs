@@ -38,6 +38,7 @@ const DEEP_GATE = [
   'tests/edith/verify-swap-broll-e2e.mjs',   // #89 swap an attached clip without re-asking (live EDITH)
   'tests/edith/verify-filler-removal-e2e.mjs', // #92 "remove my ums" → fresh op → Filler removed import (live EDITH)
   'tests/edith/verify-recorder-send-button.mjs', // #91 review buttons + silent-take warning (records real desktop + mic)
+  'tests/edith/verify-cam-wedge-recovery.mjs', // camera self-heal: kills the real video_capture service, watchdog must recover
   'tests/edith/recorder-probe.mjs',          // #86 Record & Create — records the real desktop/camera/mic.
                                              // NOTE: needs a fresh-ish app session; dozens of rapid camera
                                              // open/close cycles wedge Chromium's capture service (frozen

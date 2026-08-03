@@ -176,10 +176,21 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
 
   const acquireCam = useCallback(async (deviceId?: string) => {
     camStreamRef.current?.getTracks().forEach((t) => t.stop());
-    camStreamRef.current = await navigator.mediaDevices.getUserMedia({
+    const constraints: MediaStreamConstraints = {
       video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } } : { width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
-    });
+    };
+    try {
+      camStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e: any) {
+      // NotReadable/Abort = the video_capture service is wedged (or another app
+      // holds the camera). Restart the service and try once more — Chromium
+      // respawns it on demand, so this succeeds where plain retries never do.
+      if (e?.name !== 'NotReadableError' && e?.name !== 'AbortError') throw e;
+      try { await invoke('recorder:restartVideoCapture'); } catch { /* best-effort */ }
+      await new Promise((r) => setTimeout(r, 800));
+      camStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+    }
     attachCamPreview();
   }, [attachCamPreview]);
 
@@ -339,6 +350,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     if (phase !== 'setup' && phase !== 'countdown' && phase !== 'recording') return;
     let last = -1;
     let stallTicks = 0;
+    let goodTicks = 0;
     let busy = false;
     const watch = { ticks: 0, bad: 0, retries: 0, disabled: false, lastDec: -1 };
     if ((import.meta as any).env?.DEV) (window as any).__recorderCamWatch = watch;
@@ -369,20 +381,36 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
           if (uniform && green) bad = true;
         } catch { /* sampling is best-effort */ }
       }
-      if (bad) watch.bad++;
+      if (bad) {
+        watch.bad++;
+        goodTicks = 0;
+      } else if (++goodTicks >= 12) {
+        // ~10s of healthy frames re-arms the full retry ladder, so a wedge
+        // late in a long session still gets every recovery step.
+        camRetryRef.current = 0;
+        goodTicks = 12;
+      }
       stallTicks = bad ? stallTicks + 1 : 0;
       if (stallTicks < 3) return;
       stallTicks = 0;
-      if (camRetryRef.current < 2) {
+      if (camRetryRef.current < 3) {
         camRetryRef.current += 1;
         watch.retries = camRetryRef.current;
         busy = true;
+        // Two plain re-acquires, then the real fix: restart Chromium's
+        // video_capture service. A wedged service hands every new getUserMedia
+        // the same dead pipeline, so re-acquiring alone can never clear it —
+        // this is what an app restart was doing, minus the restart.
+        if (camRetryRef.current === 3) {
+          try { await invoke('recorder:restartVideoCapture'); } catch { /* fall through to re-acquire */ }
+          await new Promise((r) => setTimeout(r, 800));
+        }
         try { await acquireCam(camId || undefined); } catch { /* next stall escalates */ }
         busy = false;
         last = -1;
       } else {
         watch.disabled = true;
-        setPermError('Your camera stopped delivering frames — that is a Windows camera-service hiccup, not a DiviDr setting. Close other apps that use the camera, or restart DiviDr, then turn the camera back on.');
+        setPermError('Your camera stopped delivering frames even after restarting the capture service — another app is likely holding the camera. Close apps that use it, then turn the camera back on.');
         setCamOn(false);
         camStreamRef.current?.getTracks().forEach((t) => t.stop());
         camStreamRef.current = null;

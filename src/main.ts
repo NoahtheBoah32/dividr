@@ -7444,6 +7444,23 @@ ipcMain.handle('recorder:setBackgroundThrottling', async (_event, enabled: boole
   }
 });
 
+// Chromium runs webcam capture in an out-of-process `video_capture` utility
+// service. When Windows' camera pipeline wedges (green or frozen frames, or
+// "Could not start video source"), a renderer re-calling getUserMedia only
+// reconnects to the same dead service — killing the service process is the
+// one thing that clears it. Chromium respawns it on the next getUserMedia.
+// Desktop/screen capture lives in the browser process and is unaffected.
+ipcMain.handle('recorder:restartVideoCapture', async () => {
+  try {
+    const victims = app.getAppMetrics().filter((m: any) =>
+      m.type === 'Utility' && /video.?capture/i.test(m.serviceName ?? m.name ?? ''));
+    for (const v of victims) { try { process.kill(v.pid); } catch { /* already gone */ } }
+    return { success: true, killed: victims.length };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
 ipcMain.handle('save-temp-attachment', async (_event, base64Data: string, originalName: string) => {
   try {
     const buf = Buffer.from(base64Data.replace(/^data:[^;]+;base64,/, ''), 'base64');
