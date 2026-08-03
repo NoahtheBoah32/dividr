@@ -14,6 +14,11 @@ let page = null;
 for (const c of b.contexts()) for (const p of c.pages()) { const u = p.url(); if (u.includes('localhost:5173') && !u.startsWith('blob:')) page = p; }
 if (!page) { console.log('FAIL: no page'); process.exit(1); }
 
+// Deterministic stage: these assertions need a project whose library has real
+// video media — open it explicitly instead of trusting whatever is ambient.
+await page.evaluate(async () => { try { await window.__dividrTest.openProjectByTitle('SKILLS-93-TEST'); } catch {} });
+await page.waitForTimeout(4500);
+
 const results = [];
 const check = (name, ok, detail) => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`); };
 const consoleErrors = [];
