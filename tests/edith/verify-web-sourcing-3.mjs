@@ -7,6 +7,13 @@ import os from 'node:os';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dlDir = path.join(os.homedir(), 'Dividr Downloads');
+// Remove leftovers from previous runs — the downloader short-circuits on an
+// existing file, so a stale copy makes "new file landed" impossible to satisfy.
+if (fs.existsSync(dlDir)) {
+  for (const f of fs.readdirSync(dlDir)) {
+    if (/^RiceTerrace/i.test(f)) fs.rmSync(path.join(dlDir, f), { force: true });
+  }
+}
 const before = new Set(fs.existsSync(dlDir) ? fs.readdirSync(dlDir) : []);
 
 const b = await chromium.connectOverCDP('http://localhost:9222');
@@ -14,6 +21,12 @@ let page;
 for (const c of b.contexts()) for (const p of c.pages()) if (p.url().includes('localhost:5173')) page = p;
 if (!page) { console.log('NO PAGE'); process.exit(1); }
 
+// A mounted FridayPanel is what consumes EDITH's ops — make sure we're in a
+// project (a fresh reload lands on the home screen where the panel can't mount).
+if (!(await page.evaluate(() => window.location.hash.includes('video-editor')))) {
+  await page.evaluate(async () => { try { await window.__dividrTest.openProjectByTitle('SKILLS-93-TEST'); } catch {} });
+  await sleep(3500);
+}
 await page.evaluate(() => window.__dividrTest.openPanel('friday'));
 await sleep(2000);
 

@@ -5,8 +5,9 @@
 // pipeline transcribes+cuts real um/uhs, "Filler removed quarterly-recap" lands
 // in the media panel, and she never runs the transcription op separately.
 import { chromium } from 'playwright-core';
+import { ensureFixtures } from '../fixtures/ensure-fixtures.mjs';
 
-const FIX = 'C:/Users/User/AppData/Local/Temp/claude/C--Users-User-Documents-AANG-V2/b95c1b8c-aa69-4348-ba6d-bedec2f29652/scratchpad/quarterly-recap.mp4';
+const FIX = ensureFixtures().quarterly;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const b = await chromium.connectOverCDP('http://localhost:9222');

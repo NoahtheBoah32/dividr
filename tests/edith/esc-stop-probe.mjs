@@ -52,17 +52,21 @@ await page.evaluate(() => {
 await page.waitForTimeout(200);
 await page.locator('textarea[placeholder*="edith" i]').press('Enter');
 
-// Wait until EDITH is actually talking (first edith bubble beyond thinking)
-const base = await countMsgs();
-let talking = false;
+// Wait until the turn is actually RUNNING (Stop button visible), then Esc a few
+// seconds in — mid-turn, before the answer can land. Waiting for visible text is
+// a race: the whole answer can flush in one chunk, finishing before Esc arrives.
+let running = false;
 const t0 = Date.now();
-while (Date.now() - t0 < 90000) {
-  const n = await countMsgs();
-  if (n > base + 60) { talking = true; break; }
-  await page.waitForTimeout(1500);
+while (Date.now() - t0 < 30000) {
+  running = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('button')).some((x) => x.textContent?.trim() === 'Stop'));
+  if (running) break;
+  await page.waitForTimeout(500);
 }
-check('EDITH started talking', talking);
-if (!talking) process.exit(1);
+check('turn is running (Stop button visible)', running);
+if (!running) process.exit(1);
+await page.waitForTimeout(3000); // let the claude child actually spawn + stream
+const base = await countMsgs();
 
 // ESC — focus body first so the document-level handler fires
 await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());

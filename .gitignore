@@ -186,3 +186,7 @@ test-results/
 # test run artifacts (screenshots, result dumps)
 tests/edith/*.png
 tests/edith/*-results.json
+
+# generated test media fixtures
+tests/fixtures/*.mp4
+tests/fixtures/*.wav

@@ -1,15 +1,16 @@
 // Op-level probe for #91 + #92:
 //  1. recorder:hasAudibleAudio — audible file / silent-track file / no-audio-stream file
 //  2. sendMediaToEdith bridge — file lands as an attachment chip in EDITH's chat
-//  3. removeFillersFromMedia op — transcribe → cut (extraWords force real cuts) →
+//  3. removeFillersFromMedia op — transcribe → cut real um/uh fillers →
 //     "Filler removed …" imported into the media library, shorter than the original
 import { chromium } from 'playwright-core';
 import { statSync, existsSync } from 'node:fs';
+import { ensureFixtures } from '../fixtures/ensure-fixtures.mjs';
 
-const SCRATCH = 'C:\\Users\\User\\AppData\\Local\\Temp\\claude\\C--Users-User-Documents-AANG-V2\\b95c1b8c-aa69-4348-ba6d-bedec2f29652\\scratchpad';
-const JOKER = `${SCRATCH}\\joker.mp4`;
-const SILENT = `${SCRATCH}\\silent-track.mp4`;
-const NOAUDIO = `${SCRATCH}\\no-audio.mp4`;
+const F = ensureFixtures();
+const SPEECH = F.speech;
+const SILENT = F.silent;
+const NOAUDIO = F.noAudio;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const b = await chromium.connectOverCDP('http://localhost:9222');
@@ -30,7 +31,7 @@ await sleep(2000);
 
 // ── 1. audio gate ─────────────────────────────────────────────────────────
 const gate = (p) => page.evaluate((fp) => window.electronAPI.invoke('recorder:hasAudibleAudio', { filePath: fp }), p);
-const gAudible = await gate(JOKER);
+const gAudible = await gate(SPEECH);
 check('audible file detected', gAudible?.success && gAudible.audible === true, `max=${gAudible?.maxVolumeDb}dB`);
 const gSilent = await gate(SILENT);
 check('silent-track file rejected', gSilent?.success && gSilent.hasAudioStream === true && gSilent.audible === false, `max=${gSilent?.maxVolumeDb}dB`);
@@ -38,7 +39,7 @@ const gNone = await gate(NOAUDIO);
 check('no-audio-stream file rejected', gNone?.success && gNone.hasAudioStream === false && gNone.audible === false);
 
 // ── 2. send-to-EDITH hand-off ─────────────────────────────────────────────
-await page.evaluate((fp) => window.__dividrTest.sendMediaToEdith({ name: 'Camera recording 23.15', path: fp }), JOKER);
+await page.evaluate((fp) => window.__dividrTest.sendMediaToEdith({ name: 'Camera recording 23.15', path: fp }), SPEECH);
 await sleep(600);
 const chip = await page.evaluate(() =>
   [...document.querySelectorAll('span')].some((e) => (e.textContent ?? '').includes('Camera recording 23.15')),
@@ -51,15 +52,15 @@ await page.evaluate(() => {
     .forEach((b) => b.click());
 });
 
-// ── 3. removeFillersFromMedia (extraWords force real cuts on the Joker clip) ──
-const origSize = statSync(JOKER).size;
+// ── 3. removeFillersFromMedia (the speech fixture contains real um/uh) ──
+const origSize = statSync(SPEECH).size;
 await page.evaluate(() => {
   window.__edithFillerResult = null;
   window.addEventListener('edith:removeFillersFileResult', (e) => { window.__edithFillerResult = e.detail; }, { once: true });
 });
 await page.evaluate((fp) => {
-  window.__dividrTest.applyOps([{ type: 'removeFillersFromMedia', mediaPath: fp, extraWords: ['the', 'you'] }]);
-}, JOKER);
+  window.__dividrTest.applyOps([{ type: 'removeFillersFromMedia', mediaPath: fp }]);
+}, SPEECH);
 console.log('filler op enqueued — transcribing + cutting (may take ~2 min)…');
 let filler = null;
 for (let i = 0; i < 60; i++) {
@@ -76,11 +77,11 @@ if (filler) {
     const s = window.__dividrTest.getStoreSnapshot();
     return (s.mediaLibrary ?? []).map((m) => ({ name: m.name, source: m.source, duration: m.duration }));
   });
-  const cleaned = lib.find((m) => (m.name ?? '').startsWith('Filler removed'));
+  const cleaned = lib.find((m) => m.name === filler.importedName) ??
+    lib.find((m) => (m.name ?? '').startsWith('Filler removed'));
   check('cleaned file in media library', !!cleaned, cleaned ? `${cleaned.name} (${cleaned.duration?.toFixed?.(1)}s)` : '');
   if (cleaned?.source) {
     check('cleaned file exists on disk', existsSync(cleaned.source), cleaned.source);
-    const orig = lib.find((m) => m.source === 'C:\\Users\\User\\AppData\\Local\\Temp\\claude\\C--Users-User-Documents-AANG-V2\\b95c1b8c-aa69-4348-ba6d-bedec2f29652\\scratchpad\\joker.mp4');
     const cleanedSize = existsSync(cleaned.source) ? statSync(cleaned.source).size : 0;
     console.log(`sizes: original ${origSize}, cleaned ${cleanedSize}`);
   }

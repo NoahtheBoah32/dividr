@@ -34,8 +34,8 @@ interface DividrTestBridge {
   createAndOpenProject(title: string): Promise<string>;
   /** Open an existing project by id or (partial) title. */
   openProjectByTitle(query: string): Promise<boolean>;
-  /** Snapshot of the op queue (id/type/status/error) — surfaces silent op failures. */
-  getOpQueue(): { id: string; type: string; status: string; error?: string }[];
+  /** Snapshot of the op queue (id/type/status/error + full op payload) — surfaces silent op failures. */
+  getOpQueue(): { id: string; type: string; status: string; error?: string; op: Op }[];
   /** The download-approval store EDITH's fetches flow through — lets tests drive
    *  the REAL enqueue→approve→import→chat-card path with a local file. */
   getDownloadApprovalStore(): typeof useDownloadApprovalStore;
@@ -134,6 +134,7 @@ function initTestBridge() {
         type: (q.op as any).type,
         status: q.status,
         error: q.error,
+        op: q.op,
       }));
     },
 
