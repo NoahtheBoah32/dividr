@@ -588,9 +588,15 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
       liveFinishRef.current = null;
       // DEV/test hook: play a fixture into the SAME graph the recorder and
       // the tap consume, so e2e runs exercise the true end-to-end path.
-      if ((import.meta as any).env?.DEV && (window as any).__recorderFixtureUrl) {
+      // Consumed ONE-SHOT — deleted before it is even fetched, so a global
+      // left behind by a test run can never leak fixture speech into real
+      // takes (it did: every post-test recording opened with "quarterly
+      // numbers" TTS mixed under the user's mic).
+      const fixtureUrl = (import.meta as any).env?.DEV ? (window as any).__recorderFixtureUrl : undefined;
+      if (fixtureUrl) {
+        delete (window as any).__recorderFixtureUrl;
         try {
-          const ab = await fetch((window as any).__recorderFixtureUrl).then((r) => r.arrayBuffer());
+          const ab = await fetch(fixtureUrl).then((r) => r.arrayBuffer());
           const buf = await ctx.decodeAudioData(ab);
           const fsrc = ctx.createBufferSource();
           fsrc.buffer = buf;

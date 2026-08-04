@@ -184,6 +184,10 @@ await page.waitForTimeout(600);
 await page.evaluate(() => document.querySelector('[data-testid="confirm-delete"]')?.click()).catch(() => {});
 await page.waitForTimeout(800);
 
+// belt + suspenders with the one-shot consume: never leave the fixture hook
+// set in a live app — a leftover global haunted real takes with fixture TTS.
+await page.evaluate(() => { delete window.__recorderFixtureUrl; });
+
 const failed = results.filter((r) => !r.ok).length;
 console.log(failed ? `\n${failed} FAILED` : `\nALL PASS (${results.length} checks)`);
 process.exit(failed ? 1 : 0);
