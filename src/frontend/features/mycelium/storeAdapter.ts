@@ -756,17 +756,23 @@ async function applyOp(op: Op): Promise<void> {
         const hit = mfLib.find((m: any) => (m?.name ?? '').toLowerCase().includes(q));
         if (hit) { mfPath = hit.tempFilePath ?? hit.source; mfTitle = hit.name; }
       }
-      if (mfPath && !mfTitle) {
-        const hit = mfLib.find((m: any) => m?.source === mfPath || m?.tempFilePath === mfPath);
-        mfTitle = hit?.name;
-      }
+      const mfItem = mfPath
+        ? mfLib.find((m: any) => m?.source === mfPath || m?.tempFilePath === mfPath)
+        : undefined;
+      if (!mfTitle) mfTitle = mfItem?.name;
       if (!mfPath) throw new Error('removeFillersFromMedia: no media resolved — pass mediaPath or a mediaName that exists in the library');
-      window.dispatchEvent(new CustomEvent('edith:status', { detail: { text: 'Transcribing to find filler words…' } }));
+      // A cached transcript (live transcription on the recorder, or a prior
+      // transcribe run) skips the whole Whisper pass in the main process.
+      const mfCachedTx = mfItem?.cachedKaraokeSubtitles?.transcriptionResult;
+      window.dispatchEvent(new CustomEvent('edith:status', {
+        detail: { text: mfCachedTx ? 'Cutting fillers from the live transcript…' : 'Transcribing to find filler words…' },
+      }));
       let mfRes: any;
       try {
         mfRes = await (window.electronAPI as any).invoke('media:removeFillersFromFile', {
           filePath: mfPath,
           extraWords: (op as any).extraWords,
+          transcript: mfCachedTx,
         });
       } catch (err) {
         mfRes = { success: false, error: String((err as Error)?.message ?? err) };

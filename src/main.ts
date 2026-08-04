@@ -6094,21 +6094,36 @@ ipcMain.handle('media:searchMedia', async (_event, { query, count }: { query: st
 // "Filler removed <name>" next to the source. Powers EDITH's removeFillersFromMedia
 // op for media that is not on the timeline (e.g. recordings sent from the Record
 // studio). The timeline removeFillers op is untouched — that one ripple-deletes.
-ipcMain.handle('media:removeFillersFromFile', async (event, payload: { filePath: string; extraWords?: string[] }) => {
+ipcMain.handle('media:removeFillersFromFile', async (event, payload: {
+  filePath: string;
+  extraWords?: string[];
+  transcript?: { segments?: Array<{ words?: Array<{ word: string; start: number; end: number }> }>; duration?: number; text?: string };
+}) => {
   const sendMsg = (text: string) =>
     event.sender.send('mycelium:message', { role: 'system', text });
   const filePath = payload?.filePath;
   if (!filePath || !fs.existsSync(filePath)) return { success: false, error: `File not found: ${filePath}` };
   if (!ffmpegPath) return { success: false, error: 'FFmpeg binary not available' };
   try {
-    await ensurePythonInitialized('ipc:media:removeFillersFromFile');
-    sendMsg('↳ Transcribing the recording to find every filler word…');
-    const t0 = Date.now();
-    const result: WhisperResult = await transcribeAudio(filePath, {});
+    // A caller-supplied transcript (live transcription captured while the take
+    // was recorded) has the same word-timestamp shape Whisper would produce —
+    // cutting starts immediately, no second transcription pass.
+    const cachedWordCount = (payload?.transcript?.segments ?? [])
+      .reduce((n, s) => n + (s.words?.length ?? 0), 0);
+    let result: WhisperResult;
+    if (cachedWordCount > 0) {
+      sendMsg('↳ This take arrived with a live transcript — skipping transcription, scanning for fillers…');
+      result = payload.transcript as WhisperResult;
+    } else {
+      await ensurePythonInitialized('ipc:media:removeFillersFromFile');
+      sendMsg('↳ Transcribing the recording to find every filler word…');
+      const t0 = Date.now();
+      result = await transcribeAudio(filePath, {});
+      sendMsg(`↳ Transcribed ${Math.round(result.duration)}s in ${Math.round((Date.now() - t0) / 1000)}s — scanning for fillers…`);
+    }
     const words: { word: string; start: number; end: number }[] = [];
     for (const seg of result.segments ?? []) for (const w of seg.words ?? []) words.push({ word: w.word, start: w.start, end: w.end });
     if (!words.length) return { success: false, error: 'Transcription produced no word timestamps' };
-    sendMsg(`↳ Transcribed ${Math.round(result.duration)}s in ${Math.round((Date.now() - t0) / 1000)}s — scanning for fillers…`);
 
     // Same filler families as the timeline removeFillers op: um/umm/uhm…, uh/uhh…,
     // er/erm, ah/ahh, hm/hmm — matched whole after stripping punctuation.
