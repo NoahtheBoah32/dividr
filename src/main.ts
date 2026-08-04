@@ -7431,6 +7431,95 @@ ipcMain.handle('recorder:hasAudibleAudio', async (_event, payload: { filePath: s
   }
 });
 
+// ═══ Live transcription (audio recorder) ═══
+// One long-lived live_transcribe.py per recorder session: PCM streams to its
+// stdin while recording, PARTIAL/SEGMENT events stream back to the renderer.
+// Spawned directly (NOT via mediaToolsRunner) — the runner kills any previous
+// python process on each command, which would murder this one the moment any
+// other transcription ran.
+let liveTxProc: ReturnType<typeof spawn> | null = null;
+let liveTxFinal: { resolve: (r: unknown) => void } | null = null;
+
+function killLiveTx() {
+  if (liveTxProc) { try { liveTxProc.kill(); } catch { /* already gone */ } }
+  liveTxProc = null;
+  liveTxFinal = null;
+}
+
+ipcMain.handle('recorder:liveTranscribe:start', async (event) => {
+  try {
+    killLiveTx();
+    const isWindows = process.platform === 'win32';
+    const venvPython = isWindows
+      ? path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'Scripts', 'python.exe')
+      : path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'bin', 'python');
+    const script = path.join(process.cwd(), 'src', 'backend', 'python', 'scripts', 'live_transcribe.py');
+    const pythonExe = fs.existsSync(venvPython) ? venvPython : (isWindows ? 'python' : 'python3');
+    if (!fs.existsSync(script)) return { success: false, error: 'live_transcribe.py not found' };
+
+    const proc = spawn(pythonExe, [script], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
+    liveTxProc = proc;
+    const sender = event.sender;
+    let lineBuf = '';
+    proc.stdout?.on('data', (d: Buffer) => {
+      lineBuf += d.toString();
+      let nl;
+      while ((nl = lineBuf.indexOf('\n')) >= 0) {
+        const line = lineBuf.slice(0, nl).trim();
+        lineBuf = lineBuf.slice(nl + 1);
+        const sep = line.indexOf('|');
+        if (sep < 0) continue;
+        const prefix = line.slice(0, sep);
+        let data: unknown;
+        try { data = JSON.parse(line.slice(sep + 1)); } catch { continue; }
+        if (prefix === 'FINAL' && liveTxFinal) { liveTxFinal.resolve(data); liveTxFinal = null; }
+        if (!sender.isDestroyed()) {
+          sender.send('recorder:liveTranscribe:event', { type: prefix.toLowerCase(), data });
+        }
+      }
+    });
+    proc.stderr?.on('data', (d: Buffer) => {
+      const s = d.toString().trim();
+      if (s) console.log('[liveTranscribe]', s.slice(0, 400));
+    });
+    proc.on('close', () => { if (liveTxProc === proc) { liveTxProc = null; liveTxFinal = null; } });
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
+ipcMain.handle('recorder:liveTranscribe:feed', async (_event, chunk: ArrayBuffer) => {
+  if (!liveTxProc?.stdin?.writable) return { success: false, error: 'no live transcriber running' };
+  try { liveTxProc.stdin.write(Buffer.from(chunk)); return { success: true }; } catch (e: any) {
+    return { success: false, error: e?.message ?? String(e) };
+  }
+});
+
+// Close stdin → the script flushes the tail, emits FINAL, and exits. Resolves
+// with the full transcriptionResult (cachedKaraokeSubtitles shape).
+ipcMain.handle('recorder:liveTranscribe:finish', async () => {
+  const proc = liveTxProc;
+  if (!proc) return { success: false, error: 'no live transcriber running' };
+  const result = await new Promise<unknown>((resolve) => {
+    liveTxFinal = { resolve };
+    const timer = setTimeout(() => { if (liveTxFinal) { liveTxFinal = null; resolve(null); } }, 60_000);
+    proc.on('close', () => { clearTimeout(timer); if (liveTxFinal) { liveTxFinal = null; resolve(null); } });
+    try { proc.stdin?.end(); } catch { resolve(null); }
+  });
+  if (liveTxProc === proc) liveTxProc = null;
+  return result ? { success: true, result } : { success: false, error: 'no final transcript' };
+});
+
+ipcMain.handle('recorder:liveTranscribe:cancel', async () => {
+  killLiveTx();
+  return { success: true };
+});
+
 // The screen+camera composite is painted on a canvas by renderer timers. While
 // the user records another app, DiviDr sits in the background — Chromium would
 // throttle those timers to ~1fps and freeze the composite, so throttling is

@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePanelStore } from '@/frontend/features/editor/stores/PanelStore';
+import { useVideoEditorStore } from '@/frontend/features/editor/stores/videoEditor';
 import { importFileIntoLibrary } from '@/frontend/features/mycelium/stores/downloadApprovalStore';
 import { sendMediaToEdith } from '@/frontend/features/mycelium/sendToEdith';
 
@@ -154,10 +155,54 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
   useEffect(() => { micOnRef.current = micOn; }, [micOn]);
   useEffect(() => { pausedRef.current = paused; }, [paused]);
 
+  // Live transcription (audio mode only) — a warm live_transcribe.py process
+  // receives PCM tapped from the RECORDED audio graph, so mutes and pauses in
+  // the transcript line up with the saved file exactly.
+  const [liveTx, setLiveTx] = useState(
+    () => isAudioOnly && localStorage.getItem('recorder-live-transcribe') === '1');
+  const [liveTxStatus, setLiveTxStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [liveLines, setLiveLines] = useState<string[]>([]);
+  const [livePartial, setLivePartial] = useState('');
+  const [liveFinalText, setLiveFinalText] = useState('');
+  const liveTxRef = useRef(liveTx);
+  const liveTapRef = useRef<ScriptProcessorNode | null>(null);
+  const liveFinishRef = useRef<Promise<any> | null>(null);
+  useEffect(() => { liveTxRef.current = liveTx; }, [liveTx]);
+
   const getAudioCtx = () => {
     if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
     return audioCtxRef.current;
   };
+
+  // Live transcriber lifecycle: spawn with the toggle so the model warms while
+  // the user is still setting up — the first spoken words transcribe instantly.
+  useEffect(() => {
+    if (!isAudioOnly || !liveTx) return;
+    let dead = false;
+    setLiveTxStatus('loading');
+    invoke('recorder:liveTranscribe:start')
+      .then((r: any) => { if (!dead && !r?.success) setLiveTxStatus('error'); })
+      .catch(() => { if (!dead) setLiveTxStatus('error'); });
+    const onEvt = (_e: unknown, evt: { type: string; data: any }) => {
+      if (dead) return;
+      if (evt.type === 'ready') setLiveTxStatus('ready');
+      else if (evt.type === 'partial') setLivePartial(evt.data?.text ?? '');
+      else if (evt.type === 'segment') {
+        const t = String(evt.data?.text ?? '').trim();
+        if (t) setLiveLines((p) => [...p, t]);
+        setLivePartial('');
+      } else if (evt.type === 'error') setLiveTxStatus('error');
+    };
+    (window as any).electronAPI.on('recorder:liveTranscribe:event', onEvt);
+    return () => {
+      dead = true;
+      (window as any).electronAPI.removeListener('recorder:liveTranscribe:event', onEvt);
+      invoke('recorder:liveTranscribe:cancel').catch(() => {});
+      setLiveTxStatus('idle');
+      setLiveLines([]);
+      setLivePartial('');
+    };
+  }, [isAudioOnly, liveTx]);
 
   // ── Streams ──────────────────────────────────────────────────────────────
   const attachCamPreview = useCallback(() => {
@@ -533,6 +578,53 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     }
     const audioTrack = audioDestRef.current.stream.getAudioTracks()[0];
 
+    // Live transcription tap — reads PCM off the RECORDED stream (post-gain),
+    // so a muted mic feeds silence and the transcript timeline matches the
+    // file. Pause skips feeding, exactly like MediaRecorder skips writing.
+    if (isAudioOnly && liveTxRef.current) {
+      setLiveLines([]);
+      setLivePartial('');
+      setLiveFinalText('');
+      liveFinishRef.current = null;
+      // DEV/test hook: play a fixture into the SAME graph the recorder and
+      // the tap consume, so e2e runs exercise the true end-to-end path.
+      if ((import.meta as any).env?.DEV && (window as any).__recorderFixtureUrl) {
+        try {
+          const ab = await fetch((window as any).__recorderFixtureUrl).then((r) => r.arrayBuffer());
+          const buf = await ctx.decodeAudioData(ab);
+          const fsrc = ctx.createBufferSource();
+          fsrc.buffer = buf;
+          fsrc.connect(audioDestRef.current);
+          fsrc.start();
+        } catch { /* fixture is test-only */ }
+      }
+      const tapSrc = ctx.createMediaStreamSource(audioDestRef.current.stream);
+      const tap = ctx.createScriptProcessor(4096, 1, 1);
+      const ratio = ctx.sampleRate / 16000;
+      tap.onaudioprocess = (ev) => {
+        if (pausedRef.current) return;
+        const input = ev.inputBuffer.getChannelData(0);
+        const outLen = Math.floor(input.length / ratio);
+        const pcm = new Int16Array(outLen);
+        for (let i = 0; i < outLen; i++) {
+          // average the source samples behind each 16 kHz sample (cheap low-pass)
+          const a = Math.floor(i * ratio);
+          const b = Math.min(input.length, Math.max(a + 1, Math.floor((i + 1) * ratio)));
+          let s = 0;
+          for (let j = a; j < b; j++) s += input[j];
+          s /= b - a;
+          pcm[i] = Math.max(-32768, Math.min(32767, Math.round(s * 32767)));
+        }
+        invoke('recorder:liveTranscribe:feed', pcm.buffer).catch(() => {});
+      };
+      tapSrc.connect(tap);
+      // ScriptProcessor only pumps when routed to a destination — mute the route.
+      const sink = ctx.createGain();
+      sink.gain.value = 0;
+      tap.connect(sink).connect(ctx.destination);
+      liveTapRef.current = tap;
+    }
+
     let avStream: MediaStream;
     if (mode === 'screen-camera') {
       const sv = screenVideoRef.current!;
@@ -662,6 +754,18 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     rec.onstop = async () => {
       const id = recordingIdRef.current;
       recordingIdRef.current = null;
+      if (liveTapRef.current) { try { liveTapRef.current.disconnect(); } catch { /* gone */ } liveTapRef.current = null; }
+      if (isAudioOnly && liveTxRef.current && stoppingRef.current !== 'discard') {
+        // Seal the live transcript now (stdin EOF → tail flush → FINAL);
+        // Save / Send to EDITH await this promise before attaching it.
+        liveFinishRef.current = invoke('recorder:liveTranscribe:finish')
+          .then((r: any) => {
+            const res = r?.success ? r.result : null;
+            if (res?.text) setLiveFinalText(res.text);
+            return res;
+          })
+          .catch((): null => null);
+      }
       if (drawTimerRef.current) { clearInterval(drawTimerRef.current); drawTimerRef.current = null; }
       await invoke('recorder:setBackgroundThrottling', true).catch(() => {});
       await appendQueueRef.current;
@@ -726,7 +830,21 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     setConfirmDelete(null);
     setAudioWarning(null);
     setSendingToEdith(false);
+    // Disconnect the tap BEFORE the transcriber restarts, or a few trailing
+    // PCM callbacks would leak the dead take's audio into the fresh buffer.
+    if (liveTapRef.current) { try { liveTapRef.current.disconnect(); } catch { /* gone */ } liveTapRef.current = null; }
     if (phaseRef.current === 'recording') stopRecording('discard');
+    if (which !== 'close' && isAudioOnly && liveTxRef.current) {
+      setLiveLines([]);
+      setLivePartial('');
+      setLiveFinalText('');
+      liveFinishRef.current = null;
+      setLiveTxStatus('loading');
+      invoke('recorder:liveTranscribe:cancel')
+        .then(() => invoke('recorder:liveTranscribe:start'))
+        .then((r: any) => { if (!r?.success) setLiveTxStatus('error'); })
+        .catch(() => setLiveTxStatus('error'));
+    }
     if (finalPath) {
       await invoke('recorder:discard', { filePath: finalPath }).catch(() => {});
       setFinalPath(null);
@@ -737,6 +855,18 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     setTimeout(() => { setPhase('setup'); }, 1100);
   }, [finalPath, onClose, stopRecording]);
 
+  // Attach the sealed live transcript to the freshly imported media item.
+  // The transcript panel, EDITH's prompt context, captions, and findMoment all
+  // read cachedKaraokeSubtitles — the take arrives pre-transcribed everywhere.
+  const attachLiveTranscript = useCallback(async (mediaId: string) => {
+    if (!isAudioOnly || !liveFinishRef.current) return;
+    const tx = await liveFinishRef.current.catch((): null => null);
+    if (!tx?.segments?.length) return;
+    (useVideoEditorStore.getState() as any).updateMediaLibraryItem(mediaId, {
+      cachedKaraokeSubtitles: { transcriptionResult: tx, generatedAt: Date.now() },
+    });
+  }, [isAudioOnly]);
+
   // ── Save and edit — media library ONLY, never Downloads ─────────────────
   const handleSave = useCallback(async () => {
     if (!finalPath || saving) return;
@@ -745,7 +875,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     const stamp = new Date();
     const nice = `${MODE_TITLE[mode].replace(' recording', '')} recording ${String(stamp.getHours()).padStart(2, '0')}.${String(stamp.getMinutes()).padStart(2, '0')}`;
     try {
-      await importFileIntoLibrary({
+      const mediaId = await importFileIntoLibrary({
         id: Math.random().toString(36).slice(2),
         filePath: finalPath,
         fileName,
@@ -754,6 +884,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
         title: nice,
         origin: 'recording',
       });
+      await attachLiveTranscript(mediaId);
       cleanupAll();
       onClose();
       usePanelStore.getState().showPanel('media-import');
@@ -785,7 +916,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
       const fileName = finalPath.replace(/\\/g, '/').split('/').pop() ?? 'recording';
       const stamp = new Date();
       const nice = `${MODE_TITLE[mode].replace(' recording', '')} recording ${String(stamp.getHours()).padStart(2, '0')}.${String(stamp.getMinutes()).padStart(2, '0')}`;
-      await importFileIntoLibrary({
+      const mediaId = await importFileIntoLibrary({
         id: Math.random().toString(36).slice(2),
         filePath: finalPath,
         fileName,
@@ -794,6 +925,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
         title: nice,
         origin: 'recording',
       });
+      await attachLiveTranscript(mediaId);
       sendMediaToEdith({ name: nice, path: finalPath });
       cleanupAll();
       onClose();
@@ -841,6 +973,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
   const cleanupAll = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (drawTimerRef.current) clearInterval(drawTimerRef.current);
+    if (liveTapRef.current) { try { liveTapRef.current.disconnect(); } catch { /* gone */ } liveTapRef.current = null; }
     const rec = recorderRef.current;
     recorderRef.current = null;
     stoppingRef.current = 'discard';
@@ -1056,9 +1189,48 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     </span>
   );
 
+  // Live-transcription switch — audio mode only, parked LEFT of the Mic button.
+  // Locked while a take is running: flipping mid-recording would produce a
+  // transcript that covers only part of the file.
+  const liveTxToggle = isAudioOnly ? (
+    <div className="flex flex-col items-center gap-1.5 px-2 py-1">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={liveTx}
+        data-testid="live-transcribe-toggle"
+        disabled={phase === 'recording' || phase === 'countdown'}
+        onClick={() => {
+          const next = !liveTx;
+          setLiveTx(next);
+          localStorage.setItem('recorder-live-transcribe', next ? '1' : '0');
+        }}
+        title={liveTx ? 'Turn off live transcription' : 'Turn on live transcription'}
+        className="relative rounded-full transition-colors disabled:opacity-50"
+        style={{
+          width: 34,
+          height: 18,
+          background: liveTx ? GREEN : '#1c1c1c',
+          border: `1px solid ${liveTx ? GREEN : 'rgba(255,255,255,0.18)'}`,
+        }}
+      >
+        <span
+          className="absolute rounded-full bg-white"
+          style={{ top: 2, left: liveTx ? 18 : 2, width: 12, height: 12, transition: 'left 140ms ease' }}
+        />
+      </button>
+      <span className="text-[10px] text-zinc-400" data-testid="live-transcribe-label">
+        {liveTx && liveTxStatus === 'loading' ? 'Live transcription…'
+          : liveTx && liveTxStatus === 'error' ? 'Transcriber offline'
+            : 'Live transcription'}
+      </span>
+    </div>
+  ) : null;
+
   const controlBar = (
     <div className="flex items-center justify-center gap-1 py-2.5">
       {hasCamera && deviceButton('cam', camOn, toggleCam, 'Camera')}
+      {liveTxToggle}
       {deviceButton('mic', micOn, toggleMic, 'Mic')}
       {micActivityPill}
     </div>
@@ -1081,6 +1253,16 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
 
   const elapsed = fmtTime(elapsedMs);
   const stageBg = '#232323';
+
+  if ((import.meta as any).env?.DEV) {
+    (window as any).__liveTxDebug = {
+      enabled: liveTx,
+      status: liveTxStatus,
+      lines: liveLines,
+      partial: livePartial,
+      finalText: liveFinalText,
+    };
+  }
 
   // Portal to <body>: the panel dock creates its own stacking context, so a
   // fixed overlay rendered inside it would sit UNDER the preview's hit-test
@@ -1191,6 +1373,26 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
                   />
                 </div>
               )}
+              {/* live transcript readout — committed text solid, rolling tail dim */}
+              {isAudioOnly && phase === 'recording' && liveTx && (
+                <div
+                  data-testid="live-transcript"
+                  className="absolute left-0 right-0 flex justify-center pointer-events-none"
+                  style={{ bottom: 84 }}
+                >
+                  <div
+                    className="max-w-[760px] px-6 text-center"
+                    style={{ maxHeight: 66, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
+                  >
+                    <p className="text-[13px] leading-relaxed text-zinc-200">
+                      {liveLines.slice(-2).join(' ')}
+                      {livePartial && (
+                        <span className="text-zinc-500">{liveLines.length ? ' ' : ''}{livePartial}</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* screen-mode helper text before a source is picked */}
               {hasScreen && !screenStreamRef.current && phase === 'setup' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-10 text-center pointer-events-none">
@@ -1294,6 +1496,15 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
                       </svg>
                     </span>
                     <audio data-testid="review-media" src={reviewUrl} controls className="w-[420px] max-w-full" />
+                    {liveFinalText && (
+                      <div
+                        data-testid="live-transcript-review"
+                        className="max-w-[560px] px-4 text-center overflow-y-auto"
+                        style={{ maxHeight: 96 }}
+                      >
+                        <p className="text-[12px] leading-relaxed text-zinc-400">{liveFinalText}</p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <video data-testid="review-media" src={reviewUrl} controls autoPlay className="max-w-full max-h-full rounded-lg" style={{ background: '#000' }} />
