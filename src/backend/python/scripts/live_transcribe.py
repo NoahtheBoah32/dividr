@@ -84,6 +84,7 @@ def vad_chunks(audio, vad_options):
 
 def decode(model, audio, beam: int, language, lang_votes: dict):
     """One whisper pass → (segments, text). Times are window-relative."""
+    audio_dur = len(audio) / SR
     seg_gen, info = model.transcribe(
         audio,
         beam_size=beam,
@@ -94,13 +95,24 @@ def decode(model, audio, beam: int, language, lang_votes: dict):
     )
     segs = []
     for s in seg_gen:
+        # Hallucination guards. On near-silence whisper invents stock phrases
+        # ("Thank you." / "Obrigado") and continues patterns past the real
+        # audio (a count to 8 became a count to 30). A hallucinated segment
+        # shows up as high no-speech probability with low decoder confidence,
+        # or as words "spoken" at/after the moment the audio ends.
+        if getattr(s, "no_speech_prob", 0.0) > 0.6 and getattr(s, "avg_logprob", 0.0) < -0.8:
+            continue
         words = [
             {"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3),
              "confidence": round(getattr(w, "probability", 1.0), 3)}
             for w in (s.words or [])
+            if w.start < audio_dur - 0.05
         ]
-        segs.append({"start": round(s.start, 3), "end": round(s.end, 3),
-                     "text": s.text, "words": words})
+        if not words:
+            continue
+        segs.append({"start": round(s.start, 3), "end": round(min(s.end, audio_dur), 3),
+                     "text": "".join(w["word"] for w in words).strip() if len(words) != len(s.words or []) else s.text,
+                     "words": words})
     if segs and info.language:
         lang_votes[info.language] = lang_votes.get(info.language, 0) + 1
         lang_votes.setdefault("_prob", {})[info.language] = info.language_probability
@@ -191,6 +203,8 @@ def main():
             continue
 
         win_dur = window / SR
+        speech_end = speech[-1]["end"]
+        voiced = sum(ch["end"] - ch["start"] for ch in speech) / SR
         # An utterance is sealed by the pause AFTER it — scan for the last
         # speech chunk followed by >= COMMIT_SILENCE of quiet, even when new
         # speech is already flowing at the window tail (a tail-only check
@@ -201,9 +215,11 @@ def main():
             if (nxt_start - ch["end"]) / SR >= COMMIT_SILENCE:
                 seal_end = min(ch["end"] + int(0.2 * SR), nxt_start)
         if eof:
-            seal_end = window
+            # Flush through the end of SPEECH, not the end of the file — the
+            # trailing dead air is whisper's favourite hallucination canvas.
+            seal_end = min(window, speech_end + int(0.2 * SR))
         elif seal_end is None and win_dur >= MAX_WINDOW:
-            seal_end = min(window, speech[-1]["end"])  # mid-speech backstop cut
+            seal_end = min(window, speech_end)  # mid-speech backstop cut
 
         if seal_end:
             # utterance finished (or window full) — final-quality decode
@@ -219,8 +235,16 @@ def main():
                 raw, _ = pcm.snapshot()
                 if len(raw) // 2 - committed < int(MIN_WINDOW * SR):
                     break
+        elif voiced < 0.3:
+            # a lone VAD blip (breath, keyboard) is not speech — decoding the
+            # window around it is how "Muy bien, gracias. Obrigado." appears
+            # on a silent mic
+            send_partial("")
         else:
-            segs = decode(model, audio, 1, args.language, lang_votes)
+            # decode only through the end of detected speech — never hand the
+            # rolling partial a tail of dead air to fill with invented text
+            bound = min(window, speech_end + int(0.2 * SR))
+            segs = decode(model, audio[:bound], 1, args.language, lang_votes)
             send_partial(" ".join(s["text"].strip() for s in segs).strip())
 
     lang_probs = lang_votes.pop("_prob", {})
