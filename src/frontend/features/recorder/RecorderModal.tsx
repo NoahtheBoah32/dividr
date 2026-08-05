@@ -155,11 +155,12 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
   useEffect(() => { micOnRef.current = micOn; }, [micOn]);
   useEffect(() => { pausedRef.current = paused; }, [paused]);
 
-  // Live transcription (audio mode only) — a warm live_transcribe.py process
+  // Live transcription (all recorder modes) — a warm live_transcribe.py process
   // receives PCM tapped from the RECORDED audio graph, so mutes and pauses in
-  // the transcript line up with the saved file exactly.
+  // the transcript line up with the saved file exactly. Every mode routes the
+  // mic through the same audioDest graph, so the tap is mode-agnostic.
   const [liveTx, setLiveTx] = useState(
-    () => isAudioOnly && localStorage.getItem('recorder-live-transcribe') === '1');
+    () => localStorage.getItem('recorder-live-transcribe') === '1');
   const [liveTxStatus, setLiveTxStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [liveLines, setLiveLines] = useState<string[]>([]);
   const [livePartial, setLivePartial] = useState('');
@@ -177,7 +178,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
   // Live transcriber lifecycle: spawn with the toggle so the model warms while
   // the user is still setting up — the first spoken words transcribe instantly.
   useEffect(() => {
-    if (!isAudioOnly || !liveTx) return;
+    if (!liveTx) return;
     let dead = false;
     setLiveTxStatus('loading');
     invoke('recorder:liveTranscribe:start')
@@ -581,7 +582,8 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     // Live transcription tap — reads PCM off the RECORDED stream (post-gain),
     // so a muted mic feeds silence and the transcript timeline matches the
     // file. Pause skips feeding, exactly like MediaRecorder skips writing.
-    if (isAudioOnly && liveTxRef.current) {
+    // Mode-agnostic: every mode records this same audioDest graph.
+    if (liveTxRef.current) {
       setLiveLines([]);
       setLivePartial('');
       setLiveFinalText('');
@@ -723,6 +725,10 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     } else if (mode === 'screen') {
       const track = screenStreamRef.current?.getVideoTracks()[0];
       if (!track) throw new Error('Screen stream is not available');
+      // The user is told to minimize this window during a screen take — a
+      // throttled renderer starves the ScriptProcessor tap, so keep it awake
+      // while the live transcriber listens (onstop always re-enables).
+      if (liveTxRef.current) await invoke('recorder:setBackgroundThrottling', false);
       avStream = new MediaStream([track, audioTrack]);
     } else {
       avStream = new MediaStream([audioTrack]);
@@ -761,7 +767,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
       const id = recordingIdRef.current;
       recordingIdRef.current = null;
       if (liveTapRef.current) { try { liveTapRef.current.disconnect(); } catch { /* gone */ } liveTapRef.current = null; }
-      if (isAudioOnly && liveTxRef.current && stoppingRef.current !== 'discard') {
+      if (liveTxRef.current && stoppingRef.current !== 'discard') {
         // Seal the live transcript now (stdin EOF → tail flush → FINAL);
         // Save / Send to EDITH await this promise before attaching it.
         liveFinishRef.current = invoke('recorder:liveTranscribe:finish')
@@ -840,7 +846,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     // PCM callbacks would leak the dead take's audio into the fresh buffer.
     if (liveTapRef.current) { try { liveTapRef.current.disconnect(); } catch { /* gone */ } liveTapRef.current = null; }
     if (phaseRef.current === 'recording') stopRecording('discard');
-    if (which !== 'close' && isAudioOnly && liveTxRef.current) {
+    if (which !== 'close' && liveTxRef.current) {
       setLiveLines([]);
       setLivePartial('');
       setLiveFinalText('');
@@ -865,13 +871,13 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
   // The transcript panel, EDITH's prompt context, captions, and findMoment all
   // read cachedKaraokeSubtitles — the take arrives pre-transcribed everywhere.
   const attachLiveTranscript = useCallback(async (mediaId: string) => {
-    if (!isAudioOnly || !liveFinishRef.current) return;
+    if (!liveFinishRef.current) return;
     const tx = await liveFinishRef.current.catch((): null => null);
     if (!tx?.segments?.length) return;
     (useVideoEditorStore.getState() as any).updateMediaLibraryItem(mediaId, {
       cachedKaraokeSubtitles: { transcriptionResult: tx, generatedAt: Date.now() },
     });
-  }, [isAudioOnly]);
+  }, []);
 
   // ── Save and edit — media library ONLY, never Downloads ─────────────────
   const handleSave = useCallback(async () => {
@@ -1195,10 +1201,10 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     </span>
   );
 
-  // Live-transcription switch — audio mode only, parked LEFT of the Mic button.
+  // Live-transcription switch — every mode, parked LEFT of the Mic button.
   // Locked while a take is running: flipping mid-recording would produce a
   // transcript that covers only part of the file.
-  const liveTxToggle = isAudioOnly ? (
+  const liveTxToggle = (
     <div className="flex flex-col items-center gap-1.5 px-2 py-1">
       <button
         type="button"
@@ -1231,7 +1237,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
             : 'Live transcription'}
       </span>
     </div>
-  ) : null;
+  );
 
   const controlBar = (
     <div className="flex items-center justify-center gap-1 py-2.5">
@@ -1380,7 +1386,7 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
                 </div>
               )}
               {/* live transcript readout — committed text solid, rolling tail dim */}
-              {isAudioOnly && phase === 'recording' && liveTx && (
+              {phase === 'recording' && liveTx && (liveLines.length > 0 || livePartial) && (
                 <div
                   data-testid="live-transcript"
                   className="absolute left-0 right-0 flex justify-center pointer-events-none"
@@ -1388,12 +1394,16 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
                 >
                   <div
                     className="max-w-[760px] px-6 text-center"
-                    style={{ maxHeight: 66, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
+                    style={{
+                      maxHeight: 66, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+                      // over a camera/screen picture the text needs its own ground
+                      ...(isAudioOnly ? {} : { background: 'rgba(0,0,0,0.55)', borderRadius: 8, paddingTop: 6, paddingBottom: 6 }),
+                    }}
                   >
                     <p className="text-[13px] leading-relaxed text-zinc-200">
                       {liveLines.slice(-2).join(' ')}
                       {livePartial && (
-                        <span className="text-zinc-500">{liveLines.length ? ' ' : ''}{livePartial}</span>
+                        <span className={isAudioOnly ? 'text-zinc-500' : 'text-zinc-400'}>{liveLines.length ? ' ' : ''}{livePartial}</span>
                       )}
                     </p>
                   </div>
@@ -1513,7 +1523,18 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
                     )}
                   </div>
                 ) : (
-                  <video data-testid="review-media" src={reviewUrl} controls autoPlay className="max-w-full max-h-full rounded-lg" style={{ background: '#000' }} />
+                  <div className="w-full h-full min-h-0 flex flex-col items-center justify-center gap-3">
+                    <video data-testid="review-media" src={reviewUrl} controls autoPlay className="max-w-full rounded-lg" style={{ background: '#000', flex: '0 1 auto', minHeight: 0, maxHeight: liveFinalText ? 'calc(100% - 110px)' : '100%' }} />
+                    {liveFinalText && (
+                      <div
+                        data-testid="live-transcript-review"
+                        className="max-w-[560px] px-4 text-center overflow-y-auto"
+                        style={{ maxHeight: 96 }}
+                      >
+                        <p className="text-[12px] leading-relaxed text-zinc-400">{liveFinalText}</p>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="flex items-center justify-center gap-3 pb-2">

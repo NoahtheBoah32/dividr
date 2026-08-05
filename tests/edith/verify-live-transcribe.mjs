@@ -3,8 +3,8 @@
 // recorded audio graph (DEV hook) → PARTIALs stream → utterances commit
 // mid-take → stop seals FINAL → review shows the transcript → Save attaches
 // cachedKaraokeSubtitles to the imported media item (the panel + EDITH read it
-// with zero re-transcription). Plus: the toggle must NOT exist outside audio
-// mode, and must be locked while recording.
+// with zero re-transcription). Plus: the toggle exists in EVERY mode (audio,
+// camera, screen, screen-camera), and must be locked while recording.
 import { chromium } from 'playwright-core';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -173,11 +173,13 @@ if (attached.found) {
   }, attached);
 }
 
-// ═══ Phase 3 — toggle must NOT exist outside audio mode ═══════════════════
+// ═══ Phase 3 — the toggle exists in video modes too ═══════════════════════
 await openRecorder('record-card-camera');
 const camSetup = await waitFor('start-recording', 15000);
 check('camera mode reaches setup', camSetup);
-check('NO live-transcription toggle outside audio mode', !(await visible('live-transcribe-toggle')));
+check('live-transcription toggle present in camera mode', await visible('live-transcribe-toggle'));
+check('camera-mode label says Live transcription',
+  /live transcription/i.test(await $('live-transcribe-label').textContent() ?? ''));
 await page.evaluate(() => document.querySelector('[data-testid="recorder-close"]')?.click());
 await page.waitForTimeout(600);
 await page.evaluate(() => document.querySelector('[data-testid="confirm-delete"]')?.click()).catch(() => {});
