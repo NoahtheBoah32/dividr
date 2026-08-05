@@ -57,6 +57,32 @@ export type Op =
   | { type: 'setCanvasSize'; width: number; height: number }
   | { type: 'updateClip'; clipId: string; updates: Record<string, unknown> }
   | {
+      // Edit an EXISTING text clip (Text panel heading/body). `content` rewrites
+      // the wording; `style` changes the design. Independent on purpose: a
+      // wording-only request must never touch style, and vice versa.
+      type: 'editText';
+      clipId?: string; // from a [clip … id:…] token or the ## Timeline listing
+      match?: string;  // or resolve by current wording (case-insensitive substring)
+      content?: string; // new wording — replaces the clip text entirely
+      style?: {
+        fontFamily?: string;
+        fontSize?: number;
+        isBold?: boolean;
+        isItalic?: boolean;
+        isUnderline?: boolean;
+        textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+        textAlign?: 'left' | 'center' | 'right' | 'justify';
+        fillColor?: string;
+        strokeColor?: string;
+        backgroundColor?: string;
+        hasShadow?: boolean;
+        hasGlow?: boolean;
+        letterSpacing?: number;
+        lineHeight?: number;
+        opacity?: number;
+      };
+    }
+  | {
       type: 'downloadMedia';
       url: string;
       startSeconds?: number;

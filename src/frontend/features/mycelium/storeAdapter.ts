@@ -675,6 +675,37 @@ async function applyOp(op: Op): Promise<void> {
       break;
     }
 
+    case 'editText': {
+      // Text-clip editing (Text panel heading/body). Resolution must be exact
+      // and failures must be LOUD — "updating the heading…" narrated over a
+      // silent no-op is how EDITH ends up lying about an edit she never made.
+      const txTracks = store.tracks.filter((t: any) => t.type === 'text');
+      let txTarget: any = (op as any).clipId
+        ? store.tracks.find((t: any) => t.id === (op as any).clipId)
+        : undefined;
+      if (txTarget && txTarget.type !== 'text') {
+        throw new Error(`editText: clip ${(op as any).clipId} is a ${txTarget.type} clip, not a text clip`);
+      }
+      if (!txTarget && (op as any).match) {
+        const q = String((op as any).match).toLowerCase();
+        txTarget = txTracks.find((t: any) => (t.textContent ?? '').toLowerCase().includes(q));
+      }
+      if (!txTarget && txTracks.length === 1) txTarget = txTracks[0];
+      if (!txTarget) {
+        throw new Error(txTracks.length
+          ? `editText: could not resolve which of the ${txTracks.length} text clips to edit — pass clipId or a match snippet`
+          : 'editText: the timeline has no text clips');
+      }
+      const txUpdates: Record<string, unknown> = {};
+      if (typeof (op as any).content === 'string') txUpdates.textContent = (op as any).content;
+      if ((op as any).style && Object.keys((op as any).style).length) {
+        txUpdates.textStyle = { ...(txTarget.textStyle ?? {}), ...(op as any).style };
+      }
+      if (!Object.keys(txUpdates).length) throw new Error('editText: nothing to change — pass content and/or style');
+      store.updateTrack(txTarget.id, txUpdates);
+      break;
+    }
+
     case 'downloadMedia': {
       console.log('[storeAdapter] â–¶ downloadMedia case hit', op);
       const jobId = Math.random().toString(36).slice(2);
@@ -4550,7 +4581,10 @@ async function applyOp(op: Op): Promise<void> {
     }
 
     default:
+      // A hallucinated op type must FAIL, not warn: a silently-dropped op lets
+      // EDITH announce an edit that never happened.
       console.warn('[storeAdapter] Unknown op type — full op:', JSON.stringify(op));
+      throw new Error(`Unknown operation type "${(op as any)?.type}" — this op does not exist, the edit was NOT applied. Tell the user instead of pretending.`);
   }
 }
 

@@ -85,6 +85,8 @@ export interface TimelineClip {
   letterboxBlur?: boolean;
   backgroundRemoved?: boolean; // true if this clip's background was already cut out
   captionText?: string; // for subtitle tracks
+  textContent?: string; // for text tracks (Text panel heading/body) — the wording
+  textType?: string;    // 'heading' | 'body'
 }
 
 export interface TimelineSnapshot {
@@ -335,6 +337,9 @@ function buildTimelineSection(snapshot?: TimelineSnapshot): string {
       const wi = (c as any).highlightWordIndex ?? 0;
       const text = c.captionText ?? c.mediaName;
       ctx += `  - clip [subtitle, layer ${c.layer ?? 0}] ${start}s–${end}s | "${text}" (karaoke wi=${wi}) id:${c.id}\n`;
+    } else if (c.type === 'text') {
+      const words = c.textContent ?? c.mediaName;
+      ctx += `  - clip [text ${c.textType ?? ''}, layer ${c.layer ?? 0}] ${start}s–${end}s | "${words}" id:${c.id} (editable: editText)\n`;
     } else {
       let line = `  - clip [${c.type}, layer ${c.layer ?? 0}] ${start}s–${end}s | ${c.mediaName} id:${c.id}`;
       if ((c.layer ?? 0) > 0 && c.type === 'audio') line += ' (linked)';

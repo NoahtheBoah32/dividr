@@ -814,6 +814,8 @@ export function FridayPanel({ className }: { className?: string }) {
           muted: t.muted,
           letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
           captionText: t.type === 'subtitle' ? (t.subtitleText ?? t.textContent ?? undefined) : undefined,
+          textContent: t.type === 'text' ? (t.textContent ?? undefined) : undefined,
+          textType: t.type === 'text' ? (t.textType ?? undefined) : undefined,
         })),
       };
       const snapshotNote = pendingSnapshotAnalysisRef.current;
@@ -1685,6 +1687,8 @@ export function FridayPanel({ className }: { className?: string }) {
                 volume: t.volume, muted: t.muted,
                 letterboxBlur: t.proxyBlockedMessage === 'letterbox-blur' || undefined,
                 captionText: t.type === 'subtitle' ? (t.subtitleText ?? undefined) : undefined,
+                textContent: t.type === 'text' ? (t.textContent ?? undefined) : undefined,
+                textType: t.type === 'text' ? (t.textType ?? undefined) : undefined,
               })),
             };
             window.electronAPI.invoke('mycelium:sendMessage', {

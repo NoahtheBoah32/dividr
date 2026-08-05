@@ -38,6 +38,8 @@ function describeOp(op: Op): { icon: string; label: string; detail: string } {
       return { icon: '⊙', label: 'Transcribing', detail: '' };
     case 'updateClip':
       return { icon: '⟳', label: 'Update clip', detail: '' };
+    case 'editText':
+      return { icon: 'T', label: 'Editing text', detail: ((op as any).content ?? '').slice(0, 28) };
     case 'analyzeReference':
       return { icon: '◎', label: 'Analyzing ref', detail: '' };
     default:
