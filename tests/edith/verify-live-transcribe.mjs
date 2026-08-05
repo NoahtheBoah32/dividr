@@ -8,20 +8,19 @@
 import { chromium } from 'playwright-core';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { ensureFixtures } from '../fixtures/ensure-fixtures.mjs';
 
 process.on('unhandledRejection', (e) => {
   if (String(e?.message ?? e).includes('handleJavaScriptDialog')) return;
   throw e;
 });
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const fixtureMp4 = path.join(repoRoot, 'tests', 'fixtures', 'speech-take.mp4');
-const wavPath = 'C:/tmp/dividr-demo-research/live-tx-fixture.wav';
+const fixtureMp4 = ensureFixtures().speech;
+const wavPath = path.join(os.tmpdir(), 'dividr-live-tx-fixture.wav');
 
 // decodeAudioData-proof fixture: 16k mono WAV from the speech take
-fs.mkdirSync(path.dirname(wavPath), { recursive: true });
 const ff = spawnSync('ffmpeg', ['-y', '-v', 'error', '-i', fixtureMp4, '-ar', '16000', '-ac', '1', wavPath], { encoding: 'utf8' });
 if (ff.status !== 0) { console.log('FAIL  fixture wav transcode', ff.stderr); process.exit(1); }
 const wavDataUrl = `data:audio/wav;base64,${fs.readFileSync(wavPath).toString('base64')}`;
