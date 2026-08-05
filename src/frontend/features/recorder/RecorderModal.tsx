@@ -198,12 +198,17 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
     return () => {
       dead = true;
       (window as any).electronAPI.removeListener('recorder:liveTranscribe:event', onEvt);
-      invoke('recorder:liveTranscribe:cancel').catch(() => {});
+      // keepWarm while the preference is on: the engine survives modal closes
+      // so the next visit starts hot. Toggle-off writes '0' first, so flipping
+      // the switch off genuinely releases the model.
+      invoke('recorder:liveTranscribe:cancel', {
+        keepWarm: localStorage.getItem('recorder-live-transcribe') === '1',
+      }).catch(() => {});
       setLiveTxStatus('idle');
       setLiveLines([]);
       setLivePartial('');
     };
-  }, [isAudioOnly, liveTx]);
+  }, [liveTx]);
 
   // ── Streams ──────────────────────────────────────────────────────────────
   const attachCamPreview = useCallback(() => {
@@ -852,8 +857,9 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
       setLiveFinalText('');
       liveFinishRef.current = null;
       setLiveTxStatus('loading');
-      invoke('recorder:liveTranscribe:cancel')
-        .then(() => invoke('recorder:liveTranscribe:start'))
+      // :start retires the fed engine itself and binds the warm spare, so a
+      // retake picks up a loading-or-ready model instead of a cold one.
+      invoke('recorder:liveTranscribe:start')
         .then((r: any) => { if (!r?.success) setLiveTxStatus('error'); })
         .catch(() => setLiveTxStatus('error'));
     }
@@ -1214,8 +1220,10 @@ export function RecorderModal({ mode, onClose }: { mode: RecorderMode; onClose: 
         disabled={phase === 'recording' || phase === 'countdown'}
         onClick={() => {
           const next = !liveTx;
-          setLiveTx(next);
+          // localStorage FIRST — the lifecycle cleanup reads it to decide
+          // whether the engine stays warm after this flip.
           localStorage.setItem('recorder-live-transcribe', next ? '1' : '0');
+          setLiveTx(next);
         }}
         title={liveTx ? 'Turn off live transcription' : 'Turn on live transcription'}
         className="relative rounded-full transition-colors disabled:opacity-50"

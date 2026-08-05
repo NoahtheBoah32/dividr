@@ -22,6 +22,17 @@ startupManager.logStage('renderer-mount');
 // Register visual test bridge (DEV only — no-op in production)
 initTestBridge();
 
+// Live-transcription pre-warm: if the recorder toggle was left on, load the
+// whisper model now — not when the user finally reaches the recorder. Delayed
+// so app startup gets the disk and CPU first.
+setTimeout(() => {
+  try {
+    if (localStorage.getItem('recorder-live-transcribe') === '1') {
+      (window as any).electronAPI?.invoke?.('recorder:liveTranscribe:warm')?.catch?.(() => {});
+    }
+  } catch { /* no bridge (web preview) — recorder warms on open instead */ }
+}, 3000);
+
 // Get root container (already exists from index.html)
 const container = document.getElementById('root');
 if (!container) {

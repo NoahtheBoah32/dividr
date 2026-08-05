@@ -7446,24 +7446,34 @@ ipcMain.handle('recorder:hasAudibleAudio', async (_event, payload: { filePath: s
   }
 });
 
-// ═══ Live transcription (audio recorder) ═══
-// One long-lived live_transcribe.py per recorder session: PCM streams to its
-// stdin while recording, PARTIAL/SEGMENT events stream back to the renderer.
-// Spawned directly (NOT via mediaToolsRunner) — the runner kills any previous
-// python process on each command, which would murder this one the moment any
-// other transcription ran.
+// ═══ Live transcription (recorder) ═══
+// One live_transcribe.py per take: PCM streams to its stdin while recording,
+// PARTIAL/SEGMENT events stream back to the renderer. Spawned directly (NOT
+// via mediaToolsRunner) — the runner kills any previous python process on each
+// command, which would murder this one the moment any other transcription ran.
+//
+// Warm-pool: model load is ~8s, so an engine is pre-spawned at app boot (when
+// the toggle preference is on) and a fresh one respawns after every take.
+// ':start' binds a waiting warm engine to the caller instead of cold-loading,
+// so the first words after the countdown transcribe immediately.
 let liveTxProc: ReturnType<typeof spawn> | null = null;
 let liveTxFinal: { resolve: (r: unknown) => void } | null = null;
+let liveTxSender: Electron.WebContents | null = null; // bound on :start
+let liveTxReady: unknown | null = null;               // READY payload, replayed on late bind
+let liveTxFed = false;                                // PCM written → engine is take-owned
+let liveTxAutoWarm = false;                           // respawn a warm engine after each take
 
 function killLiveTx() {
   if (liveTxProc) { try { liveTxProc.kill(); } catch { /* already gone */ } }
   liveTxProc = null;
   liveTxFinal = null;
+  liveTxSender = null;
+  liveTxReady = null;
+  liveTxFed = false;
 }
 
-ipcMain.handle('recorder:liveTranscribe:start', async (event) => {
+function spawnLiveTx(): { success: boolean; error?: string } {
   try {
-    killLiveTx();
     const isWindows = process.platform === 'win32';
     const venvPython = isWindows
       ? path.join(process.cwd(), 'src', 'backend', 'python', 'venv', 'Scripts', 'python.exe')
@@ -7478,7 +7488,9 @@ ipcMain.handle('recorder:liveTranscribe:start', async (event) => {
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
     liveTxProc = proc;
-    const sender = event.sender;
+    liveTxReady = null;
+    liveTxFed = false;
+    let sawReady = false;
     let lineBuf = '';
     proc.stdout?.on('data', (d: Buffer) => {
       lineBuf += d.toString();
@@ -7491,9 +7503,10 @@ ipcMain.handle('recorder:liveTranscribe:start', async (event) => {
         const prefix = line.slice(0, sep);
         let data: unknown;
         try { data = JSON.parse(line.slice(sep + 1)); } catch { continue; }
+        if (prefix === 'READY') { sawReady = true; if (liveTxProc === proc) liveTxReady = data; }
         if (prefix === 'FINAL' && liveTxFinal) { liveTxFinal.resolve(data); liveTxFinal = null; }
-        if (!sender.isDestroyed()) {
-          sender.send('recorder:liveTranscribe:event', { type: prefix.toLowerCase(), data });
+        if (liveTxProc === proc && liveTxSender && !liveTxSender.isDestroyed()) {
+          liveTxSender.send('recorder:liveTranscribe:event', { type: prefix.toLowerCase(), data });
         }
       }
     });
@@ -7501,22 +7514,54 @@ ipcMain.handle('recorder:liveTranscribe:start', async (event) => {
       const s = d.toString().trim();
       if (s) console.log('[liveTranscribe]', s.slice(0, 400));
     });
-    proc.on('close', () => { if (liveTxProc === proc) { liveTxProc = null; liveTxFinal = null; } });
+    proc.on('close', () => {
+      if (liveTxProc === proc) { liveTxProc = null; liveTxFinal = null; liveTxSender = null; liveTxReady = null; liveTxFed = false; }
+      // Re-warm for the next take — but only if THIS engine loaded fine, so a
+      // broken python setup can never turn into a spawn loop.
+      if (liveTxAutoWarm && sawReady && !liveTxProc) spawnLiveTx();
+    });
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e?.message ?? String(e) };
   }
+}
+
+// Pre-warm at app boot (renderer checks the saved toggle preference): load the
+// model before the user ever reaches the recorder.
+ipcMain.handle('recorder:liveTranscribe:warm', async () => {
+  liveTxAutoWarm = true;
+  if (liveTxProc) return { success: true, warm: !!liveTxReady };
+  const r = spawnLiveTx();
+  return { ...r, warm: false };
+});
+
+ipcMain.handle('recorder:liveTranscribe:start', async (event) => {
+  liveTxAutoWarm = true;
+  // A waiting warm engine (never fed) is handed to the caller as-is; its READY
+  // is replayed so the renderer's status flips to ready instantly.
+  if (liveTxProc && !liveTxFed) {
+    liveTxSender = event.sender;
+    if (liveTxReady && !event.sender.isDestroyed()) {
+      event.sender.send('recorder:liveTranscribe:event', { type: 'ready', data: liveTxReady });
+    }
+    return { success: true, warm: !!liveTxReady };
+  }
+  killLiveTx();
+  const r = spawnLiveTx();
+  if (r.success) liveTxSender = event.sender;
+  return r;
 });
 
 ipcMain.handle('recorder:liveTranscribe:feed', async (_event, chunk: ArrayBuffer) => {
   if (!liveTxProc?.stdin?.writable) return { success: false, error: 'no live transcriber running' };
-  try { liveTxProc.stdin.write(Buffer.from(chunk)); return { success: true }; } catch (e: any) {
+  try { liveTxFed = true; liveTxProc.stdin.write(Buffer.from(chunk)); return { success: true }; } catch (e: any) {
     return { success: false, error: e?.message ?? String(e) };
   }
 });
 
-// Close stdin → the script flushes the tail, emits FINAL, and exits. Resolves
-// with the full transcriptionResult (cachedKaraokeSubtitles shape).
+// Close stdin → the script flushes the tail, emits FINAL, and exits (the close
+// handler then warms the next engine). Resolves with the full
+// transcriptionResult (cachedKaraokeSubtitles shape).
 ipcMain.handle('recorder:liveTranscribe:finish', async () => {
   const proc = liveTxProc;
   if (!proc) return { success: false, error: 'no live transcriber running' };
@@ -7526,12 +7571,16 @@ ipcMain.handle('recorder:liveTranscribe:finish', async () => {
     proc.on('close', () => { clearTimeout(timer); if (liveTxFinal) { liveTxFinal = null; resolve(null); } });
     try { proc.stdin?.end(); } catch { resolve(null); }
   });
-  if (liveTxProc === proc) liveTxProc = null;
+  if (liveTxProc === proc) { liveTxProc = null; liveTxSender = null; liveTxReady = null; liveTxFed = false; }
   return result ? { success: true, result } : { success: false, error: 'no final transcript' };
 });
 
-ipcMain.handle('recorder:liveTranscribe:cancel', async () => {
+// keepWarm: the recorder closed but the feature is still on — keep an engine
+// loaded for the next visit. keepWarm false = toggle off, release the GPU.
+ipcMain.handle('recorder:liveTranscribe:cancel', async (_event, payload?: { keepWarm?: boolean }) => {
+  liveTxAutoWarm = !!payload?.keepWarm;
   killLiveTx();
+  if (liveTxAutoWarm) spawnLiveTx();
   return { success: true };
 });
 
