@@ -32,25 +32,26 @@ The application uses `faster-whisper` for audio transcription. Follow these step
 
 #### For Development Mode
 
-1. **Install Python dependencies:**
+The app looks for a virtual environment at `src/backend/python/venv` first and only falls back to whatever `python` is on your PATH. Set up the venv so you get an isolated, known-good environment:
+
+1. **Create the venv and install dependencies:**
 
    ```bash
-   pip install -r requirements.txt
+   py -3.13 -m venv src/backend/python/venv
+   src/backend/python/venv/Scripts/pip install -r requirements.txt
    ```
 
-   Or if you have multiple Python versions:
-
-   ```bash
-   py -3.13 -m pip install -r requirements.txt
-   ```
+   (macOS/Linux: `python3 -m venv src/backend/python/venv && src/backend/python/venv/bin/pip install -r requirements.txt`)
 
 2. **Verify installation:**
 
    ```bash
-   python src/backend/python/scripts/transcribe.py --help
+   src/backend/python/venv/Scripts/python src/backend/python/scripts/transcribe.py --help
    ```
 
    You should see the help message for the transcription script.
+
+Without the venv, the app silently falls back to your system Python — that works only if it has everything in `requirements.txt` installed (`pip install -r requirements.txt`), and version conflicts with other projects are on you.
 
 #### For Build/Production Version
 
