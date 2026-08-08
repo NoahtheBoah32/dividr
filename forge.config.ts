@@ -52,6 +52,8 @@ const config: ForgeConfig = {
       /^\/\.venv\//,
       /^\/env\//,
       /^\/\.env\//,
+      // .env FILES (API keys) — the pattern above only matches a .env directory
+      /^\/\.env(\..*)?$/,
       /^\/requirements\.txt$/,
       /^\/setup-python\.(bat|sh)$/,
       // Python venv inside src/backend/python (development only)
@@ -68,6 +70,14 @@ const config: ForgeConfig = {
       /\.test\.(ts|tsx|js|jsx)$/,
       /\.spec\.(ts|tsx|js|jsx)$/,
       /__tests__\//,
+      // Test suites, fixtures (personal recordings), and results
+      /^\/tests\//,
+      /^\/test-results\//,
+
+      // Prior build output and stray dev scripts
+      /^\/out\//,
+      /^\/dist\//,
+      /^\/shot-card\.mjs$/,
 
       // Source maps in production
       /\.map$/,
