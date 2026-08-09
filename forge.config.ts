@@ -7,6 +7,7 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import path from 'node:path';
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -85,32 +86,34 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    // Windows NSIS installer
+    // Windows NSIS installer.
+    // NOTE: this maker only reads `codesign`, `updater`, and
+    // `getAppBuilderConfig` — everything else must go through the
+    // electron-builder config returned below (absolute paths: the builder
+    // runs from a temp copy of the packaged app, not the repo root).
     {
       name: '@felixrieseberg/electron-forge-maker-nsis',
       config: {
-        name: 'DiviDr',
-        description:
-          'A powerful video editing application built with Electron and FFmpeg',
-        manufacturer: 'Talisik',
-        appDirectory: undefined,
-        outputDirectory: undefined,
-        installerIcon: './favicon.ico',
-        uninstallerIcon: './favicon.ico',
-        exe: 'diviDr.exe',
-        setupIcon: './favicon.ico',
-        oneClick: false,
-        perMachine: false,
-        allowToChangeInstallationDirectory: true,
-        runAfterFinish: true,
-        createDesktopShortcut: true,
-        createStartMenuShortcut: true,
-        shortcutName: 'DiviDr',
-        deleteAppDataOnUninstall: false,
-        menuCategory: false,
-        language: 'English',
-        // Custom NSIS script for file associations
-        include: './installer.nsh',
+        getAppBuilderConfig: async () => ({
+          productName: 'DiviDr',
+          win: {
+            icon: path.resolve(__dirname, 'favicon.ico'),
+          },
+          nsis: {
+            oneClick: false,
+            perMachine: false,
+            allowToChangeInstallationDirectory: true,
+            installerIcon: path.resolve(__dirname, 'favicon.ico'),
+            uninstallerIcon: path.resolve(__dirname, 'favicon.ico'),
+            runAfterFinish: true,
+            createDesktopShortcut: true,
+            createStartMenuShortcut: true,
+            shortcutName: 'DiviDr',
+            deleteAppDataOnUninstall: false,
+            // Custom NSIS script for .dividr file associations
+            include: path.resolve(__dirname, 'installer.nsh'),
+          },
+        }),
       },
     },
 
