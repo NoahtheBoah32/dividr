@@ -1,0 +1,23 @@
+{
+  "name": "dividr-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Mobile (PWA) build of Dividr — reuses the desktop React UI under ../src via Vite aliases, driving a remote server backend.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host --port 5180"
+  },
+  "comments": {
+    "deps": "The shared UI under ../src pulls in React + all of the desktop frontend's libraries (radix, zustand, remotion, wavesurfer, etc.). Vite resolves those from the repo-root node_modules, so run `npm install` (or yarn) at the repo root before building here. This package only declares the mobile build toolchain."
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.0.12"
+  }
+}
