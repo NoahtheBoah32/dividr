@@ -26,6 +26,9 @@ const config: ForgeConfig = {
       // Populated by the generateAssets hook below; main.ts self-heals a stale
       // or missing copy into userData at runtime.
       './ytdlp-bin',
+      // The SFX library (125 sounds, ~18MB). Previously located only via an
+      // absolute SFX_LIBRARY_PATH in .env, so it existed on exactly one machine.
+      './sfx-library',
       // dividr-tools is now downloaded on-demand from GitHub Releases
       // to reduce installer size from ~1.3GB to ~200MB
     ],
@@ -87,6 +90,9 @@ const config: ForgeConfig = {
       // yt-dlp ships via extraResource — keep it out of the asar so it isn't
       // packaged twice (18MB) and stays spawnable as a plain file on disk.
       /^\/ytdlp-bin\//,
+      // Same for the SFX library: extraResource only, or it doubles to 36MB and
+      // the scanner can't readdir it through the asar.
+      /^\/sfx-library\//,
 
       // Source maps in production
       /\.map$/,

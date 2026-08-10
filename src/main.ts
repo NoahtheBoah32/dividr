@@ -2319,15 +2319,38 @@ ipcMain.handle('cleanup-temp-files', async (event, filePaths: string[]) => {
 
 // ─── SFX Library ────────────────────────────────────────────────────────────
 
+// The 125-sound library ships with the app (extraResource `sfx-library/`), so it
+// works on any machine. It used to be found only through SFX_LIBRARY_PATH in
+// .env — an absolute path to one particular Downloads folder — which meant it
+// silently did not exist for anyone else, and stopped existing here too once
+// .env was (correctly) kept out of the installer.
+//
+// An explicit override still wins, so a local folder can be swapped in while
+// iterating on sounds. Each candidate is checked for existence rather than
+// trusted, so a stale override falls through to the bundled copy.
 function loadSfxLibraryPath(): string {
+  const candidates: string[] = [];
+
+  const fromSettings = readUserSettings().SFX_LIBRARY_PATH;
+  if (fromSettings) candidates.push(fromSettings.trim());
+
   const envPath = path.join(app.getAppPath(), '.env');
   if (fs.existsSync(envPath)) {
     for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
       const [k, v] = line.split('=');
-      if (k?.trim() === 'SFX_LIBRARY_PATH') return v?.trim() ?? '';
+      if (k?.trim() === 'SFX_LIBRARY_PATH' && v?.trim()) candidates.push(v.trim());
     }
   }
-  return process.env.SFX_LIBRARY_PATH ?? '';
+  if (process.env.SFX_LIBRARY_PATH) candidates.push(process.env.SFX_LIBRARY_PATH);
+
+  // Bundled copy: packaged resources first, then the repo folder when running dev.
+  candidates.push(path.join(process.resourcesPath, 'sfx-library'));
+  candidates.push(path.join(app.getAppPath(), 'sfx-library'));
+
+  for (const c of candidates) {
+    try { if (c && fs.existsSync(c)) return c; } catch { /* keep looking */ }
+  }
+  return '';
 }
 
 async function getAudioDurationSec(filePath: string): Promise<number> {
@@ -2397,7 +2420,7 @@ async function detectSfxBounds(filePath: string, totalDuration: number): Promise
 ipcMain.handle('scan-sfx-library', async () => {
   const libPath = loadSfxLibraryPath();
   if (!libPath || !fs.existsSync(libPath)) {
-    return { entries: [], libPath: libPath || '(not configured — set SFX_LIBRARY_PATH in .env)' };
+    return { entries: [], libPath: libPath || '(bundled library missing — reinstall, or set SFX_LIBRARY_PATH)' };
   }
   const AUDIO_EXTS = ['.mp3', '.wav', '.ogg', '.m4a'];
   const files = fs.readdirSync(libPath).filter((f) =>

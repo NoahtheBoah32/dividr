@@ -112,7 +112,7 @@ export const SfxLibrarySection: React.FC = () => {
   if (loaded && entries.length === 0) {
     return (
       <div className="text-xs text-muted-foreground">
-        No SFX library found — set SFX_LIBRARY_PATH and restart.
+        SFX library not found. It ships with DiviDr — try reinstalling.
       </div>
     );
   }

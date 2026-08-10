@@ -788,7 +788,14 @@ export function registerMyceliumIPC(
     if (!/^https?:\/\//i.test(url)) return { success: false, error: 'Not a valid URL' };
 
     const resolveYtdlp = (): string => {
+      const exeName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
       const candidates = [
+        // The copy main.ts self-heals into userData, then the one we ship.
+        // Without these, reference downloads fail on any machine that never
+        // installed yt-dlp — the same hole b-roll sourcing used to have.
+        path.join(app.getPath('userData'), 'ytdlp', exeName),
+        path.join(process.resourcesPath, 'ytdlp-bin', exeName),
+        path.join(app.getAppPath(), 'ytdlp-bin', exeName),
         path.join(app.getAppPath(), 'yt-dlp.exe'),
         path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages',
           'yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe', 'yt-dlp.exe'),

@@ -1,0 +1,114 @@
+# DIVIDR SFX aliases — "spoken word = library file" (one per line, # = comment)
+# Filenames already match their own words (bark -> dog_bark). These add synonyms.
+
+# animals
+woof = dog_bark
+puppy = dog_bark
+kitten = cat_meow
+roar = lion_roar
+tweet = bird_chirp
+buzz = bee
+hiss = rattlesnake
+ribbit = frog_croak
+cockadoodledoo = rooster_crow
+
+# nature
+storm = thunder
+lightning = thunder
+drizzle = rain
+breeze = wind
+gust = wind
+sea = ocean_waves
+beach = ocean_waves
+campfire = fire_crackle
+flames = fire_crackle
+bonfire = fire_crackle
+
+# human
+shriek = scream
+yell = scream
+achoo = sneeze
+cry = baby_cry
+sob = baby_cry
+belch = burp
+mwah = kiss
+smooch = kiss
+chew = crunch
+bite = crunch
+munch = crunch
+sip = slurp
+gulp = slurp
+drink = pour_drink
+grumble = stomach_growl
+hungry = stomach_growl
+
+# household
+ring = phone_ring
+telephone = phone_ring
+tock = clock_tick
+zip = zipper
+unzip = zipper
+rip = paper_rip
+tear = paper_rip
+scribble = pencil_write
+soda = can_open
+frying = sizzle
+bacon = sizzle
+hoover = vacuum_cleaner
+nail = hammer
+sawing = saw
+
+# action
+bang = gun_shot
+gunshot = gun_shot
+pistol = gun_shot
+shoot = gun_shot
+pew = laser_blast
+zap = electricity_zap
+shock = electricity_zap
+spark = electricity_zap
+crack = whip_crack
+
+# transport
+honk = car_horn
+vroom = car_engine
+rev = car_engine
+skid = tire_screech
+brake = tire_screech
+chopper = helicopter
+jet = airplane
+plane = airplane
+takeoff = airplane
+choo = train
+
+# music and memes
+victory = trumpet_fanfare
+tada = trumpet_fanfare
+spring = cartoon_boing
+bounce = cartoon_boing
+angelic = choir
+heavenly = choir
+hallelujah = choir
+jingle = sleigh_bells
+christmas = sleigh_bells
+airhorn = air_horn
+mlg = air_horn
+womp = sad_trombone
+bruh = vine_boom
+kaboom = explosion
+kaching = cash_register
+
+# tech
+shutdown = power_down
+poweroff = power_down
+radio = static
+interference = static
+sonar = radar_ping
+submarine = radar_ping
+film = movie_projector
+reel = movie_projector
+
+# misc
+dive = splash
+plunge = splash
+firecracker = fireworks

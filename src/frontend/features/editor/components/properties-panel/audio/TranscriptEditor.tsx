@@ -674,7 +674,7 @@ const TranscriptEditorComponent: React.FC<TranscriptEditorProps> = ({
         names = await ensureSfxLibrary();
       }
       if (!names.length) {
-        flashSfx('No SFX library found. Set SFX_LIBRARY_PATH and reopen.');
+        flashSfx('SFX library not found. It ships with DiviDr — try reinstalling.');
         return;
       }
       const atFrame = anchorFrame(anchorWordId);
