@@ -142,6 +142,10 @@ declare global {
         startSeconds?: number;
         endSeconds?: number;
         downloadDir?: string;
+        verify?: string;
+        topic?: string;
+        isStockFootage?: boolean;
+        batchSize?: number;
       }) => Promise<{
         success: boolean;
         filePath?: string;
@@ -152,6 +156,10 @@ declare global {
         chapters?: Array<{ start: number; title: string }>;
       }>;
       cancelDownload: (jobId: string) => Promise<{ success: boolean }>;
+
+      // User settings (userData/user-settings.json)
+      getSetting: (key: string) => Promise<string>;
+      setSetting: (key: string, value: string) => Promise<{ success: boolean }>;
 
       ffmpegRun: (job: VideoEditJob) => Promise<{
         success: boolean;

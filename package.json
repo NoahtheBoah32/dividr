@@ -5,7 +5,7 @@
   "description": "A powerful video editing application built with Electron and FFmpeg",
   "main": ".vite/build/main.js",
   "scripts": {
-    "prestart": "node scripts/kill-port.mjs && node scripts/download-rvm-model.mjs && node scripts/download-deepfilter.mjs",
+    "prestart": "node scripts/kill-port.mjs && node scripts/download-rvm-model.mjs && node scripts/download-deepfilter.mjs && node scripts/download-ytdlp.mjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",

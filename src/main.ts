@@ -4912,6 +4912,124 @@ function getYtdlpPath(): string {
   return 'yt-dlp'; // last resort — may still fail if not in Electron's PATH
 }
 
+// ── User settings ─────────────────────────────────────────────────────────────
+// A small JSON blob in userData for things a packaged user must be able to set
+// without editing a file they can't see. `.env` only exists in a dev checkout —
+// it is deliberately kept out of the installer so no keys ever ship.
+const userSettingsPath = () => path.join(app.getPath('userData'), 'user-settings.json');
+
+function readUserSettings(): Record<string, string> {
+  try {
+    const p = userSettingsPath();
+    if (!fs.existsSync(p)) return {};
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch { return {}; }
+}
+
+function writeUserSetting(key: string, value: string): void {
+  try {
+    const next = readUserSettings();
+    if (value) next[key] = value; else delete next[key];
+    fs.mkdirSync(path.dirname(userSettingsPath()), { recursive: true });
+    fs.writeFileSync(userSettingsPath(), JSON.stringify(next, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[settings] write failed:', (err as Error)?.message ?? err);
+  }
+}
+
+ipcMain.handle('settings:get', (_e, key: string) => readUserSettings()[key] ?? '');
+ipcMain.handle('settings:set', (_e, { key, value }: { key: string; value: string }) => {
+  writeUserSetting(key, String(value ?? '').trim());
+  return { success: true };
+});
+
+// ── yt-dlp provisioning ───────────────────────────────────────────────────────
+// Sourcing used to die on a machine that had never installed yt-dlp, which is
+// every machine but a developer's. The binary now ships with the installer
+// (extraResource `ytdlp-bin/`) and the app re-downloads it into userData when
+// that copy goes stale — YouTube keeps changing and yt-dlp ships fixes every
+// week or two, so a frozen build-time copy stops working after a few months.
+const YTDLP_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const YTDLP_EXE_NAME = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+const YTDLP_ASSET: Record<string, string> = {
+  win32: 'yt-dlp.exe',
+  darwin: 'yt-dlp_macos',
+  linux: 'yt-dlp_linux',
+};
+
+const managedYtdlpPath = () => path.join(app.getPath('userData'), 'ytdlp', YTDLP_EXE_NAME);
+const bundledYtdlpPath = () => path.join(process.resourcesPath, 'ytdlp-bin', YTDLP_EXE_NAME);
+
+const ytdlpIsFresh = (p: string): boolean => {
+  try { return Date.now() - fs.statSync(p).mtimeMs < YTDLP_MAX_AGE_MS; } catch { return false; }
+};
+
+// Only one download at a time — several b-roll slots can land here at once.
+let ytdlpFetch: Promise<string | null> | null = null;
+
+async function downloadYtdlp(onMsg?: (t: string) => void): Promise<string | null> {
+  if (ytdlpFetch) return ytdlpFetch;
+  ytdlpFetch = (async () => {
+    const asset = YTDLP_ASSET[process.platform];
+    if (!asset) return null;
+    const dest = managedYtdlpPath();
+    const tmp = `${dest}.part`;
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      onMsg?.('↳ Setting up the video downloader (one-time, ~18MB)…');
+      const res = await fetch(
+        `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}`,
+        { redirect: 'follow' },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      // A truncated exe is worse than none — it spawns and fails cryptically.
+      if (buf.length < 10_000_000) throw new Error('download incomplete');
+      fs.writeFileSync(tmp, buf);
+      if (process.platform !== 'win32') fs.chmodSync(tmp, 0o755);
+      fs.renameSync(tmp, dest);
+      onMsg?.('✓ Downloader ready');
+      return dest;
+    } catch (err) {
+      try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
+      console.warn('[yt-dlp] self-heal failed:', (err as Error)?.message ?? err);
+      return null;
+    } finally {
+      ytdlpFetch = null;
+    }
+  })();
+  return ytdlpFetch;
+}
+
+// Resolves a usable yt-dlp, or null when there is genuinely none to be had.
+// Preference order puts the user's own install ahead of ours — if they manage
+// yt-dlp through winget or scoop, that copy is theirs to keep current.
+async function ensureYtdlp(onMsg?: (t: string) => void): Promise<string | null> {
+  const managed = managedYtdlpPath();
+  if (fs.existsSync(managed) && ytdlpIsFresh(managed)) return managed;
+
+  const system = getYtdlpPath();
+  if (system !== 'yt-dlp') return system;
+
+  const bundled = bundledYtdlpPath();
+  if (fs.existsSync(bundled) && ytdlpIsFresh(bundled)) return bundled;
+
+  // Nothing current — pull a fresh copy, then fall back to whatever stale copy
+  // exists. A stale yt-dlp still downloads most things; no yt-dlp downloads none.
+  const fetched = await downloadYtdlp(onMsg);
+  if (fetched) return fetched;
+  if (fs.existsSync(managed)) return managed;
+  if (fs.existsSync(bundled)) return bundled;
+
+  // Bare 'yt-dlp' only helps if it's on Electron's PATH — probe before trusting it.
+  try {
+    const r = spawnSync('yt-dlp', ['--version'], { encoding: 'utf8', shell: true, timeout: 10_000 });
+    if (r.status === 0) return 'yt-dlp';
+  } catch { /* not on PATH */ }
+  return null;
+}
+
 export interface VideoChapter {
   start: number; // seconds into the source
   title: string;
@@ -5187,15 +5305,87 @@ async function scoreBrollCandidate(
   }
 }
 
-// True when yt-dlp is actually reachable. getYtdlpPath() only returns the bare
-// string 'yt-dlp' when no known install location existed — probe that case for real.
-function ytdlpAvailable(ytdlpPathResolved: string): boolean {
-  if (ytdlpPathResolved !== 'yt-dlp') return true;
+// One clip the sourcing layers can offer up. `fallbackUrls` is a resolution
+// ladder — the keyless route guesses at `_large` and not every clip has one.
+type StockCandidate = {
+  url: string;
+  fallbackUrls?: string[];
+  title: string;
+  duration?: number;
+};
+
+// Pixabay without an API key. Their site sits behind Cloudflare, which 403s
+// plain fetch and yt-dlp alike, but waves through a real Chromium — and this
+// app IS Chromium. Same trick main.ts already uses for eBay and Pinterest
+// pages. Costs ~8s versus the API's <1s, and carries no metadata, so the
+// frame-scoring tournament does the quality work the API's view counts and
+// dimensions would have done.
+async function pixabaySearchViaBrowser(query: string, max: number): Promise<StockCandidate[]> {
+  let win: BrowserWindow | null = null;
   try {
-    const r = spawnSync(ytdlpPathResolved, ['--version'], { encoding: 'utf8', shell: true, timeout: 10_000 });
-    return r.status === 0;
-  } catch { return false; }
+    win = new BrowserWindow({
+      show: false,
+      width: 1440,
+      height: 900,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, images: false },
+    });
+    // Electron's default UA contains "Electron/…", which bot walls flag.
+    win.webContents.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    );
+    const searchUrl = `https://pixabay.com/videos/search/${encodeURIComponent(query)}/`;
+    try {
+      await Promise.race([
+        win.loadURL(searchUrl),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('page load timed out')), 30_000)),
+      ]);
+    } catch (loadErr) {
+      if (!/ERR_ABORTED/.test(String(loadErr))) throw loadErr;
+    }
+    for (let w = 0; w < 40 && win.webContents.isLoading(); w++) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    await new Promise((r) => setTimeout(r, 2500)); // let the result grid hydrate
+
+    const found: string[] = await win.webContents.executeJavaScript(
+      `(() => {
+        const out = [];
+        const add = (s) => { if (s && !out.includes(s)) out.push(s); };
+        for (const v of document.querySelectorAll('video')) {
+          const src = v.currentSrc || v.src || (v.querySelector('source') || {}).src || '';
+          if (/cdn\\.pixabay\\.com\\//.test(src)) add(src);
+        }
+        const re = /https?:\\/\\/cdn\\.pixabay\\.com\\/(?:video|vimeo)\\/[^"'\\\\ )]+?\\.mp4/g;
+        let m;
+        while ((m = re.exec(document.documentElement.outerHTML)) !== null) add(m[0]);
+        return out;
+      })()`,
+      true,
+    );
+
+    // The grid serves _tiny previews; the same path holds the full-size renditions.
+    const seen = new Set<string>();
+    const candidates: StockCandidate[] = [];
+    for (const raw of found) {
+      const base = raw.replace(/_(tiny|small|medium|large)\.mp4$/i, '');
+      if (seen.has(base)) continue;
+      seen.add(base);
+      candidates.push({
+        url: `${base}_large.mp4`,
+        fallbackUrls: [`${base}_medium.mp4`, raw],
+        title: query,
+      });
+      if (candidates.length >= max) break;
+    }
+    return candidates;
+  } catch (err) {
+    console.warn('[pixabay:browser] search failed:', (err as Error)?.message ?? err);
+    return [];
+  } finally {
+    try { win?.destroy(); } catch { /* already gone */ }
+  }
 }
+
 async function extractFrameAtSec(filePath: string, ffmpegBin: string, atSec: number): Promise<string | null> {
   const tmp = path.join(os.tmpdir(), `dividr_verify_${Date.now()}.jpg`);
   await new Promise<void>((resolve) => {
@@ -5445,17 +5635,28 @@ ipcMain.handle(
   }) => {
     // Mutable so the Pixabay layer can rewrite it to a ytsearch fallback in place.
     let url = urlIn;
-    const ytdlp = getYtdlpPath();
     const dlDir = downloadDir || path.join(os.homedir(), 'Dividr Downloads');
     if (!fs.existsSync(dlDir)) fs.mkdirSync(dlDir, { recursive: true });
 
     const sendMsg = (text: string) =>
       event.sender.send('mycelium:message', { role: 'system', text });
 
+    // Resolved lazily and once: a Pixabay-only download must not trigger an
+    // 18MB yt-dlp fetch it will never use.
+    let ytdlpResolved: string | null | undefined;
+    const getYtdlp = async (): Promise<string | null> => {
+      if (ytdlpResolved === undefined) ytdlpResolved = await ensureYtdlp(sendMsg);
+      return ytdlpResolved;
+    };
+
 
     // â”€â”€ PRE-DOWNLOAD SPOT CHECKS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    // A key the user typed into Settings wins over a .env they can't see. On a
+    // packaged install there is no .env at all, so Settings is the only route.
     const loadEnvKey = (key: string): string => {
+      const fromSettings = readUserSettings()[key];
+      if (fromSettings) return fromSettings.trim();
       const envPath = path.join(app.getAppPath(), '.env');
       if (fs.existsSync(envPath)) {
         for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
@@ -5468,175 +5669,216 @@ ipcMain.handle(
 
     const geminiApiKey = loadEnvKey('GEMINI_API_KEY');
 
-    // ── PIXABAY SEARCH — layer 1 of the sourcing chain ───────────────────────────
-    // Internal candidate tournament: download up to 5 candidates, frame-score each
-    // SILENTLY (no per-candidate chat spam), surface only the best one. On
-    // availability failure (no key / API down / no results) or when every candidate
-    // is disqualified, fall back to YouTube search (layer 2). If yt-dlp is missing
-    // too (layer 3), return an actionable error — or the least-bad clip, labeled.
+    // ── STOCK B-ROLL SOURCING ────────────────────────────────────────────────────
+    // Three layers, each covering the failure of the one above:
+    //   1. Pixabay API   — sub-second, needs a key, carries metadata for pre-filtering
+    //   2. Pixabay in a hidden browser window — same catalog, no key, no setup
+    //   3. YouTube via yt-dlp — different catalog, last resort for stock
+    // Whichever layer produces candidates, they run the same silent tournament:
+    // download the field, frame-score it, keep the winner, bin the rest. Only the
+    // winner is ever mentioned in chat.
     if (url.startsWith('pixabaysearch:')) {
       const query = url.slice('pixabaysearch:'.length).trim();
       const pixabayKey = loadEnvKey('PIXABAY_API_KEY');
-      const hitTitle = (h: any) => h?.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join(', ') ?? 'Pixabay clip';
-      let pixabayFail: string | null = null;
-      let leastBad: { file: string; hit: any; score: number; reason: string } | null = null;
+      const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
+      const requirement = verify || `stock b-roll of: ${query}`;
+      // Deep screen for a one-off b-roll; shallower when this is one slot of many,
+      // so N slots don't cost 5N downloads and 5N judge calls.
+      const slots = Math.max(1, Math.round(batchSize ?? 1));
+      const candidatePool = slots <= 1 ? 4 : slots <= 3 ? 3 : 2;
 
+      let sourcingFail: string | null = null;
+      let leastBad: { file: string; title: string; duration?: number; score: number; reason: string } | null = null;
+      let candidates: StockCandidate[] = [];
+
+      // ── Layer 1: Pixabay API ───────────────────────────────────────────────────
+      sendMsg(`↳ Sourcing stock b-roll: ${query}…`);
       if (!pixabayKey) {
-        pixabayFail = 'no PIXABAY_API_KEY configured';
+        // Not a failure — no key is the default state and the keyless layer below
+        // handles it. Nothing about this should read as an error to the user.
+        sourcingFail = 'no API key set';
       } else {
-        sendMsg(`↳ Sourcing stock b-roll: ${query}…`);
-        const apiUrl = `https://pixabay.com/api/videos/?key=${pixabayKey}&q=${encodeURIComponent(query)}&video_type=film&per_page=10&safesearch=true`;
-        const apiRes = await fetch(apiUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://pixabay.com/',
-          }
-        });
-        const contentType = apiRes.headers.get('content-type') ?? '';
-        if (!apiRes.ok) {
-          pixabayFail = `API error ${apiRes.status}`;
-        } else if (!contentType.includes('json')) {
-          pixabayFail = 'invalid API response (key invalid or rate-limited)';
-        } else {
-          const apiData = (await apiRes.json()) as any;
-          const hits = apiData?.hits as any[];
-
-          // Score hits by views+downloads; pre-filter sub-720p by metadata, prefer 4-45s clips
-          const rawScored = (hits ?? [])
-            .filter((h: any) => {
-              const bestRes = h.videos?.large ?? h.videos?.medium ?? h.videos?.small;
-              const minDim = Math.min(bestRes?.width ?? 0, bestRes?.height ?? 0);
-              return minDim >= 720 && h.duration >= 4 && h.duration <= 45;
-            })
-            .map((h: any) => ({
-              hit: h,
-              score: (h.views ?? 0) * 0.6 + (h.downloads ?? 0) * 0.4,
-              url: h.videos?.large?.url || h.videos?.medium?.url || h.videos?.small?.url,
-            }))
-            .filter((s: any) => !!s.url)
-            .sort((a: any, b: any) => b.score - a.score);
-
-          if (!hits?.length) {
-            pixabayFail = `no results for "${query}"`;
-          } else if (!rawScored.length) {
-            pixabayFail = `no 720p+ results for "${query}"`;
+        try {
+          const apiUrl = `https://pixabay.com/api/videos/?key=${pixabayKey}&q=${encodeURIComponent(query)}&video_type=film&per_page=10&safesearch=true`;
+          const apiRes = await fetch(apiUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/json, text/plain, */*',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Referer': 'https://pixabay.com/',
+            }
+          });
+          const contentType = apiRes.headers.get('content-type') ?? '';
+          if (!apiRes.ok) {
+            sourcingFail = `API error ${apiRes.status}`;
+          } else if (!contentType.includes('json')) {
+            sourcingFail = 'invalid API response (key rejected or rate-limited)';
           } else {
-            // Shuffle within tiers to avoid always returning the same top video for the same query.
-            const tier1 = rawScored.slice(0, 3).sort(() => Math.random() - 0.5);
-            const tier2 = rawScored.slice(3).sort(() => Math.random() - 0.5);
-            const scored = [...tier1, ...tier2];
+            const apiData = (await apiRes.json()) as any;
+            const hits = (apiData?.hits ?? []) as any[];
 
-            const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
-            const requirement = verify || `stock b-roll of: ${query}`;
-            // Deep screen for a one-off b-roll; shallower when this is one slot of many,
-            // so N slots don't cost 5N downloads and 5N judge calls.
-            const slots = Math.max(1, Math.round(batchSize ?? 1));
-            const candidatePool = slots <= 1 ? 4 : slots <= 3 ? 3 : 2;
-            const pool = scored.slice(0, candidatePool);
+            // Rank by views+downloads; pre-filter sub-720p and odd durations by metadata
+            const rawScored = hits
+              .filter((h: any) => {
+                const bestRes = h.videos?.large ?? h.videos?.medium ?? h.videos?.small;
+                const minDim = Math.min(bestRes?.width ?? 0, bestRes?.height ?? 0);
+                return minDim >= 720 && h.duration >= 4 && h.duration <= 45;
+              })
+              .map((h: any) => ({
+                hit: h,
+                pop: (h.views ?? 0) * 0.6 + (h.downloads ?? 0) * 0.4,
+                url: h.videos?.large?.url || h.videos?.medium?.url || h.videos?.small?.url,
+              }))
+              .filter((s: any) => !!s.url)
+              .sort((a: any, b: any) => b.pop - a.pop);
 
-            // Download the whole field at once (~3s), then judge it at once. Judging
-            // is ~25s per candidate, so running the field in parallel keeps the wait
-            // flat at one judge call instead of multiplying by the pool size.
-            const fetched = (await Promise.all(pool.map(async (candidate: any, i: number) => {
-              try {
-                const cRes = await fetch(candidate.url as string, {
-                  headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'video/*,*/*',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Referer': 'https://pixabay.com/',
-                  }
-                });
-                if (!cRes.ok) return null;
-                const cHit = candidate.hit;
-                const readableName = (cHit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
-                  .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
-                // Index in the filename: the field downloads concurrently, so two hits
-                // sharing tags would otherwise race for the same path.
-                const basePath = path.join(dlDir, `${readableName}.mp4`);
-                const cFilePath = fs.existsSync(basePath)
-                  ? path.join(dlDir, `${readableName}-${Date.now()}-${i}.mp4`)
-                  : basePath;
-                fs.writeFileSync(cFilePath, Buffer.from(await cRes.arrayBuffer()));
-                return { file: cFilePath, hit: cHit };
-              } catch { return null; }
-            }))).filter(Boolean) as { file: string; hit: any }[];
-
-            let judged: { file: string; hit: any; score: number; reason: string }[] = [];
-            let judgeDown = false;
-
-            if (fetched.length && ffmpegPath) {
-              if (fetched.length > 1) sendMsg(`↳ Screening ${fetched.length} candidates against "${requirement}"…`);
-              const verdicts = await Promise.all(
-                fetched.map((f) => scoreBrollCandidate(f.file, requirement, anthropicApiKey)),
-              );
-              // Every judge failing means no judge is reachable at all — say so rather
-              // than pretending an unscreened clip was vetted.
-              judgeDown = verdicts.every((v) => v === null);
-              judged = fetched.map((f, i) => ({
-                ...f,
-                score: verdicts[i]?.score ?? -1,
-                reason: verdicts[i]?.reason ?? 'unscreened',
+            if (!hits.length) {
+              sourcingFail = `no results for "${query}"`;
+            } else if (!rawScored.length) {
+              sourcingFail = `no 720p+ results for "${query}"`;
+            } else {
+              // Shuffle within tiers so the same query doesn't always return the same clip.
+              const tier1 = rawScored.slice(0, 3).sort(() => Math.random() - 0.5);
+              const tier2 = rawScored.slice(3).sort(() => Math.random() - 0.5);
+              candidates = [...tier1, ...tier2].map((s: any) => ({
+                url: s.url as string,
+                title: s.hit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join(', ') ?? 'Pixabay clip',
+                duration: s.hit.duration,
               }));
-            } else {
-              judgeDown = fetched.length > 0;
-              judged = fetched.map((f) => ({ ...f, score: -1, reason: 'unscreened' }));
-            }
-
-            if (!judged.length) {
-              pixabayFail = 'all candidate downloads failed';
-            } else {
-              judged.sort((a, b) => b.score - a.score); // stable: ties keep popularity order
-              const winner = judged[0];
-              for (const j of judged) if (j !== winner) { try { fs.unlinkSync(j.file); } catch {} }
-
-              if (winner.score >= 3 || judgeDown) {
-                const title = hitTitle(winner.hit);
-                if (judgeDown) {
-                  sendMsg(`Downloaded the top Pixabay result for "${query}" (frame screening unavailable — eyeball it before placing)`);
-                } else {
-                  sendMsg(`Picked the best of ${judged.length} candidate${judged.length > 1 ? 's' : ''}: "${title}" (${winner.score}/10 — ${winner.reason})`);
-                }
-                if (ffmpegPath) {
-                  const frameBase64 = await extractFrameAtSec(winner.file, ffmpegPath, (winner.hit.duration ?? 2) * 0.5);
-                  event.sender.send('edith:brollCheck', {
-                    label: title,
-                    duration: winner.hit.duration,
-                    passed: true,
-                    reason: winner.reason,
-                    frameBase64: frameBase64 ?? null,
-                  });
-                }
-                return { success: true, filePath: winner.file, fileType: 'video', title };
-              }
-
-              // Every screened candidate was disqualified (score <= 2) — keep the
-              // least-bad file only as a last resort if YouTube fallback is unavailable.
-              leastBad = winner;
-              pixabayFail = `all ${judged.length} candidates scored poorly (best ${winner.score}/10 — ${winner.reason})`;
             }
           }
+        } catch (apiErr) {
+          sourcingFail = `API unreachable (${String((apiErr as Error)?.message ?? apiErr).slice(0, 60)})`;
         }
       }
 
-      // ── Layer 2: YouTube fallback ──────────────────────────────────────────────
-      if (ytdlpAvailable(ytdlp)) {
-        sendMsg(`Pixabay: ${pixabayFail}. Falling back to YouTube…`);
+      // ── Layer 2: keyless Pixabay through a hidden browser window ───────────────
+      if (!candidates.length) {
+        // Only explain the detour when there WAS a key and it let us down. With no
+        // key this is simply how sourcing works, and saying so would sound broken.
+        sendMsg(pixabayKey
+          ? `↳ Pixabay's API came back empty (${sourcingFail}) — searching their site directly…`
+          : '↳ Searching Pixabay…');
+        const scraped = await pixabaySearchViaBrowser(query, 12);
+        if (scraped.length) {
+          candidates = scraped;
+        } else {
+          sourcingFail = `${sourcingFail}, and the keyless search returned nothing`;
+        }
+      }
+
+      // ── Tournament over whichever layer produced the field ─────────────────────
+      if (candidates.length) {
+        const pool = candidates.slice(0, candidatePool);
+
+        // Download the whole field at once (~3s), then judge it at once. Judging is
+        // ~25s per clip, so running the field in parallel keeps the wait flat at one
+        // judge call instead of multiplying it by the pool size.
+        const fetched = (await Promise.all(pool.map(async (cand, i) => {
+          const ladder = [cand.url, ...(cand.fallbackUrls ?? [])];
+          for (const candUrl of ladder) {
+            try {
+              const cRes = await fetch(candUrl, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                  'Accept': 'video/*,*/*',
+                  'Accept-Language': 'en-US,en;q=0.9',
+                  'Referer': 'https://pixabay.com/',
+                }
+              });
+              if (!cRes.ok) continue;
+              const body = Buffer.from(await cRes.arrayBuffer());
+              // Cloudflare sometimes answers 200 with an HTML challenge page.
+              if (body.length < 20_000) continue;
+
+              const readableName = (cand.title || 'pixabay-clip')
+                .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50) || 'pixabay-clip';
+              // Index in the name: the field downloads concurrently, so two clips
+              // sharing a title would otherwise race for the same path.
+              const basePath = path.join(dlDir, `${readableName}.mp4`);
+              const cFilePath = fs.existsSync(basePath)
+                ? path.join(dlDir, `${readableName}-${Date.now()}-${i}.mp4`)
+                : basePath;
+              fs.writeFileSync(cFilePath, body);
+              return { file: cFilePath, title: cand.title, duration: cand.duration };
+            } catch { /* try the next rung of the ladder */ }
+          }
+          return null;
+        }))).filter(Boolean) as { file: string; title: string; duration?: number }[];
+
+        let judged: { file: string; title: string; duration?: number; score: number; reason: string }[] = [];
+        let judgeDown = false;
+
+        if (fetched.length && ffmpegPath) {
+          if (fetched.length > 1) sendMsg(`↳ Screening ${fetched.length} candidates against "${requirement}"…`);
+          const verdicts = await Promise.all(
+            fetched.map((f) => scoreBrollCandidate(f.file, requirement, anthropicApiKey)),
+          );
+          // Every judge failing means no judge is reachable at all — say so rather
+          // than pretending an unscreened clip was vetted.
+          judgeDown = verdicts.every((v) => v === null);
+          judged = fetched.map((f, i) => ({
+            ...f,
+            score: verdicts[i]?.score ?? -1,
+            reason: verdicts[i]?.reason ?? 'unscreened',
+          }));
+        } else {
+          judgeDown = fetched.length > 0;
+          judged = fetched.map((f) => ({ ...f, score: -1, reason: 'unscreened' }));
+        }
+
+        if (!judged.length) {
+          sourcingFail = 'every candidate download failed';
+        } else {
+          judged.sort((a, b) => b.score - a.score); // stable: ties keep popularity order
+          const winner = judged[0];
+          for (const j of judged) if (j !== winner) { try { fs.unlinkSync(j.file); } catch {} }
+
+          if (winner.score >= 3 || judgeDown) {
+            if (judgeDown) {
+              sendMsg(`Downloaded the top result for "${query}" (frame screening unavailable — eyeball it before placing)`);
+            } else {
+              sendMsg(`Picked the best of ${judged.length} candidate${judged.length > 1 ? 's' : ''}: "${winner.title}" (${winner.score}/10 — ${winner.reason})`);
+            }
+            if (ffmpegPath) {
+              // The keyless route carries no metadata, so read the length off the file.
+              const dur = winner.duration ?? await getVideoDuration(winner.file, ffmpegPath).catch(() => 0);
+              const frameBase64 = await extractFrameAtSec(winner.file, ffmpegPath, Math.max(dur, 2) * 0.5);
+              event.sender.send('edith:brollCheck', {
+                label: winner.title,
+                duration: Math.round(dur),
+                passed: true,
+                reason: winner.reason,
+                frameBase64: frameBase64 ?? null,
+              });
+            }
+            return { success: true, filePath: winner.file, fileType: 'video', title: winner.title };
+          }
+
+          // Every screened candidate was disqualified (score <= 2) — keep the
+          // least-bad file only as a last resort if the YouTube layer is unavailable.
+          leastBad = winner;
+          sourcingFail = `all ${judged.length} candidates scored poorly (best ${winner.score}/10 — ${winner.reason})`;
+        }
+      } else if (!sourcingFail) {
+        sourcingFail = `no stock results for "${query}"`;
+      }
+
+      // ── Layer 3: YouTube fallback ──────────────────────────────────────────────
+      if (await getYtdlp()) {
+        sendMsg(`Stock sourcing: ${sourcingFail}. Falling back to YouTube…`);
         if (leastBad) { try { fs.unlinkSync(leastBad.file); } catch {} }
         url = `ytsearch1:${query}`;
         // fall through to the yt-dlp path below
       } else if (leastBad) {
-        // ── Layer 3a: no yt-dlp — surface the least-bad Pixabay clip, honestly labeled
-        const title = hitTitle(leastBad.hit);
-        sendMsg(`Pixabay candidates were weak (best ${leastBad.score}/10 — ${leastBad.reason}) and YouTube fallback is unavailable (yt-dlp not installed). Presenting the least-bad match — judge it yourself.`);
-        return { success: true, filePath: leastBad.file, fileType: 'video', title };
+        // No YouTube either — surface the least-bad clip, honestly labeled.
+        sendMsg(`Stock candidates were weak (best ${leastBad.score}/10 — ${leastBad.reason}) and the YouTube fallback couldn't be set up. Presenting the least-bad match — judge it yourself.`);
+        return { success: true, filePath: leastBad.file, fileType: 'video', title: leastBad.title };
       } else {
-        // ── Layer 3b: nothing available at all — actionable error, no silent death
+        // Nothing available at all — actionable error, no silent death.
         return {
           success: false,
-          error: `B-roll sourcing is unavailable: Pixabay failed (${pixabayFail}) and yt-dlp is not installed for the YouTube fallback. Fix either one: set PIXABAY_API_KEY in .env, or install yt-dlp (winget install yt-dlp).`,
+          error: `B-roll sourcing failed at every layer: ${sourcingFail}. The YouTube fallback needs the video downloader, which couldn't be set up — check your internet connection, or add a Pixabay API key in Settings.`,
         };
       }
     }
@@ -5798,9 +6040,11 @@ ipcMain.handle(
     }
 
     // Everything past this point downloads through yt-dlp (YouTube search, direct
-    // URLs, site pages). Fail with instructions instead of a cryptic spawn error.
-    if (!ytdlpAvailable(ytdlp)) {
-      return { success: false, error: 'yt-dlp is not installed — YouTube and direct-URL sourcing are unavailable. Install it (winget install yt-dlp), or set PIXABAY_API_KEY in .env to use stock sourcing instead.' };
+    // URLs, site pages). It ships with the app and self-heals, so reaching this
+    // branch means the binary is missing AND couldn't be fetched.
+    const ytdlp = await getYtdlp();
+    if (!ytdlp) {
+      return { success: false, error: 'The video downloader is unavailable and could not be downloaded — check your internet connection, then try again.' };
     }
 
     const isSearchQuery = url.startsWith('ytsearch') || url.startsWith('ytdl:ytsearch');
@@ -6160,7 +6404,10 @@ ipcMain.handle('media:searchMedia', async (_event, { query, count }: { query: st
   const q = (query ?? '').trim();
   if (!q) return { success: false, error: 'Empty search query' };
   const n = Math.min(Math.max(count ?? 6, 1), 12);
-  const ytdlp = getYtdlpPath();
+  const ytdlp = await ensureYtdlp();
+  if (!ytdlp) {
+    return { success: false, error: 'The video downloader is unavailable and could not be downloaded — check your internet connection, then try again.' };
+  }
   return new Promise((resolve) => {
     let out = '';
     let errBuf = '';

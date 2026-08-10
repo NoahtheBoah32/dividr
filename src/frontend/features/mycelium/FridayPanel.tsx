@@ -551,6 +551,22 @@ export function FridayPanel({ className }: { className?: string }) {
   const getConsentKey = () => `edith-consent-${currentProjectId ?? 'default'}`;
   const [consentGiven, setConsentGiven] = useState(() => localStorage.getItem(`edith-consent-${currentProjectId ?? 'default'}`) === 'true');
 
+  // Sourcing settings. The Pixabay key lives in main's user-settings.json, not
+  // localStorage — the download handler runs in the main process and can't read
+  // the renderer's storage.
+  const [showSettings, setShowSettings] = useState(false);
+  const [pixabayKey, setPixabayKey] = useState('');
+  const [keySaved, setKeySaved] = useState(false);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    let cancelled = false;
+    Promise.resolve(window.electronAPI.getSetting?.('PIXABAY_API_KEY'))
+      .then((v) => { if (!cancelled && typeof v === 'string') setPixabayKey(v); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showSettings]);
+
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: '0',
@@ -2441,8 +2457,49 @@ export function FridayPanel({ className }: { className?: string }) {
               Clear
             </button>
           )}
+          <button
+            onClick={() => setShowSettings((v) => !v)}
+            className={`text-[11px] px-2 py-1 rounded border transition-colors ${
+              showSettings
+                ? 'text-zinc-300 border-white/20'
+                : 'text-zinc-700 hover:text-zinc-400 border-white/[0.06] hover:border-white/10'
+            }`}
+            title="Sourcing settings"
+          >
+            Settings
+          </button>
         </div>
       </div>
+
+      {showSettings && (
+        <div className="px-4 py-3 border-b border-white/[0.06] space-y-2">
+          <label className="block text-[11px] text-zinc-400">Pixabay API key</label>
+          <div className="flex gap-1.5">
+            <input
+              type="password"
+              value={pixabayKey}
+              onChange={(e) => { setPixabayKey(e.target.value); setKeySaved(false); }}
+              placeholder="Optional — sourcing works without it"
+              className="flex-1 text-[11px] px-2 py-1.5 rounded bg-black/30 border border-white/10 text-zinc-200 placeholder:text-zinc-700 outline-none focus:border-white/25"
+            />
+            <button
+              onClick={async () => {
+                await window.electronAPI.setSetting?.('PIXABAY_API_KEY', pixabayKey.trim());
+                setKeySaved(true);
+              }}
+              className="text-[11px] px-2.5 py-1.5 rounded text-zinc-300 border border-white/10 hover:border-white/25 transition-colors"
+            >
+              {keySaved ? 'Saved' : 'Save'}
+            </button>
+          </div>
+          <p className="text-[10.5px] leading-relaxed text-zinc-600">
+            B-roll sourcing needs no setup. A free key from pixabay.com/api makes stock
+            searches near-instant instead of about eight seconds; without one EDITH
+            searches Pixabay through a background browser window, then falls back to
+            YouTube.
+          </p>
+        </div>
+      )}
 
       {/* Messages */}
       <div

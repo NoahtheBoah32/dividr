@@ -22,6 +22,10 @@ const config: ForgeConfig = {
       './src/frontend/assets/logo',
       './src/backend/python/scripts',
       './src/backend/ffmpeg/ffmpeg-model',
+      // yt-dlp, so b-roll sourcing works on a machine that never installed it.
+      // Populated by the generateAssets hook below; main.ts self-heals a stale
+      // or missing copy into userData at runtime.
+      './ytdlp-bin',
       // dividr-tools is now downloaded on-demand from GitHub Releases
       // to reduce installer size from ~1.3GB to ~200MB
     ],
@@ -80,11 +84,25 @@ const config: ForgeConfig = {
       /^\/dist\//,
       /^\/shot-card\.mjs$/,
 
+      // yt-dlp ships via extraResource — keep it out of the asar so it isn't
+      // packaged twice (18MB) and stays spawnable as a plain file on disk.
+      /^\/ytdlp-bin\//,
+
       // Source maps in production
       /\.map$/,
     ],
   },
   rebuildConfig: {},
+  hooks: {
+    // `make`/`package` have no prestart, so fetch yt-dlp here or the installer
+    // ships without it. The script is a no-op when the copy is under a fortnight
+    // old and never fails the build.
+    generateAssets: async () => {
+      const { spawnSync } = await import('node:child_process');
+      const script = path.resolve(__dirname, 'scripts', 'download-ytdlp.mjs');
+      spawnSync(process.execPath, [script], { stdio: 'inherit' });
+    },
+  },
   makers: [
     // Windows NSIS installer.
     // NOTE: this maker only reads `codesign`, `updater`, and

@@ -176,6 +176,9 @@ dividr-tools-bin/*
 # DeepFilterNet speech-enhancement binary (downloaded on prestart / first use)
 deep-filter.exe
 deep-filter
+
+# yt-dlp binary — fetched at build time by scripts/download-ytdlp.mjs
+ytdlp-bin/
 # Baked voice/background stems (regenerated per session)
 voice_*.wav
 background_*.wav

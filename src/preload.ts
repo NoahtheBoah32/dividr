@@ -244,6 +244,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('media:downloadFromUrl', payload),
   cancelDownload: (jobId: string) => ipcRenderer.invoke('media:cancelDownload', jobId),
 
+  // User settings (userData/user-settings.json) — the only way a packaged user
+  // can supply an API key, since .env never ships with the installer.
+  getSetting: (key: string): Promise<string> => ipcRenderer.invoke('settings:get', key),
+  setSetting: (key: string, value: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('settings:set', { key, value }),
+
   // ============================================================================
 
   // Python Faster-Whisper API
