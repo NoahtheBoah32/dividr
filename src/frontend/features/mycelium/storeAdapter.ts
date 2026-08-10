@@ -719,7 +719,8 @@ async function applyOp(op: Op): Promise<void> {
         verify: op.verify,
         topic: op.topic,
         isStockFootage: op.isStockFootage,
-      });
+        batchSize: (op as any).batchSize,
+      } as any);
       if (!result.success || !result.filePath) {
         window.dispatchEvent(new CustomEvent('edith:downloadComplete', { detail: { url: op.url } }));
         throw new Error(result.error ?? 'Download failed');
@@ -1930,6 +1931,8 @@ async function applyOp(op: Op): Promise<void> {
       // isStockFootage:false → YouTube search via ytsearch: (uses browser cookies automatically)
       // Optional `url` (direct http(s) link EDITH found via web search) bypasses both search
       // modes and goes straight to yt-dlp — handles direct .mp4/.webm files and most site pages.
+      // `batch` — how many b-rolls the user asked for in this request. One b-roll gets
+      // the deep internal candidate tournament; a batch screens shallower per slot.
       const isStock = (op as any).isStockFootage !== false;
       const directUrl = typeof (op as any).url === 'string'
         && (/^https?:\/\//i.test((op as any).url) || (op as any).url.startsWith('imagesearch:'))
@@ -1939,12 +1942,14 @@ async function applyOp(op: Op): Promise<void> {
         ?? (isStock
           ? `pixabaysearch:${(op as any).query}`
           : `ytsearch1:${(op as any).query}`);
+      const batchRaw = Number((op as any).batch);
       await applyOp({
         type: 'downloadMedia',
         url: urlToUse,
         topic: (op as any).query,
         verify: (op as any).verify,
         isStockFootage: isStock,
+        batchSize: Number.isFinite(batchRaw) && batchRaw > 0 ? batchRaw : 1,
       } as any);
       break;
     }

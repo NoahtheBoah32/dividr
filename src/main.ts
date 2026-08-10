@@ -5074,13 +5074,32 @@ async function verifyClipContent(
   }
 }
 
-async function verifyBrollQuality(
+// Scores one downloaded b-roll candidate 0-10 against the requirement, from 5 frames
+// sampled across the clip. Two judge transports: the Anthropic API when a key is
+// configured, else a one-shot `claude` CLI run (Haiku) that Reads the frames from
+// disk — the same auth EDITH herself uses, so this works on machines with no .env.
+// Returns null when no judge is reachable so the caller can fall back to
+// popularity order instead of pretending the clip was screened.
+async function scoreBrollCandidate(
   filePath: string,
+  requirement: string,
   anthropicApiKey: string,
-  verify?: string,
-): Promise<{ passed: boolean; reason: string }> {
+): Promise<{ score: number; reason: string } | null> {
   const os2 = await import('os');
   const tmpFramePaths: string[] = [];
+
+  const rubric = `Score how well this clip works as b-roll for the requirement: "${requirement}".\nReply ONLY with JSON: {"score": <integer 0-10>, "reason": "one short sentence"}\nScoring rules:\n- 0-2 (disqualified): all frames near-identical (a still image exported as video), visible text/captions/watermarks/logos, a person looking straight into the camera, or a subject unrelated to the requirement.\n- 3-5: real usable footage but only loosely related to the requirement.\n- 6-7: shows the requirement's subject but the setting, framing, or quality is weak.\n- 8-10: clearly shows the required subject in the right setting — clean, usable, on-topic.\nNo markdown, JSON only.`;
+
+  const parseScore = (text: string): { score: number; reason: string } | null => {
+    const matches = text.match(/\{[^{}]*"score"[^{}]*\}/g);
+    if (!matches) return null;
+    try {
+      const parsed = JSON.parse(matches[matches.length - 1]);
+      const score = Math.max(0, Math.min(10, Math.round(Number(parsed.score))));
+      if (Number.isNaN(score)) return null;
+      return { score, reason: String(parsed.reason ?? '') };
+    } catch { return null; }
+  };
 
   try {
     // Get duration so we can spread 5 frames across the clip
@@ -5091,7 +5110,7 @@ async function verifyBrollQuality(
     const timestamps = [0.1, 0.25, 0.5, 0.75, 0.9]
       .map((f) => Math.max(0.5, clampedDuration * f));
 
-    const frames: { index: number; ts: number; b64: string }[] = [];
+    const frames: { index: number; ts: number; path: string }[] = [];
 
     for (let i = 0; i < timestamps.length; i++) {
       const tmpPath = path.join(os2.tmpdir(), `broll_check_${Date.now()}_${i}.jpg`);
@@ -5104,53 +5123,78 @@ async function verifyBrollQuality(
       });
 
       if (fs.existsSync(tmpPath)) {
-        frames.push({ index: i + 1, ts: timestamps[i], b64: fs.readFileSync(tmpPath).toString('base64') });
+        frames.push({ index: i + 1, ts: timestamps[i], path: tmpPath });
       }
     }
 
-    if (frames.length === 0) return { passed: true, reason: 'no frames extracted' };
+    if (frames.length === 0) return null;
 
-    // Build multi-frame content array for the vision request
-    const content: any[] = [];
-    for (const f of frames) {
-      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
-      content.push({ type: 'text', text: `Frame ${f.index} at ${f.ts.toFixed(1)}s:` });
+    // Transport 1: Anthropic API (when a key is configured)
+    if (anthropicApiKey) {
+      const content: any[] = [];
+      for (const f of frames) {
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: fs.readFileSync(f.path).toString('base64') } });
+        content.push({ type: 'text', text: `Frame ${f.index} at ${f.ts.toFixed(1)}s:` });
+      }
+      content.push({ type: 'text', text: `These are ${frames.length} frames sampled evenly across one downloaded b-roll clip.\n${rubric}` });
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': anthropicApiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 150,
+          messages: [{ role: 'user', content }],
+        }),
+      });
+      const data = await resp.json() as any;
+      return parseScore(data.content?.[0]?.text?.trim() ?? '');
     }
-    const contentRequirement = verify
-      ? `\n\nCONTENT REQUIREMENT — the clip MUST visually show: "${verify}"\nREJECT if the frames do not match this description, even if the clip is high quality.`
-      : '';
-    content.push({
-      type: 'text',
-      text: `These are ${frames.length} frames sampled evenly across a downloaded B-roll clip. Reply ONLY with JSON: {"passed": true/false, "reason": "one short sentence"}${contentRequirement}\n\nALSO REJECT if ANY of these quality issues are present:\n- STILL IMAGE: all frames look identical or nearly identical — no motion, no scene change. This is a photo exported as video. REJECT IT.\n- Visible text, captions, watermarks, or branded logos\n- Person looking directly at the camera (interview or talking-head style)\n- Visibly low quality, heavily compressed, or blurry footage\n\nALLOW if:\n- Frames show clear visual variation (motion, lighting changes) indicating real video\n- Content visually matches the requirement above\n- People appear but are doing a task and NOT looking at camera\n\nRespond ONLY with the JSON object, no markdown.`,
-    });
 
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': anthropicApiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 150,
-        messages: [{ role: 'user', content }],
-      }),
+    // Transport 2: one-shot claude CLI (Haiku) reading the frames from disk
+    const cliOut = await new Promise<string | null>((resolve) => {
+      const prompt = `Read these ${frames.length} frame images, sampled evenly across one downloaded stock b-roll clip:\n${frames.map((f) => `${f.index}. ${f.path} (at ${f.ts.toFixed(1)}s)`).join('\n')}\n\n${rubric}`;
+      const proc = spawn(
+        'claude',
+        ['--print', '--model', 'claude-haiku-4-5-20251001', '--allowedTools', 'Read', '--max-turns', '8'],
+        { shell: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env } },
+      );
+      let out = '';
+      const timer = setTimeout(() => {
+        try {
+          if (process.platform === 'win32' && proc.pid) spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], { shell: false });
+          proc.kill();
+        } catch { /* already gone */ }
+        resolve(null);
+      }, 120_000);
+      proc.stdout?.on('data', (c: Buffer) => { out += c.toString(); });
+      proc.on('close', () => { clearTimeout(timer); resolve(out || null); });
+      proc.on('error', () => { clearTimeout(timer); resolve(null); });
+      if (proc.stdin) { proc.stdin.write(prompt); proc.stdin.end(); }
     });
-
-    const data = await resp.json() as any;
-    const text: string = data.content?.[0]?.text?.trim() ?? '{"passed":true}';
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return { passed: true, reason: 'parse error' };
-    const result = JSON.parse(m[0]);
-    return { passed: !!result.passed, reason: result.reason ?? '' };
+    if (!cliOut) return null;
+    return parseScore(cliOut);
   } catch {
-    return { passed: true, reason: 'check skipped' };
+    return null;
   } finally {
     for (const p of tmpFramePaths) {
       try { fs.unlinkSync(p); } catch {}
     }
   }
+}
+
+// True when yt-dlp is actually reachable. getYtdlpPath() only returns the bare
+// string 'yt-dlp' when no known install location existed — probe that case for real.
+function ytdlpAvailable(ytdlpPathResolved: string): boolean {
+  if (ytdlpPathResolved !== 'yt-dlp') return true;
+  try {
+    const r = spawnSync(ytdlpPathResolved, ['--version'], { encoding: 'utf8', shell: true, timeout: 10_000 });
+    return r.status === 0;
+  } catch { return false; }
 }
 async function extractFrameAtSec(filePath: string, ffmpegBin: string, atSec: number): Promise<string | null> {
   const tmp = path.join(os.tmpdir(), `dividr_verify_${Date.now()}.jpg`);
@@ -5385,7 +5429,7 @@ async function findBestYouTubeSegment(
 
 ipcMain.handle(
   'media:downloadFromUrl',
-  async (event, { jobId, url, startSeconds, endSeconds, downloadDir, verify, topic, isStockFootage }: {
+  async (event, { jobId, url: urlIn, startSeconds, endSeconds, downloadDir, verify, topic, isStockFootage, batchSize }: {
     jobId: string;
     url: string;
     startSeconds?: number;
@@ -5394,7 +5438,13 @@ ipcMain.handle(
     verify?: string;
     topic?: string;
     isStockFootage?: boolean;
+    /** How many b-rolls this request covers in total. 1 (or absent) buys the deep
+     *  5-candidate tournament; a batch screens shallower per slot so N slots don't
+     *  cost 5N downloads and 5N judge calls. EDITH's per-slot query does the rest. */
+    batchSize?: number;
   }) => {
+    // Mutable so the Pixabay layer can rewrite it to a ytsearch fallback in place.
+    let url = urlIn;
     const ytdlp = getYtdlpPath();
     const dlDir = downloadDir || path.join(os.homedir(), 'Dividr Downloads');
     if (!fs.existsSync(dlDir)) fs.mkdirSync(dlDir, { recursive: true });
@@ -5418,122 +5468,177 @@ ipcMain.handle(
 
     const geminiApiKey = loadEnvKey('GEMINI_API_KEY');
 
-    // â”€â”€ PIXABAY SEARCH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── PIXABAY SEARCH — layer 1 of the sourcing chain ───────────────────────────
+    // Internal candidate tournament: download up to 5 candidates, frame-score each
+    // SILENTLY (no per-candidate chat spam), surface only the best one. On
+    // availability failure (no key / API down / no results) or when every candidate
+    // is disqualified, fall back to YouTube search (layer 2). If yt-dlp is missing
+    // too (layer 3), return an actionable error — or the least-bad clip, labeled.
     if (url.startsWith('pixabaysearch:')) {
       const query = url.slice('pixabaysearch:'.length).trim();
       const pixabayKey = loadEnvKey('PIXABAY_API_KEY');
-      if (!pixabayKey) return { success: false, error: 'PIXABAY_API_KEY not set in .env' };
+      const hitTitle = (h: any) => h?.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join(', ') ?? 'Pixabay clip';
+      let pixabayFail: string | null = null;
+      let leastBad: { file: string; hit: any; score: number; reason: string } | null = null;
 
-      sendMsg(`â†³ Searching Pixabay for: ${query}`);
-      const apiUrl = `https://pixabay.com/api/videos/?key=${pixabayKey}&q=${encodeURIComponent(query)}&video_type=film&per_page=10&safesearch=true`;
-      const apiRes = await fetch(apiUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Referer': 'https://pixabay.com/',
-        }
-      });
-      if (!apiRes.ok) {
-        const errText = await apiRes.text().catch(() => String(apiRes.status));
-        return { success: false, error: `Pixabay API error ${apiRes.status} — check PIXABAY_API_KEY. Details: ${errText.slice(0, 200)}` };
-      }
-      const contentType = apiRes.headers.get('content-type') ?? '';
-      if (!contentType.includes('json')) {
-        const errText = await apiRes.text().catch(() => '');
-        return { success: false, error: `Pixabay returned non-JSON (key may be invalid or rate-limited). Preview: ${errText.slice(0, 150)}` };
-      }
-      const apiData = (await apiRes.json()) as any;
-      const hits = apiData?.hits as any[];
-      if (!hits?.length) return { success: false, error: `No Pixabay results for "${query}"` };
-
-      // Score hits by views+downloads; pre-filter sub-720p by metadata, prefer 4-45s clips
-      const rawScored = hits
-        .filter((h: any) => {
-          const bestRes = h.videos?.large ?? h.videos?.medium ?? h.videos?.small;
-          const minDim = Math.min(bestRes?.width ?? 0, bestRes?.height ?? 0);
-          return minDim >= 720 && h.duration >= 4 && h.duration <= 45;
-        })
-        .map((h: any) => ({
-          hit: h,
-          score: (h.views ?? 0) * 0.6 + (h.downloads ?? 0) * 0.4,
-          url: h.videos?.large?.url || h.videos?.medium?.url || h.videos?.small?.url,
-        }))
-        .filter((s: any) => !!s.url)
-        .sort((a: any, b: any) => b.score - a.score);
-      if (!rawScored.length) return { success: false, error: `No Pixabay results at 720p+ for "${query}"` };
-
-      // Shuffle within tiers to avoid always returning the same top video for the same query.
-      // Tier 1: top 3 by score (shuffle among them). Tier 2: remaining (shuffle among them).
-      const tier1 = rawScored.slice(0, 3).sort(() => Math.random() - 0.5);
-      const tier2 = rawScored.slice(3).sort(() => Math.random() - 0.5);
-      const scored = [...tier1, ...tier2];
-
-      const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
-      let chosenFile: string | null = null;
-      let chosenHit: any = null;
-      const maxAttempts = Math.min(scored.length, 5); // try up to 5 instead of 3
-
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const candidate = scored[attempt];
-        const cHit = candidate.hit;
-        const cUrl: string = candidate.url;
-        const label = cHit.tags?.split(',')[0]?.trim() ?? 'clip';
-        sendMsg(`Checking B-roll candidate ${attempt + 1}/${maxAttempts}: "${label}" (${cHit.duration}s)`);
-
-        const cRes = await fetch(cUrl, {
+      if (!pixabayKey) {
+        pixabayFail = 'no PIXABAY_API_KEY configured';
+      } else {
+        sendMsg(`↳ Sourcing stock b-roll: ${query}…`);
+        const apiUrl = `https://pixabay.com/api/videos/?key=${pixabayKey}&q=${encodeURIComponent(query)}&video_type=film&per_page=10&safesearch=true`;
+        const apiRes = await fetch(apiUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'video/*,*/*',
+            'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
             'Referer': 'https://pixabay.com/',
           }
         });
-        if (!cRes.ok) { sendMsg(`Fetch failed (${cRes.status}) — trying next`); continue; }
+        const contentType = apiRes.headers.get('content-type') ?? '';
+        if (!apiRes.ok) {
+          pixabayFail = `API error ${apiRes.status}`;
+        } else if (!contentType.includes('json')) {
+          pixabayFail = 'invalid API response (key invalid or rate-limited)';
+        } else {
+          const apiData = (await apiRes.json()) as any;
+          const hits = apiData?.hits as any[];
 
-        const readableName = (cHit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
-          .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
-        const basePath = path.join(dlDir, `${readableName}.mp4`);
-        const cFilePath = fs.existsSync(basePath) ? path.join(dlDir, `${readableName}-${Date.now()}.mp4`) : basePath;
-        fs.writeFileSync(cFilePath, Buffer.from(await cRes.arrayBuffer()));
+          // Score hits by views+downloads; pre-filter sub-720p by metadata, prefer 4-45s clips
+          const rawScored = (hits ?? [])
+            .filter((h: any) => {
+              const bestRes = h.videos?.large ?? h.videos?.medium ?? h.videos?.small;
+              const minDim = Math.min(bestRes?.width ?? 0, bestRes?.height ?? 0);
+              return minDim >= 720 && h.duration >= 4 && h.duration <= 45;
+            })
+            .map((h: any) => ({
+              hit: h,
+              score: (h.views ?? 0) * 0.6 + (h.downloads ?? 0) * 0.4,
+              url: h.videos?.large?.url || h.videos?.medium?.url || h.videos?.small?.url,
+            }))
+            .filter((s: any) => !!s.url)
+            .sort((a: any, b: any) => b.score - a.score);
 
-        if (anthropicApiKey && ffmpegPath) {
-          const check = await verifyBrollQuality(cFilePath, anthropicApiKey, verify);
-          event.sender.send('edith:brollCheck', {
-            label,
-            duration: cHit.duration,
-            passed: check.passed,
-            reason: check.reason,
-            frameBase64: check.frameBase64 ?? null,
-          });
-          if (!check.passed) {
-            sendMsg(`Rejected: ${check.reason} — trying next`);
-            try { fs.unlinkSync(cFilePath); } catch {}
-            continue;
+          if (!hits?.length) {
+            pixabayFail = `no results for "${query}"`;
+          } else if (!rawScored.length) {
+            pixabayFail = `no 720p+ results for "${query}"`;
+          } else {
+            // Shuffle within tiers to avoid always returning the same top video for the same query.
+            const tier1 = rawScored.slice(0, 3).sort(() => Math.random() - 0.5);
+            const tier2 = rawScored.slice(3).sort(() => Math.random() - 0.5);
+            const scored = [...tier1, ...tier2];
+
+            const anthropicApiKey = loadEnvKey('ANTHROPIC_API_KEY');
+            const requirement = verify || `stock b-roll of: ${query}`;
+            // Deep screen for a one-off b-roll; shallower when this is one slot of many,
+            // so N slots don't cost 5N downloads and 5N judge calls.
+            const slots = Math.max(1, Math.round(batchSize ?? 1));
+            const candidatePool = slots <= 1 ? 4 : slots <= 3 ? 3 : 2;
+            const pool = scored.slice(0, candidatePool);
+
+            // Download the whole field at once (~3s), then judge it at once. Judging
+            // is ~25s per candidate, so running the field in parallel keeps the wait
+            // flat at one judge call instead of multiplying by the pool size.
+            const fetched = (await Promise.all(pool.map(async (candidate: any, i: number) => {
+              try {
+                const cRes = await fetch(candidate.url as string, {
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'video/*,*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Referer': 'https://pixabay.com/',
+                  }
+                });
+                if (!cRes.ok) return null;
+                const cHit = candidate.hit;
+                const readableName = (cHit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
+                  .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
+                // Index in the filename: the field downloads concurrently, so two hits
+                // sharing tags would otherwise race for the same path.
+                const basePath = path.join(dlDir, `${readableName}.mp4`);
+                const cFilePath = fs.existsSync(basePath)
+                  ? path.join(dlDir, `${readableName}-${Date.now()}-${i}.mp4`)
+                  : basePath;
+                fs.writeFileSync(cFilePath, Buffer.from(await cRes.arrayBuffer()));
+                return { file: cFilePath, hit: cHit };
+              } catch { return null; }
+            }))).filter(Boolean) as { file: string; hit: any }[];
+
+            let judged: { file: string; hit: any; score: number; reason: string }[] = [];
+            let judgeDown = false;
+
+            if (fetched.length && ffmpegPath) {
+              if (fetched.length > 1) sendMsg(`↳ Screening ${fetched.length} candidates against "${requirement}"…`);
+              const verdicts = await Promise.all(
+                fetched.map((f) => scoreBrollCandidate(f.file, requirement, anthropicApiKey)),
+              );
+              // Every judge failing means no judge is reachable at all — say so rather
+              // than pretending an unscreened clip was vetted.
+              judgeDown = verdicts.every((v) => v === null);
+              judged = fetched.map((f, i) => ({
+                ...f,
+                score: verdicts[i]?.score ?? -1,
+                reason: verdicts[i]?.reason ?? 'unscreened',
+              }));
+            } else {
+              judgeDown = fetched.length > 0;
+              judged = fetched.map((f) => ({ ...f, score: -1, reason: 'unscreened' }));
+            }
+
+            if (!judged.length) {
+              pixabayFail = 'all candidate downloads failed';
+            } else {
+              judged.sort((a, b) => b.score - a.score); // stable: ties keep popularity order
+              const winner = judged[0];
+              for (const j of judged) if (j !== winner) { try { fs.unlinkSync(j.file); } catch {} }
+
+              if (winner.score >= 3 || judgeDown) {
+                const title = hitTitle(winner.hit);
+                if (judgeDown) {
+                  sendMsg(`Downloaded the top Pixabay result for "${query}" (frame screening unavailable — eyeball it before placing)`);
+                } else {
+                  sendMsg(`Picked the best of ${judged.length} candidate${judged.length > 1 ? 's' : ''}: "${title}" (${winner.score}/10 — ${winner.reason})`);
+                }
+                if (ffmpegPath) {
+                  const frameBase64 = await extractFrameAtSec(winner.file, ffmpegPath, (winner.hit.duration ?? 2) * 0.5);
+                  event.sender.send('edith:brollCheck', {
+                    label: title,
+                    duration: winner.hit.duration,
+                    passed: true,
+                    reason: winner.reason,
+                    frameBase64: frameBase64 ?? null,
+                  });
+                }
+                return { success: true, filePath: winner.file, fileType: 'video', title };
+              }
+
+              // Every screened candidate was disqualified (score <= 2) — keep the
+              // least-bad file only as a last resort if YouTube fallback is unavailable.
+              leastBad = winner;
+              pixabayFail = `all ${judged.length} candidates scored poorly (best ${winner.score}/10 — ${winner.reason})`;
+            }
           }
         }
-
-        chosenFile = cFilePath;
-        chosenHit = cHit;
-        break;
       }
 
-      if (!chosenFile) {
-        const fallback = scored[0];
-        const fRes = await fetch(fallback.url);
-        if (!fRes.ok) return { success: false, error: `All Pixabay candidates failed quality check for "${query}"` };
-        const readableName = (fallback.hit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join('-') ?? 'pixabay-clip')
-          .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 50);
-        const basePath = path.join(dlDir, `${readableName}.mp4`);
-        chosenFile = fs.existsSync(basePath) ? path.join(dlDir, `${readableName}-${Date.now()}.mp4`) : basePath;
-        chosenHit = fallback.hit;
-        fs.writeFileSync(chosenFile, Buffer.from(await fRes.arrayBuffer()));
-        sendMsg(`All checks failed — using best available`);
+      // ── Layer 2: YouTube fallback ──────────────────────────────────────────────
+      if (ytdlpAvailable(ytdlp)) {
+        sendMsg(`Pixabay: ${pixabayFail}. Falling back to YouTube…`);
+        if (leastBad) { try { fs.unlinkSync(leastBad.file); } catch {} }
+        url = `ytsearch1:${query}`;
+        // fall through to the yt-dlp path below
+      } else if (leastBad) {
+        // ── Layer 3a: no yt-dlp — surface the least-bad Pixabay clip, honestly labeled
+        const title = hitTitle(leastBad.hit);
+        sendMsg(`Pixabay candidates were weak (best ${leastBad.score}/10 — ${leastBad.reason}) and YouTube fallback is unavailable (yt-dlp not installed). Presenting the least-bad match — judge it yourself.`);
+        return { success: true, filePath: leastBad.file, fileType: 'video', title };
+      } else {
+        // ── Layer 3b: nothing available at all — actionable error, no silent death
+        return {
+          success: false,
+          error: `B-roll sourcing is unavailable: Pixabay failed (${pixabayFail}) and yt-dlp is not installed for the YouTube fallback. Fix either one: set PIXABAY_API_KEY in .env, or install yt-dlp (winget install yt-dlp).`,
+        };
       }
-
-      const pixabayTitle = chosenHit.tags?.split(',').slice(0, 3).map((t: string) => t.trim()).join(', ') ?? 'Pixabay clip';
-      sendMsg(`Download complete`);
-      return { success: true, filePath: chosenFile, fileType: 'video', title: pixabayTitle };
     }
 
     // â”€â”€ IMAGE DOWNLOADS (direct file URLs + product/pin pages) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -5690,6 +5795,12 @@ ipcMain.handle(
       } catch (imgErr) {
         return { success: false, error: `Image download failed: ${String((imgErr as Error)?.message ?? imgErr).slice(0, 200)}` };
       }
+    }
+
+    // Everything past this point downloads through yt-dlp (YouTube search, direct
+    // URLs, site pages). Fail with instructions instead of a cryptic spawn error.
+    if (!ytdlpAvailable(ytdlp)) {
+      return { success: false, error: 'yt-dlp is not installed — YouTube and direct-URL sourcing are unavailable. Install it (winget install yt-dlp), or set PIXABAY_API_KEY in .env to use stock sourcing instead.' };
     }
 
     const isSearchQuery = url.startsWith('ytsearch') || url.startsWith('ytdl:ytsearch');

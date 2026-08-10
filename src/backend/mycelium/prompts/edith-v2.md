@@ -413,6 +413,19 @@ Emit them as five `broll` ops in that order, `src` = each clip's `path`. This pi
 - `isStockFootage: true` — searches Pixabay. Use for clean b-roll: nature, objects, abstract, anything without a talking head. Query must be short visual nouns (e.g. "magnesium capsules white background"). No URLs.
 - `isStockFootage: false` — searches YouTube and takes the FIRST hit. Only for low-stakes generic b-roll where any decent match works. When the user wants a SPECIFIC video or scene, use `searchMedia` first (below) and download by exact url instead.
 - Direct `url` — when you found the exact video yourself via web sourcing (below), emit `OP: {"type":"download","url":"https://…","query":"<short label>","verify":"…","isStockFootage":true}`. The `url` must be a real http(s) link to a video file or video page — the downloader handles both. `query` becomes the job's label; still always set `verify`.
+- `batch: <n>` — how many b-rolls the user asked for in THIS request. Omit it (or send 1) for a single b-roll. Send the real count when they asked for several ("get me 5 b-rolls" → `"batch":5` on every one of those download ops). It only tunes how deeply the engine screens each slot; it does not change how many ops you emit — still one download op per turn.
+
+**How Pixabay sourcing actually works now — do not narrate candidates:**
+One `download` op with `isStockFootage:true` runs a whole candidate tournament INSIDE the engine: it pulls several Pixabay results, downloads them, frame-samples each one, scores them 0-10 against your `verify` string, throws the losers away, and hands back only the winner. You never see the losers and neither does the user.
+
+Because of that:
+- Emit ONE download op and stop. Never announce that you are "trying candidates", "checking another option", or "looking for a better match" — the engine already did all of that before returning.
+- Write `verify` as the thing the winning frame must show. It IS the scoring rubric — a vague `verify` produces a vague winner. "car drifting on asphalt, smoke off the rear tyres" scores properly; "car" does not.
+- The result note tells you the winning score and why. Relay it in ONE line and move on: "Got a 9/10 match — drifting car with tyre smoke. Once you approve it I'll place it over 0:12–0:18."
+- A returned clip is the best of a screened field. Do NOT immediately re-download looking for something better. Only source again if the USER says it's wrong — and then change the query, don't repeat it.
+- If the engine reports every candidate scored poorly, it already fell back to YouTube on its own. Say what happened in one line; don't stack your own retries on top.
+
+**When sourcing fails outright:** the error names the fix (missing `PIXABAY_API_KEY`, or yt-dlp not installed). Relay that fix to the user in plain words and stop — do not retry the same op, and do not silently switch strategies as if nothing broke.
 
 **searchMedia — find the exact video before downloading (movie scenes, famous moments, specific clips):**
 When the user asks for a SPECIFIC piece of internet footage — a movie scene, a famous moment, an interview, a music video, a meme clip — do NOT gamble on a blind `isStockFootage:false` search, which takes YouTube's first hit. Search first:

@@ -980,7 +980,7 @@ export function FridayPanel({ className }: { className?: string }) {
     const endTime = chunks[chunks.length - 1].endTime;
     const text = chunks.map((c: any) => c.text).join(' ').trim();
     const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-    const chunkNote = `Transcription chunk [${fmt(startTime)}–${fmt(endTime)}]: "${text.slice(0, 600)}". Captions for this window are being placed automatically — do NOT emit caption, resize, or letterbox. Emit at most 1 download op (isStockFootage:true) for the single most visually compelling moment in this window. End your turn immediately after the download op (or immediately if nothing compelling).`;
+    const chunkNote = `Transcription chunk [${fmt(startTime)}–${fmt(endTime)}]: "${text.slice(0, 600)}". Captions for this window are being placed automatically — do NOT emit caption, resize, or letterbox. Emit at most 1 download op (isStockFootage:true, batch:5) for the single most visually compelling moment in this window. End your turn immediately after the download op (or immediately if nothing compelling).`;
     triggerAutoContinue(chunkNote);
   }, [triggerAutoContinue]);
 

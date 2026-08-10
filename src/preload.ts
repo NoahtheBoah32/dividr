@@ -240,7 +240,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // yt-dlp download helpers
   initDownloadDir: () => ipcRenderer.invoke('media:initDownloadDir'),
-  downloadFromUrl: (payload: { jobId: string; url: string; startSeconds?: number; endSeconds?: number; downloadDir?: string }) =>
+  downloadFromUrl: (payload: { jobId: string; url: string; startSeconds?: number; endSeconds?: number; downloadDir?: string; verify?: string; topic?: string; isStockFootage?: boolean; batchSize?: number }) =>
     ipcRenderer.invoke('media:downloadFromUrl', payload),
   cancelDownload: (jobId: string) => ipcRenderer.invoke('media:cancelDownload', jobId),
 

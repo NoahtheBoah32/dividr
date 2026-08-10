@@ -91,6 +91,7 @@ export type Op =
       verify?: string;       // what should be visible/audible in this segment (e.g. "Jensen Huang discussing AGI")
       topic?: string;        // content topic for relevance check (e.g. "permaculture food forest")
       isStockFootage?: boolean; // triggers watermark + talking-to-camera checks
+      batchSize?: number;    // b-rolls in this request; 1 = deep candidate tournament, N>1 = shallow per slot
     }
   | {
       // YouTube candidate search (yt-dlp ytsearchN) — returns titles/durations/views/channels
